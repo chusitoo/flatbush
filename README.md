@@ -2,7 +2,7 @@
 
 [![CMake](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml)
 
-A C++ implementation that mimics the glorious Flatbush JS library: https://github.com/mourner/flatbush
+A C++ implementation that mimics the great Flatbush JS library: https://github.com/mourner/flatbush
 
 Unit tests and benchmarks are virtually identical in order to provide a close comparison to the original.
 
