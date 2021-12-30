@@ -223,9 +223,9 @@ namespace flatbush {
     struct IndexDistance
     {
       size_t mId;
-      ArrayType mValue;
-      bool operator< (const IndexDistance& iOther) const { return iOther.mValue < mValue; }
-      bool operator> (const IndexDistance& iOther) const { return iOther.mValue > mValue; }
+      ArrayType mDistance;
+      bool operator< (const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
+      bool operator> (const IndexDistance& iOther) const { return iOther.mDistance > mDistance; }
     };
 
     // views
@@ -469,7 +469,7 @@ namespace flatbush {
   template <typename ArrayType>
   void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight)
   {
-    if (std::floor(iLeft / nodeSize()) < std::floor(iRight / nodeSize()))
+    if (iLeft < iRight)
     {
       auto wPivot = iValues[(iLeft + iRight) >> 1];
       auto wPivotLeft = iLeft - 1;
@@ -497,7 +497,7 @@ namespace flatbush {
     auto wIdxLeft = iLeft << 2;
     auto wIdxRight = iRight << 2;
 
-    std::swap(mBoxes[wIdxLeft], mBoxes[wIdxRight]);
+    std::swap(mBoxes[wIdxLeft],     mBoxes[wIdxRight]);
     std::swap(mBoxes[wIdxLeft + 1], mBoxes[wIdxRight + 1]);
     std::swap(mBoxes[wIdxLeft + 2], mBoxes[wIdxRight + 2]);
     std::swap(mBoxes[wIdxLeft + 3], mBoxes[wIdxRight + 3]);
@@ -542,13 +542,13 @@ namespace flatbush {
       // search through child nodes
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; wPosition += 4)
       {
-        size_t wIndex = (mIsWideIndex ? mIndicesU32[wPosition >> 2] : mIndicesU16[wPosition >> 2]) | 0;
-
         // check if node bbox intersects with query bbox
         if (iMaxX < mBoxes[wPosition]) continue; // maxX < nodeMinX
         if (iMaxY < mBoxes[wPosition + 1]) continue; // maxY < nodeMinY
         if (iMinX > mBoxes[wPosition + 2]) continue; // minX > nodeMaxX
         if (iMinY > mBoxes[wPosition + 3]) continue; // minY > nodeMaxY
+
+        size_t wIndex = (mIsWideIndex ? mIndicesU32[wPosition >> 2] : mIndicesU16[wPosition >> 2]) | 0;
 
         if (wNodeIndex < wNumItems)
         {
@@ -563,14 +563,11 @@ namespace flatbush {
         }
       }
 
-      if (!wQueue.empty())
+      wHasWork = wHasWork && !wQueue.empty();
+      if (wHasWork)
       {
         wNodeIndex = wQueue.back();
         wQueue.pop_back();
-      }
-      else
-      {
-        wHasWork = false;
       }
     }
 
@@ -602,7 +599,6 @@ namespace flatbush {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; wPosition += 4)
       {
         size_t wIndex = (mIsWideIndex ? mIndicesU32[wPosition >> 2] : mIndicesU16[wPosition >> 2]) | 0;
-
         auto wDistX = axisDist(iX, mBoxes[wPosition], mBoxes[wPosition + 2]);
         auto wDistY = axisDist(iY, mBoxes[wPosition + 1], mBoxes[wPosition + 3]);
         auto wDistance = wDistX * wDistX + wDistY * wDistY;
@@ -624,30 +620,21 @@ namespace flatbush {
       // pop items from the queue
       while (wHasWork && !wQueue.empty() && (wQueue.top().mId & 1))
       {
-        if (wQueue.top().mValue > wMaxDistSquared)
-        {
-          wHasWork = false;
-        }
-        else
+        wHasWork = (wQueue.top().mDistance <= wMaxDistSquared);
+        
+        if (wHasWork)
         {
           wResults.push_back(wQueue.top().mId >> 1);
           wQueue.pop();
-
-          if (wResults.size() == iMaxResults)
-          {
-            wHasWork = false;
-          }
+          wHasWork = (wResults.size() < iMaxResults);
         }
       }
 
-      if (wHasWork && !wQueue.empty())
+      wHasWork = wHasWork && !wQueue.empty();
+      if (wHasWork)
       {
         wNodeIndex = wQueue.top().mId >> 1;
         wQueue.pop();
-      }
-      else
-      {
-        wHasWork = false;
       }
     }
 
