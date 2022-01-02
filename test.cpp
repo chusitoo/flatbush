@@ -28,7 +28,7 @@ SOFTWARE.
 #include <iostream>
 #include <vector>
 
-const static std::vector<double> gData =
+static const std::vector<double> gData
 {
   8, 62, 11, 66, 57, 17, 57, 19, 76, 26, 79, 29, 36, 56, 38, 56, 92, 77, 96, 80, 87, 70, 90, 74,
   43, 41, 47, 43, 0, 58, 2, 62, 76, 86, 80, 89, 27, 13, 27, 15, 71, 63, 75, 67, 25, 2, 27, 2, 87,
@@ -49,7 +49,7 @@ const static std::vector<double> gData =
   89, 56, 74, 60, 76, 63, 62, 66, 65, 67
 };
 
-const static std::vector<uint8_t> gFlatbush =
+static const std::vector<uint8_t> gFlatbush
 {
   251, 56, 16, 0, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 64, 0, 0, 0, 0, 0, 0, 79, 64, 0,
   0, 0, 0, 0, 0, 38, 64, 0, 0, 0, 0, 0, 128, 80, 64, 0, 0, 0, 0, 0, 128, 76, 64, 0,
@@ -185,10 +185,7 @@ void performBoxSearch()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wResults.begin(), wResults.end());
 
-  for (size_t wIdx = 0; wIdx < wExpected.size(); ++wIdx)
-  {
-    assert(wExpected[wIdx] == wResults[wIdx]);
-  }
+  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wResults.data()));
 }
 
 void reconstructIndexFromArrayBuffer()
@@ -201,10 +198,7 @@ void reconstructIndexFromArrayBuffer()
 
   assert(wIndexBuffer.size() == wIndex2Buffer.size());
 
-  for (size_t wIdx = 0; wIdx < wIndexBuffer.size(); ++wIdx)
-  {
-    assert(wIndexBuffer[wIdx] == wIndex2Buffer[wIdx]);
-  }
+  assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), wIndex2Buffer.data()));
 }
 
 void addLessItemsThanIndexSize()
@@ -271,10 +265,7 @@ void performNeighborsQuery()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  for (size_t wIdx = 0; wIdx < wExpected.size(); ++wIdx)
-  {
-    assert(wExpected[wIdx] == wIds[wIdx]);
-  }
+  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
 }
 
 void neighborsQueryMaxDistance()
@@ -288,10 +279,7 @@ void neighborsQueryMaxDistance()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  for (size_t wIdx = 0; wIdx < wExpected.size(); ++wIdx)
-  {
-    assert(wExpected[wIdx] == wIds[wIdx]);
-  }
+  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
 }
 
 void neighborsQueryFilterFunc()
@@ -305,10 +293,7 @@ void neighborsQueryFilterFunc()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  for (size_t wIdx = 0; wIdx < wExpected.size(); ++wIdx)
-  {
-    assert(wExpected[wIdx] == wIds[wIdx]);
-  }
+  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
 }
 
 void returnIndexOfNewlyAddedRectangle()
@@ -339,13 +324,10 @@ void reconstructIndexFromJSArrayBuffer()
   std::cout << "reconstructs an index from JS array buffer" << std::endl;
   auto wIndex = flatbush::Flatbush<double>::from(gFlatbush.data());
   auto wIndexBuffer = wIndex.data();
-
+  
   assert(wIndexBuffer.size() == gFlatbush.size());
 
-  for (size_t wIdx = 0; wIdx < wIndexBuffer.size(); ++wIdx)
-  {
-    assert(wIndexBuffer[wIdx] == gFlatbush[wIdx]);
-  }
+  assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), gFlatbush.data()));
 }
 
 void wrongTemplateType()
@@ -433,6 +415,92 @@ void fromWrongEncodedType()
   assert(wIsThrown);
 }
 
+void searchQuerySinglePointSmallNumItems()
+{
+  std::cout << "bbox search query single point (same min/max) with numitems < nodesize" << std::endl;
+  uint32_t wNumItems = 1;
+  uint16_t wNodeSize = 16;
+  
+  auto wIndex = flatbush::Flatbush<int>::create(wNumItems, wNodeSize);
+  wIndex.add(0, 0, 0, 0);
+  wIndex.finish();
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == wNodeSize);
+
+  auto wIds = wIndex.search(0, 0, 0, 0);
+  assert(wIds.size() == 1);
+  assert(wIds.front() == 0);
+}
+
+void searchQuerySinglePointLargeNumItems()
+{
+  std::cout << "bbox search query single point (same min/max) with numitems > nodesize" << std::endl;
+  uint32_t wNumItems = 5;
+  uint16_t wNodeSize = 4;
+
+  auto wIndex = flatbush::Flatbush<int>::create(wNumItems, wNodeSize);
+  wIndex.add(0, 0, 0, 0);
+  wIndex.add(0, 1, 0, 1);
+  wIndex.add(1, 0, 1, 0);
+  wIndex.add(1, 1, 1, 1);
+  wIndex.add(1, 2, 3, 4);
+  wIndex.finish();
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == wNodeSize);
+
+  auto wIds = wIndex.search(0, 0, 0, 0);
+  assert(wIds.size() == 1);
+  assert(wIds.front() == 0);
+}
+
+void searchQueryMultiPointSmallNumItems()
+{
+  std::cout << "bbox search query multiple points (same min/max) with numitems < nodesize" << std::endl;
+  uint32_t wNumItems = 5;
+  uint16_t wNodeSize = 16;
+
+  auto wIndex = flatbush::Flatbush<int>::create(wNumItems, wNodeSize);
+  wIndex.add(0, 0, 0, 0);
+  wIndex.add(0, 1, 0, 1);
+  wIndex.add(1, 0, 1, 0);
+  wIndex.add(1, 1, 1, 1);
+  wIndex.add(1, 2, 3, 4);
+  wIndex.finish();
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == wNodeSize);
+
+  auto wIds = wIndex.search(0, 0, 1, 1);
+  assert(wIds.size() == 4);
+  assert(wIds.front() == 0);
+  assert(wIds.back() == 3);
+}
+
+void searchQueryMultiPointLargeNumItems()
+{
+  std::cout << "bbox search query multiple points (same min/max) with numitems > nodesize" << std::endl;
+  uint32_t wNumItems = 9;
+  uint16_t wNodeSize = 4;
+
+  auto wIndex = flatbush::Flatbush<int>::create(wNumItems, wNodeSize);
+  wIndex.add(0, 0, 0, 0);
+  wIndex.add(0, 1, 0, 1);
+  wIndex.add(1, 0, 1, 0);
+  wIndex.add(1, 1, 1, 1);
+  wIndex.add(1, 2, 3, 4);
+  wIndex.add(5, 6, 7, 8);
+  wIndex.add(1, 3, 5, 7);
+  wIndex.add(2, 4, 6, 8);
+  wIndex.add(9, 9, 9, 9);
+  wIndex.finish();
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == wNodeSize);
+
+  auto wIds = wIndex.search(0, 0, 1, 1);
+  assert(wIds.size() == 4);
+  assert(wIds.front() == 0);
+  assert(wIds.back() == 1);
+}
+
 int main(int argc, char** argv)
 {
   indexBunchOfRectangles();
@@ -453,6 +521,10 @@ int main(int argc, char** argv)
   fromWrongMagic();
   fromWrongVersion();
   fromWrongEncodedType();
+  searchQuerySinglePointSmallNumItems();
+  searchQuerySinglePointLargeNumItems();
+  searchQueryMultiPointSmallNumItems();
+  searchQueryMultiPointLargeNumItems();
 
   return EXIT_SUCCESS;
 }
