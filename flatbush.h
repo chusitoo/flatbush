@@ -214,7 +214,7 @@ namespace flatbush {
 
     static Flatbush<ArrayType> create(uint32_t iNumItems, uint16_t iNodeSize = 16);
     static Flatbush<ArrayType> from(const uint8_t* iData);
-    
+
   private:
     explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
     explicit Flatbush(const uint8_t* iData) noexcept;
@@ -298,8 +298,8 @@ namespace flatbush {
   {
     iNodeSize = std::min(std::max(iNodeSize, static_cast<uint16_t>(2)), static_cast<uint16_t>(65535));
     init(iNumItems, iNodeSize);
-     
-    mData.assign(mData.capacity(), 0); 
+
+    mData.assign(mData.capacity(), 0);
     mData[0] = gValidityFlag;
     mData[1] = (gVersion << 4) + arrayTypeIndex<ArrayType>();
     *reinterpret_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -394,7 +394,7 @@ namespace flatbush {
       mBoxes[mPosition++] = mMaxY;
       return;
     }
-    
+
     const auto wWidth = mMaxX - mMinX;
     const auto wHeight = mMaxY - mMinY;
     std::vector<uint32_t> wHilbertValues(wNumItems);
@@ -566,7 +566,7 @@ namespace flatbush {
 
     std::priority_queue<IndexDistance> wQueue;
     std::vector<size_t> wResults;
-    const auto wMaxDistSquared = iMaxDistance * iMaxDistance; 
+    const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
     const auto wNumItems = numItems() << 2;
     const auto wNodeSize = nodeSize() << 2;
     auto wNodeIndex = mBoxes.size() - 4;
@@ -586,7 +586,7 @@ namespace flatbush {
         const auto wDistance = wDistX * wDistX + wDistY * wDistY;
 
         if (wNodeIndex >= wNumItems)
-        { 
+        {
           wQueue.push({ wIndex << 1, wDistance });
         }
         else if (!iFilterFn || iFilterFn(wIndex)) // leaf node
@@ -600,7 +600,7 @@ namespace flatbush {
       while (wHasWork && !wQueue.empty() && (wQueue.top().mId & 1))
       {
         wHasWork = (wQueue.top().mDistance <= wMaxDistSquared);
-        
+
         if (wHasWork)
         {
           wResults.push_back(wQueue.top().mId >> 1);
