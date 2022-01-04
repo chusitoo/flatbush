@@ -22,11 +22,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#pragma once
+#ifndef LIB_FLATBUSH_H
+#define LIB_FLATBUSH_H
 
 #include <algorithm>
-#include <cmath>
-#include <cstring>
 #include <functional>
 #include <limits>
 #include <queue>
@@ -37,7 +36,9 @@ SOFTWARE.
 
 #ifndef MINIMAL_SPAN
 #include <span>
-using std::span;
+namespace flatbush {
+  using std::span;
+}
 #else
 namespace flatbush {
   template<typename Type>
@@ -191,6 +192,16 @@ namespace flatbush {
     if (std::is_same<ArrayType, double>::value)        return 8;
     return gInvalidArrayType; // Should not happen
   }
+  
+  inline std::string arrayTypeName(size_t iIndex)
+  {
+    static const std::string sArrayTypeNames[9]
+    {
+      "int8_t", "uint8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "float", "double"
+    };
+    
+    return iIndex < 9 ? sArrayTypeNames[iIndex] : "unknown";
+  }
 
   template <typename ArrayType>
   class Flatbush
@@ -253,7 +264,7 @@ namespace flatbush {
   {
     if (arrayTypeIndex<ArrayType>() == gInvalidArrayType)
     {
-      throw std::runtime_error("Unexpected typed array class. Only integral and floating point allowed.");
+      throw std::runtime_error("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
     }
 
     if (iNumItems <= 0)
@@ -278,16 +289,17 @@ namespace flatbush {
       throw std::invalid_argument("Data does not appear to be in a Flatbush format.");
     }
 
-    auto wVersionAndType = iData[1];
-    if ((wVersionAndType >> 4) != gVersion)
+    auto wEncodedVersion = iData[1] >> 4;
+    if (wEncodedVersion != gVersion)
     {
-      throw std::invalid_argument("Got v" + std::to_string(wVersionAndType >> 4) + " data when expected v" + std::to_string(gVersion) + ".");
+      throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) + " data when expected v" + std::to_string(gVersion) + ".");
     }
 
-    auto wArrayTypeIndex = arrayTypeIndex<ArrayType>();
-    if (wArrayTypeIndex != (wVersionAndType & 0x0f))
+    auto wExpectedType = arrayTypeIndex<ArrayType>();
+    auto wEncodedType = iData[1] & 0x0f;
+    if (wExpectedType != wEncodedType)
     {
-      throw std::runtime_error("Template type does not match encoded type.");
+      throw std::runtime_error("Expected type is " + arrayTypeName(wEncodedType) + ", but got template type " + arrayTypeName(wExpectedType));
     }
 
     return Flatbush<ArrayType>(iData);
@@ -621,3 +633,5 @@ namespace flatbush {
   }
 
 }
+
+#endif // LIB_FLATBUSH_H

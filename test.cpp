@@ -341,7 +341,7 @@ void wrongTemplateType()
   }
   catch (const std::runtime_error& iError)
   {
-    wIsThrown = (std::string("Unexpected typed array class. Only integral and floating point allowed.").compare(iError.what()) == 0);
+    wIsThrown = (std::string("Unexpected typed array class. Expecting non 64-bit integral or floating point.").compare(iError.what()) == 0);
   }
 
   assert(wIsThrown);
@@ -409,7 +409,7 @@ void fromWrongEncodedType()
   }
   catch (const std::runtime_error& iError)
   {
-    wIsThrown = (std::string("Template type does not match encoded type.").compare(iError.what()) == 0);
+    wIsThrown = (std::string("Expected type is double, but got template type int32_t").compare(iError.what()) == 0);
   }
 
   assert(wIsThrown);
