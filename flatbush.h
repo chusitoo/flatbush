@@ -37,8 +37,9 @@ SOFTWARE.
 
 #ifndef MINIMAL_SPAN
 #include <span>
+using std::span;
 #else
-namespace std {
+namespace flatbush {
   template<typename Type>
   class span
   {
@@ -90,7 +91,6 @@ namespace std {
 #endif // MINIMAL_SPAN
 
 namespace flatbush {
-
   using FilterCb = std::function<bool(size_t)>;
   constexpr double gMaxDouble = std::numeric_limits<double>::max();
   constexpr size_t gMaxUint32 = std::numeric_limits<size_t>::max();
@@ -209,8 +209,8 @@ namespace flatbush {
     inline uint16_t nodeSize() const noexcept { return mData[2] | mData[3] << 8; };
     inline uint32_t numItems() const noexcept { return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24; };
     inline size_t boxSize() const noexcept { return mBoxes.size(); };
-    inline size_t indexSize() const noexcept { return mIsWideIndex ? mIndicesU32.size() : mIndicesU16.size(); };
-    inline std::span<const uint8_t> data() const noexcept { return { mData.data(), mData.capacity() }; };
+    inline size_t indexSize() const noexcept { return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size(); };
+    inline span<const uint8_t> data() const noexcept { return { mData.data(), mData.capacity() }; };
 
     static Flatbush<ArrayType> create(uint32_t iNumItems, uint16_t iNodeSize = 16);
     static Flatbush<ArrayType> from(const uint8_t* iData);
@@ -234,9 +234,9 @@ namespace flatbush {
 
     // views
     std::vector<uint8_t> mData;
-    std::span<ArrayType> mBoxes;
-    std::span<uint16_t> mIndicesU16;
-    std::span<uint32_t> mIndicesU32;
+    span<ArrayType> mBoxes;
+    span<uint16_t> mIndicesUint16;
+    span<uint32_t> mIndicesUint32;
     // pick appropriate index view
     bool mIsWideIndex;
     // box stuff
@@ -349,9 +349,9 @@ namespace flatbush {
     const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wNumNodes * wIndexArrayTypeSize;
     // Views
     mData.reserve(wDataSize);
-    mBoxes = std::span<ArrayType>(reinterpret_cast<ArrayType*>(&mData[gHeaderByteSize]), wNumNodes * 4);
-    mIndicesU16 = std::span<uint16_t>(reinterpret_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
-    mIndicesU32 = std::span<uint32_t>(reinterpret_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
+    mBoxes = span<ArrayType>(reinterpret_cast<ArrayType*>(&mData[gHeaderByteSize]), wNumNodes * 4);
+    mIndicesUint16 = span<uint16_t>(reinterpret_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
+    mIndicesUint32 = span<uint32_t>(reinterpret_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
   }
 
   template <typename ArrayType>
@@ -359,8 +359,8 @@ namespace flatbush {
   {
     const auto wIndex = mPosition >> 2;
 
-    if (mIsWideIndex) mIndicesU32[wIndex] = static_cast<uint32_t>(wIndex);
-    else mIndicesU16[wIndex] = static_cast<uint16_t>(wIndex);
+    if (mIsWideIndex) mIndicesUint32[wIndex] = static_cast<uint32_t>(wIndex);
+    else mIndicesUint16[wIndex] = static_cast<uint16_t>(wIndex);
 
     mBoxes[mPosition++] = iMinX;
     mBoxes[mPosition++] = iMinY;
@@ -440,9 +440,9 @@ namespace flatbush {
         }
 
         // add the new node to the tree data
-        if (mIsWideIndex) mIndicesU32[(mPosition >> 2)] = static_cast<uint32_t>(wNodeIndex);
-        else mIndicesU16[(mPosition >> 2)] = static_cast<uint16_t>(wNodeIndex);
-
+        if (mIsWideIndex) mIndicesUint32[(mPosition >> 2)] = static_cast<uint32_t>(wNodeIndex);
+        else mIndicesUint16[(mPosition >> 2)] = static_cast<uint16_t>(wNodeIndex);
+        
         mBoxes[mPosition++] = wNodeMinX;
         mBoxes[mPosition++] = wNodeMinY;
         mBoxes[mPosition++] = wNodeMaxX;
@@ -488,8 +488,8 @@ namespace flatbush {
     std::swap(mBoxes[wIdxLeft + 2], mBoxes[wIdxRight + 2]);
     std::swap(mBoxes[wIdxLeft + 3], mBoxes[wIdxRight + 3]);
 
-    if (mIsWideIndex) std::swap(mIndicesU32[iLeft], mIndicesU32[iRight]);
-    else std::swap(mIndicesU16[iLeft], mIndicesU16[iRight]);
+    if (mIsWideIndex) std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
+    else std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
   }
 
   template <typename ArrayType>
@@ -528,7 +528,7 @@ namespace flatbush {
         if (iMinX > mBoxes[wPosition + 2]) continue; // minX > nodeMaxX
         if (iMinY > mBoxes[wPosition + 3]) continue; // minY > nodeMaxY
 
-        const auto wIndex = (mIsWideIndex ? mIndicesU32[wPosition >> 2] : mIndicesU16[wPosition >> 2]) | 0;
+        const auto wIndex = (mIsWideIndex ? mIndicesUint32[wPosition >> 2] : mIndicesUint16[wPosition >> 2]) | 0;
 
         if (wNodeIndex >= wNumItems)
         {
@@ -580,7 +580,7 @@ namespace flatbush {
       // search through child nodes
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; wPosition += 4)
       {
-        const size_t wIndex = (mIsWideIndex ? mIndicesU32[wPosition >> 2] : mIndicesU16[wPosition >> 2]) | 0;
+        const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition >> 2] : mIndicesUint16[wPosition >> 2]) | 0;
         const auto wDistX = wAxisDist(iX, mBoxes[wPosition], mBoxes[wPosition + 2]);
         const auto wDistY = wAxisDist(iY, mBoxes[wPosition + 1], mBoxes[wPosition + 3]);
         const auto wDistance = wDistX * wDistX + wDistY * wDistY;
@@ -619,4 +619,5 @@ namespace flatbush {
 
     return wResults;
   }
+
 }
