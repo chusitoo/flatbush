@@ -11,44 +11,56 @@ Unit tests and benchmarks are virtually identical in order to provide a close co
 ### Create and build the index
 
 ```cpp
-using namespace flatbush;
-
 // initialize Flatbush for 1000 items
-auto index = Flatbush<double>::create(1000);
+auto index = flatbush::start<double>(1000);
 
 // fill it with 1000 rectangles
-for (auto p : items) {
-    index.add(p.minX, p.minY, p.maxX, p.maxY);
+for (const auto& box : boxes) {
+	index.add({ box.minX, box.minY, box.maxX, box.maxY });
+	// if boxes is a container of Box<double>
+	index.add(box);
 }
 
 // perform the indexing
 index.finish();
+
+//... or use convenience method
+std::vector<flatbush::Box<double>> boxes;
+
+// ... fill boxes ...
+
+auto index = flatbush::create(boxes);
+
 ```
 
 ### Searching a bounding box
 
 ```cpp
 // make a bounding box query
-auto foundIds = index.search(minX, minY, maxX, maxY);
+flatbush::Box<double> boundingBox{40, 40, 60, 60};
+auto foundIds = index.search(boundingBox);
 
 // make a bounding box query using a filter function 
-auto evenIds = index.search(minX, minY, maxX, maxY, [](size_t id){ return id % 2 == 0; });
+auto filterEven = [](size_t id){ return id % 2 == 0; };
+auto evenIds = index.search({40, 40, 60, 60}, filterEven);
 ```
 
 ### Searching for nearest neighbors
 
 ```cpp
 // make a k-nearest-neighbors query
-auto neighborIds = index.neighbors(x, y);
+flatbush::Point<double> targetPoint{40, 60};
+auto neighborIds = index.neighbors(targetPoint);
 
 // make a k-nearest-neighbors query with a maximum result threshold
-auto neighborIds = index.neighbors(x, y, maxResults);
+auto neighborIds = index.neighbors({40, 60}, maxResults);
 
 // make a k-nearest-neighbors query with a maximum result threshold and limit the distance 
-auto neighborIds = index.neighbors(x, y, maxResults, maxDistance);
+auto neighborIds = index.neighbors(targetPoint, maxResults, maxDistance);
 
 // make a k-nearest-neighbors query using a filter function
-auto evenIds = index.neighbors(x, y, maxResults, maxDistance, [](size_t id){ return id % 2 == 0; });
+auto filterOdd = [](size_t id){ return id % 2 == 0; };
+auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
 ### Reconstruct from raw data
@@ -56,11 +68,11 @@ auto evenIds = index.neighbors(x, y, maxResults, maxDistance, [](size_t id){ ret
 // get the view to the raw array buffer
 auto buffer = index.data();
 
-// pass the underlying data as the only parameter
-// NOTE: the template type has to match the type that was encoded 
-auto other = Flatbush<double>::from(buffer.data());
+// then pass the underlying data, specifying the template type
+// NOTE: an exception will be thrown if template != encoded type
+auto other = flatbush::from<double>(buffer.data());
 // or
-auto other = Flatbush<double>::from(&buffer[0]);
+auto other = flatbush::from<double>(&buffer[0]);
 ```
 
 ## Compiling

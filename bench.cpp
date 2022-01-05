@@ -50,7 +50,7 @@ void benchSearch(const flatbush::Flatbush<double>& iIndex, const std::vector<dou
   auto wStartTime = std::chrono::high_resolution_clock::now();
 
   for (size_t wIdx = 0; wIdx < iBoxes.size(); wIdx += 4) {
-    iIndex.search(iBoxes[wIdx], iBoxes[wIdx + 1], iBoxes[wIdx + 2], iBoxes[wIdx + 3]);
+    iIndex.search({ iBoxes[wIdx], iBoxes[wIdx + 1], iBoxes[wIdx + 2], iBoxes[wIdx + 3] });
   }
 
   auto wEndTime = std::chrono::high_resolution_clock::now();
@@ -62,7 +62,7 @@ void benchNeighbors(const flatbush::Flatbush<double>& iIndex, const std::vector<
   auto wStartTime = std::chrono::high_resolution_clock::now();
 
   for (size_t wIdx = 0; wIdx < iNumTests; ++wIdx) {
-    iIndex.neighbors(iCoords[4 * wIdx], iCoords[4 * wIdx + 1], iNeighbors);
+    iIndex.neighbors({ iCoords[4 * wIdx], iCoords[4 * wIdx + 1] }, iNeighbors);
   }
 
   auto wEndTime = std::chrono::high_resolution_clock::now();
@@ -93,9 +93,9 @@ int main(int argc, char** argv)
 
   auto wStartTime = std::chrono::high_resolution_clock::now();
 
-  auto wIndex = flatbush::Flatbush<double>::create(wNumItems, wNodeSize);
+  auto wIndex = flatbush::start<double>(wNumItems, wNodeSize);
   for (size_t wIdx = 0; wIdx < wCoords.size(); wIdx += 4) {
-    wIndex.add(wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3]);
+    wIndex.add({ wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3] });
   }
   wIndex.finish();
 
