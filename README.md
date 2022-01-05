@@ -2,9 +2,13 @@
 
 [![CMake](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml)
 
-A C++ implementation that mimics the great Flatbush JS library: https://github.com/mourner/flatbush
+A C++ implementation / adaptation of the great Flatbush JS library: https://github.com/mourner/flatbush
 
-Unit tests and benchmarks are virtually identical in order to provide a close comparison to the original.
+As such, unit tests and benchmarks are virtually identical in order to provide a close comparison to the original.
+
+## Acknowledgement
+
+[A very fast static spatial index for 2D points and rectangles in JavaScript](https://github.com/mourner/flatbush) by Vladimir Agafonkin, licensed under [ISC](https://github.com/mourner/flatbush/blob/master/LICENSE)
 
 ## Usage
 
@@ -16,9 +20,9 @@ auto index = flatbush::start<double>(1000);
 
 // fill it with 1000 rectangles
 for (const auto& box : boxes) {
-	index.add({ box.minX, box.minY, box.maxX, box.maxY });
-	// if boxes is a container of Box<double>
-	index.add(box);
+    index.add({ box.minX, box.minY, box.maxX, box.maxY });
+    // if boxes is a container of Box<double>
+    index.add(box);
 }
 
 // perform the indexing
@@ -59,7 +63,7 @@ auto neighborIds = index.neighbors({40, 60}, maxResults);
 auto neighborIds = index.neighbors(targetPoint, maxResults, maxDistance);
 
 // make a k-nearest-neighbors query using a filter function
-auto filterOdd = [](size_t id){ return id % 2 == 0; };
+auto filterOdd = [](size_t id){ return id % 2 != 0; };
 auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
