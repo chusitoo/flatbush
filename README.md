@@ -2,7 +2,7 @@
 
 [![CMake](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml)
 
-A C++ implementation / adaptation of the great Flatbush JS library: https://github.com/mourner/flatbush
+A C++ adaptation of the great Flatbush JS library which implements a packed Hilbert R-tree algorithm.
 
 As such, unit tests and benchmarks are virtually identical in order to provide a close comparison to the original.
 
