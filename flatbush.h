@@ -456,23 +456,22 @@ namespace flatbush {
       return;
     }
 
-    const auto wWidth = mBounds.mMaxX - mBounds.mMinX;
-    const auto wHeight = mBounds.mMaxY - mBounds.mMinY;
     std::vector<uint32_t> wHilbertValues(wNumItems);
-    const uint32_t wHilbertMax = (1 << 16) - 1;
+    const auto wHilbertMax = std::numeric_limits<uint16_t>::max();
+    const auto wHilbertWidth = wHilbertMax / (mBounds.mMaxX - mBounds.mMinX);
+    const auto wHilbertHeight = wHilbertMax / (mBounds.mMaxY - mBounds.mMinY);
 
     // map item centers into Hilbert coordinate space and calculate Hilbert values
-    for (size_t wIdx = 0; wIdx < wNumItems; ++wIdx)
+    for (size_t wIdx = 0, wPosition = 0; wIdx < wNumItems; ++wIdx)
     {
-      const auto wPosition = wIdx << 2;
-      const auto& wMinX = mBoxes[wPosition];
-      const auto& wMinY = mBoxes[wPosition + 1];
-      const auto& wMaxX = mBoxes[wPosition + 2];
-      const auto& wMaxY = mBoxes[wPosition + 3];
+      const auto& wMinX = mBoxes[wPosition++];
+      const auto& wMinY = mBoxes[wPosition++];
+      const auto& wMaxX = mBoxes[wPosition++];
+      const auto& wMaxY = mBoxes[wPosition++];
       wHilbertValues[wIdx] = detail::HilbertXYToIndex(
         16,
-        static_cast<uint32_t>(wHilbertMax * ((wMinX + wMaxX) / 2 - mBounds.mMinX) / wWidth),
-        static_cast<uint32_t>(wHilbertMax * ((wMinY + wMaxY) / 2 - mBounds.mMinY) / wHeight)
+        static_cast<uint32_t>(wHilbertWidth * ((wMinX + wMaxX) / 2 - mBounds.mMinX)),
+        static_cast<uint32_t>(wHilbertHeight * ((wMinY + wMaxY) / 2 - mBounds.mMinY))
       );
     }
 
