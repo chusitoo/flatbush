@@ -107,11 +107,11 @@ On a i7-11850H @ 2.50GHz, Win10 version 20H2 / Ubuntu 20.04.3 LTS
 
 bench test | clang 10.0.0 | gcc 9.3.0 | cl 14.29.30137.0
 --- | --- | --- | ---
-index 1000000 rectangles: | 75ms | 90ms | 105ms
-1000 searches 10%: | 153ms | 134ms | 236ms
-1000 searches 1%: | 29ms | 28ms | 33ms
-1000 searches 0.01%: | 4ms | 5ms | 7ms
-1000 searches of 100 neighbors: | 16ms | 16ms | 22ms
-1 searches of 1000000 neighbors: | 85ms | 62ms | 57ms
-100000 searches of 1 neighbors: | 365ms | 442ms | 587ms
+index 1000000 rectangles: | 93ms | 112ms | 124ms
+1000 searches 10%: | 120ms | 131ms | 194ms
+1000 searches 1%: | 21ms | 23ms | 26ms
+1000 searches 0.01%: | 3ms | 3ms | 4ms
+1000 searches of 100 neighbors: | 12ms | 12ms | 17ms
+1 searches of 1000000 neighbors: | 80ms | 59ms | 61ms
+100000 searches of 1 neighbors: | 297ms | 363ms | 503ms
 ```
