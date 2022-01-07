@@ -77,31 +77,34 @@ static const std::vector<uint8_t> gFlatbush
 
 flatbush::Flatbush<double> createIndex()
 {
-  auto wIndex = flatbush::start<double>(static_cast<uint32_t>(gData.size() / 4));
-  assert(wIndex.numItems() == gData.size() / 4);
-  assert(wIndex.nodeSize() == 16);
+  auto wNumItems = gData.size() / 4;
+  flatbush::FlatbushBuilder<double> wBuilder;
 
   for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4)
   {
-    wIndex.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
+    wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
   }
-  wIndex.finish();
+  auto wIndex = wBuilder.finish();
+
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
 
   return wIndex;
 }
 
 flatbush::Flatbush<double> createSmallIndex(uint32_t iNumItems, uint16_t iNodeSize)
 {
-  auto wIndex = flatbush::start<double>(iNumItems, iNodeSize);
-  assert(wIndex.numItems() == iNumItems);
-  assert(wIndex.nodeSize() == iNodeSize);
+  flatbush::FlatbushBuilder<double> wBuilder(iNumItems, iNodeSize);
 
   auto wSize = static_cast<size_t>(iNumItems) * 4;
   for (size_t wIdx = 0; wIdx < wSize; wIdx += 4)
   {
-    wIndex.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
+    wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
   }
-  wIndex.finish();
+  auto wIndex = wBuilder.finish();
+
+  assert(wIndex.numItems() == iNumItems);
+  assert(wIndex.nodeSize() == iNodeSize);
 
   return wIndex;
 }
@@ -194,48 +197,12 @@ void reconstructIndexFromArrayBuffer()
   std::cout << "reconstructs an index from array buffer" << std::endl;
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();
-  auto wIndex2 = flatbush::from<double>(wIndexBuffer.data());
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(wIndexBuffer.data());
   auto wIndex2Buffer = wIndex2.data();
 
   assert(wIndexBuffer.size() == wIndex2Buffer.size());
 
   assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), wIndex2Buffer.data()));
-}
-
-void addLessItemsThanIndexSize()
-{
-  std::cout << "throws an error if added less items than the index size" << std::endl;
-  bool wIsThrown = false;
-
-  try
-  {
-    auto wIndex = flatbush::start<double>(static_cast<uint32_t>(gData.size() / 4));
-    wIndex.finish();
-  }
-  catch (const std::runtime_error& iError)
-  {
-    wIsThrown = (std::string("Added 0 items when expected 100.").compare(iError.what()) == 0);
-  }
-
-  assert(wIsThrown);
-}
-
-void searchingBeforeIndexing()
-{
-  std::cout << "throws an error if searching before indexing" << std::endl;
-  bool wIsThrown = false;
-
-  try
-  {
-    auto wIndex = flatbush::start<double>(static_cast<uint32_t>(gData.size() / 4));
-    wIndex.search({ 0, 0, 20, 20 });
-  }
-  catch (const std::runtime_error& iError)
-  {
-    wIsThrown = (std::string("Data not yet indexed - call index.finish().").compare(iError.what()) == 0);
-  }
-
-  assert(wIsThrown);
 }
 
 void doesNotFreezeOnZeroNumItems()
@@ -245,7 +212,8 @@ void doesNotFreezeOnZeroNumItems()
 
   try
   {
-    flatbush::start<double>(0);
+    flatbush::FlatbushBuilder<double> wBuilder;
+    wBuilder.finish();
   }
   catch (const std::invalid_argument& iError)
   {
@@ -300,13 +268,10 @@ void neighborsQueryFilterFunc()
 void returnIndexOfNewlyAddedRectangle()
 {
   std::cout << "returns index of newly-added rectangle" << std::endl;
-  uint32_t wCount = 5;
-  auto wIndex = flatbush::start<double>(wCount);
+  flatbush::FlatbushBuilder<double> wBuilder;
 
-  std::vector<size_t> wIds;
-  for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-    auto wExpected = wIndex.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
-    assert(wIdx == wExpected);
+  for (size_t wIdx = 0; wIdx < 5; ++wIdx) {
+    assert(wIdx == wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] }));
   }
 }
 
@@ -323,9 +288,9 @@ void searchQueryFilterFunc()
 void reconstructIndexFromJSArrayBuffer()
 {
   std::cout << "reconstructs an index from JS array buffer" << std::endl;
-  auto wIndex = flatbush::from<double>(gFlatbush.data());
+  auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data());
   auto wIndexBuffer = wIndex.data();
-  
+
   assert(wIndexBuffer.size() == gFlatbush.size());
 
   assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), gFlatbush.data()));
@@ -338,7 +303,7 @@ void wrongTemplateType()
 
   try
   {
-    auto wIndex = flatbush::start<std::string>(16);
+    flatbush::FlatbushBuilder<std::string> wBuilder;
   }
   catch (const std::runtime_error& iError)
   {
@@ -355,7 +320,7 @@ void fromNull()
 
   try
   {
-    flatbush::from<double>(nullptr);
+    flatbush::FlatbushBuilder<double>::from(nullptr);
   }
   catch (const std::invalid_argument& iError)
   {
@@ -372,7 +337,7 @@ void fromWrongMagic()
 
   try
   {
-    flatbush::from<double>(std::vector<uint8_t>{ 0xf1 }.data());
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 0xf1 }.data());
   }
   catch (const std::invalid_argument& iError)
   {
@@ -389,7 +354,7 @@ void fromWrongVersion()
 
   try
   {
-    flatbush::from<double>(std::vector<uint8_t>{ 0xfb, 2 << 4 }.data());
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 0xfb, 2 << 4 }.data());
   }
   catch (const std::invalid_argument& iError)
   {
@@ -406,7 +371,7 @@ void fromWrongEncodedType()
 
   try
   {
-    flatbush::from<int>(gFlatbush.data());
+    flatbush::FlatbushBuilder<int>::from(gFlatbush.data());
   }
   catch (const std::runtime_error& iError)
   {
@@ -419,14 +384,13 @@ void fromWrongEncodedType()
 void searchQuerySinglePointSmallNumItems()
 {
   std::cout << "bbox search query single point (same min/max) with numitems < nodesize" << std::endl;
-  uint32_t wNumItems = 1;
-  uint16_t wNodeSize = 16;
-  
-  auto wIndex = flatbush::start<int>(wNumItems, wNodeSize);
-  wIndex.add({ 0, 0, 0, 0 });
-  wIndex.finish();
-  assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == wNodeSize);
+
+  flatbush::FlatbushBuilder<int> wBuilder;
+  wBuilder.add({ 0, 0, 0, 0 });
+  auto wIndex = wBuilder.finish();
+
+  assert(wIndex.numItems() == 1);
+  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 0, 0 });
   assert(wIds.size() == 1);
@@ -439,13 +403,14 @@ void searchQuerySinglePointLargeNumItems()
   uint32_t wNumItems = 5;
   uint16_t wNodeSize = 4;
 
-  auto wIndex = flatbush::start<int>(wNumItems, wNodeSize);
-  wIndex.add({ 0, 0, 0, 0 });
-  wIndex.add({ 0, 1, 0, 1 });
-  wIndex.add({ 1, 0, 1, 0 });
-  wIndex.add({ 1, 1, 1, 1 });
-  wIndex.add({ 1, 2, 3, 4 });
-  wIndex.finish();
+  flatbush::FlatbushBuilder<int> wBuilder(wNumItems, wNodeSize);
+  wBuilder.add({ 0, 0, 0, 0 });
+  wBuilder.add({ 0, 1, 0, 1 });
+  wBuilder.add({ 1, 0, 1, 0 });
+  wBuilder.add({ 1, 1, 1, 1 });
+  wBuilder.add({ 1, 2, 3, 4 });
+  auto wIndex = wBuilder.finish();
+
   assert(wIndex.numItems() == wNumItems);
   assert(wIndex.nodeSize() == wNodeSize);
 
@@ -458,17 +423,17 @@ void searchQueryMultiPointSmallNumItems()
 {
   std::cout << "bbox search query multiple points (same min/max) with numitems < nodesize" << std::endl;
   uint32_t wNumItems = 5;
-  uint16_t wNodeSize = 16;
 
-  auto wIndex = flatbush::start<int>(wNumItems, wNodeSize);
-  wIndex.add({ 0, 0, 0, 0 });
-  wIndex.add({ 0, 1, 0, 1 });
-  wIndex.add({ 1, 0, 1, 0 });
-  wIndex.add({ 1, 1, 1, 1 });
-  wIndex.add({ 1, 2, 3, 4 });
-  wIndex.finish();
+  flatbush::FlatbushBuilder<int> wBuilder;
+  wBuilder.add({ 0, 0, 0, 0 });
+  wBuilder.add({ 0, 1, 0, 1 });
+  wBuilder.add({ 1, 0, 1, 0 });
+  wBuilder.add({ 1, 1, 1, 1 });
+  wBuilder.add({ 1, 2, 3, 4 });
+  auto wIndex = wBuilder.finish();
+
   assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == wNodeSize);
+  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 1, 1 });
   assert(wIds.size() == 4);
@@ -482,17 +447,18 @@ void searchQueryMultiPointLargeNumItems()
   uint32_t wNumItems = 9;
   uint16_t wNodeSize = 4;
 
-  auto wIndex = flatbush::start<int>(wNumItems, wNodeSize);
-  wIndex.add({ 0, 0, 0, 0 });
-  wIndex.add({ 0, 1, 0, 1 });
-  wIndex.add({ 1, 0, 1, 0 });
-  wIndex.add({ 1, 1, 1, 1 });
-  wIndex.add({ 1, 2, 3, 4 });
-  wIndex.add({ 5, 6, 7, 8 });
-  wIndex.add({ 1, 3, 5, 7 });
-  wIndex.add({ 2, 4, 6, 8 });
-  wIndex.add({ 9, 9, 9, 9 });
-  wIndex.finish();
+  flatbush::FlatbushBuilder<int> wBuilder(wNumItems, wNodeSize);
+  wBuilder.add({ 0, 0, 0, 0 });
+  wBuilder.add({ 0, 1, 0, 1 });
+  wBuilder.add({ 1, 0, 1, 0 });
+  wBuilder.add({ 1, 1, 1, 1 });
+  wBuilder.add({ 1, 2, 3, 4 });
+  wBuilder.add({ 5, 6, 7, 8 });
+  wBuilder.add({ 1, 3, 5, 7 });
+  wBuilder.add({ 2, 4, 6, 8 });
+  wBuilder.add({ 9, 9, 9, 9 });
+  auto wIndex = wBuilder.finish();
+
   assert(wIndex.numItems() == wNumItems);
   assert(wIndex.nodeSize() == wNodeSize);
 
@@ -502,23 +468,30 @@ void searchQueryMultiPointLargeNumItems()
   assert(wIds.back() == 1);
 }
 
-void indexBunchOfRectanglesInPlace()
+void clearAndReuseBuilder()
 {
-  std::cout << "indexes a bunch of rectangles in place (from vector)" << std::endl;
-  auto wIndex = createIndex();
-  
-  std::vector<flatbush::Box<double>> wBoxVector;
+  std::cout << "clear and reuse builder" << std::endl;
+
+  flatbush::FlatbushBuilder<double> wBuilder;
+
   for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4)
   {
-    wBoxVector.push_back({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
+    wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
   }
-  auto wIndex2 = flatbush::create(wBoxVector);
-  
-  auto wIndexBuffer = wIndex.data();
-  auto wIndex2Buffer = wIndex2.data();
 
-  assert(wIndexBuffer.size() == wIndex2Buffer.size());
-  assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), wIndex2Buffer.data()));
+  auto wIndex = wBuilder.finish();
+  wBuilder.add({ 1, 2, 3, 4 });
+  auto wIndex2 = wBuilder.finish();
+
+  assert(wIndex2.numItems() == wIndex.numItems() + 1);
+  assert(wIndex2.nodeSize() == wIndex.nodeSize());
+
+  wBuilder.clear();
+  wBuilder.add({ 1, 2, 3, 4 });
+  auto wIndex3 = wBuilder.finish();
+
+  assert(wIndex3.numItems() == 1);
+  assert(wIndex3.nodeSize() == wIndex2.nodeSize());
 }
 
 int main(int argc, char** argv)
@@ -527,8 +500,6 @@ int main(int argc, char** argv)
   skipSortingLessThanNodeSizeRectangles();
   performBoxSearch();
   reconstructIndexFromArrayBuffer();
-  addLessItemsThanIndexSize();
-  searchingBeforeIndexing();
   doesNotFreezeOnZeroNumItems();
   returnIndexOfNewlyAddedRectangle();
   performNeighborsQuery();
@@ -545,7 +516,7 @@ int main(int argc, char** argv)
   searchQuerySinglePointLargeNumItems();
   searchQueryMultiPointSmallNumItems();
   searchQueryMultiPointLargeNumItems();
-  indexBunchOfRectanglesInPlace();
+  clearAndReuseBuilder();
 
   return EXIT_SUCCESS;
 }

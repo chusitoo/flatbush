@@ -41,6 +41,7 @@ namespace flatbush {
 }
 #else
 namespace flatbush {
+
   template<typename Type>
   class span
   {
@@ -88,13 +89,16 @@ namespace flatbush {
       return mPtr + mLen;
     }
   };
+
 }
 #endif // MINIMAL_SPAN
 
 namespace flatbush {
+
   using FilterCb = std::function<bool(size_t)>;
   constexpr double gMaxDouble = std::numeric_limits<double>::max();
   constexpr size_t gMaxUint32 = std::numeric_limits<size_t>::max();
+  constexpr size_t gDefaultNodeSize = 16;
   constexpr size_t gHeaderByteSize = 8;
   constexpr uint8_t gInvalidArrayType = std::numeric_limits<uint8_t>::max();
   constexpr uint8_t gValidityFlag = 0xfb;
@@ -192,14 +196,14 @@ namespace flatbush {
     if (std::is_same<ArrayType, double>::value)        return 8;
     return gInvalidArrayType;
   }
-  
+
   inline std::string arrayTypeName(size_t iIndex)
   {
     static const std::string sArrayTypeNames[9]
     {
       "int8_t", "uint8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "float", "double"
     };
-    
+
     return iIndex < 9 ? sArrayTypeNames[iIndex] : "unknown";
   }
 
@@ -220,8 +224,86 @@ namespace flatbush {
   };
 
   template <typename ArrayType> class Flatbush;
-  template <typename ArrayType> Flatbush<ArrayType> start(uint32_t iNumItems, uint16_t iNodeSize = 16);
-  template <typename ArrayType> Flatbush<ArrayType> from(const uint8_t* iData);
+  template<class ArrayType>
+  class FlatbushBuilder
+  {
+  public:
+    explicit FlatbushBuilder(uint32_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
+      : mNodeSize(iNodeSize)
+    {
+      if (arrayTypeIndex<ArrayType>() == gInvalidArrayType)
+      {
+        throw std::runtime_error("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
+      }
+      mItems.reserve(iNumItems);
+    };
+
+    inline void clear() noexcept
+    {
+      mItems.clear();
+    };
+
+    inline size_t add(Box<ArrayType> iBox) noexcept
+    {
+      mItems.push_back(iBox);
+      return mItems.size() - 1;
+    };
+
+    Flatbush<ArrayType> finish() const;
+    static Flatbush<ArrayType> from(const uint8_t* iData);
+
+  private:
+    std::uint16_t mNodeSize;
+    std::vector<Box<ArrayType>> mItems;
+  };
+
+  template <typename ArrayType>
+  Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() const
+  {
+    if (mItems.empty())
+    {
+      throw std::invalid_argument("Unpexpected numItems value: " + std::to_string(mItems.size()) + ".");
+    }
+
+    Flatbush<ArrayType> wIndex(static_cast<uint32_t>(mItems.size()), mNodeSize);
+    for (const auto& wItem : mItems)
+    {
+      wIndex.add(wItem);
+    }
+    wIndex.finish();
+
+    return wIndex;
+  };
+
+  template <typename ArrayType>
+  Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData)
+  {
+    if (!iData)
+    {
+      throw std::invalid_argument("Data is incomplete or missing.");
+    }
+
+    auto wMagic = iData[0];
+    if (wMagic != gValidityFlag)
+    {
+      throw std::invalid_argument("Data does not appear to be in a Flatbush format.");
+    }
+
+    auto wEncodedVersion = iData[1] >> 4;
+    if (wEncodedVersion != gVersion)
+    {
+      throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) + " data when expected v" + std::to_string(gVersion) + ".");
+    }
+
+    auto wExpectedType = arrayTypeIndex<ArrayType>();
+    auto wEncodedType = iData[1] & 0x0f;
+    if (wExpectedType != wEncodedType)
+    {
+      throw std::runtime_error("Expected type is " + arrayTypeName(wEncodedType) + ", but got template type " + arrayTypeName(wExpectedType));
+    }
+
+    return Flatbush<ArrayType>(iData);
+  }
 
   template <typename ArrayType>
   class Flatbush
@@ -233,23 +315,22 @@ namespace flatbush {
     Flatbush& operator=(Flatbush&&) = default;
     ~Flatbush() = default;
 
-    size_t add(Box<ArrayType> iBox) noexcept;
-    void finish();
-    std::vector<size_t> search(Box<ArrayType> iBounds, FilterCb iFilterFn = nullptr) const;
-    std::vector<size_t> neighbors(Point<ArrayType> iTarget, size_t iMaxResults = gMaxUint32, double iMaxDistance = gMaxDouble, FilterCb iFilterFn = nullptr) const;
+    std::vector<size_t> search(Box<ArrayType> iBounds, FilterCb iFilterFn = nullptr) const noexcept;
+    std::vector<size_t> neighbors(Point<ArrayType> iTarget, size_t iMaxResults = gMaxUint32, double iMaxDistance = gMaxDouble, FilterCb iFilterFn = nullptr) const noexcept;
     inline uint16_t nodeSize() const noexcept { return mData[2] | mData[3] << 8; };
     inline uint32_t numItems() const noexcept { return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24; };
     inline size_t boxSize() const noexcept { return mBoxes.size(); };
     inline size_t indexSize() const noexcept { return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size(); };
     inline span<const uint8_t> data() const noexcept { return { mData.data(), mData.capacity() }; };
 
-    template <typename T> friend Flatbush<T> start(uint32_t iNumItems, uint16_t iNodeSize);
-    template <typename T> friend Flatbush<T> from(const uint8_t* iData);
+    friend class FlatbushBuilder<ArrayType>;
 
   private:
     explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
     explicit Flatbush(const uint8_t* iData) noexcept;
 
+    size_t add(Box<ArrayType> iBox) noexcept;
+    void finish() noexcept;
     void init(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
     void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
     void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
@@ -359,14 +440,9 @@ namespace flatbush {
   }
 
   template <typename ArrayType>
-  void Flatbush<ArrayType>::finish() {
+  void Flatbush<ArrayType>::finish() noexcept
+  {
     const auto wNumItems = numItems();
-
-    if (mPosition >> 2 != wNumItems)
-    {
-      throw std::runtime_error("Added " + std::to_string(mPosition >> 2) + " items when expected " + std::to_string(wNumItems) + ".");
-    }
-
     const auto wNodeSize = nodeSize();
 
     if (wNumItems <= wNodeSize)
@@ -418,7 +494,7 @@ namespace flatbush {
 
         for (size_t wCount = 0; wCount < wNodeSize && wPosition < wEnd; ++wCount, wPosition += 4)
         {
-          if (mBoxes[wPosition]     < wNodeMinX) wNodeMinX = mBoxes[wPosition];
+          if (mBoxes[wPosition] < wNodeMinX) wNodeMinX = mBoxes[wPosition];
           if (mBoxes[wPosition + 1] < wNodeMinY) wNodeMinY = mBoxes[wPosition + 1];
           if (mBoxes[wPosition + 2] > wNodeMaxX) wNodeMaxX = mBoxes[wPosition + 2];
           if (mBoxes[wPosition + 3] > wNodeMaxY) wNodeMaxY = mBoxes[wPosition + 3];
@@ -427,7 +503,7 @@ namespace flatbush {
         // add the new node to the tree data
         if (mIsWideIndex) mIndicesUint32[(mPosition >> 2)] = static_cast<uint32_t>(wNodeIndex);
         else mIndicesUint16[(mPosition >> 2)] = static_cast<uint16_t>(wNodeIndex);
-        
+
         mBoxes[mPosition++] = wNodeMinX;
         mBoxes[mPosition++] = wNodeMinY;
         mBoxes[mPosition++] = wNodeMaxX;
@@ -468,7 +544,7 @@ namespace flatbush {
     const auto wIdxLeft = iLeft << 2;
     const auto wIdxRight = iRight << 2;
 
-    std::swap(mBoxes[wIdxLeft],     mBoxes[wIdxRight]);
+    std::swap(mBoxes[wIdxLeft], mBoxes[wIdxRight]);
     std::swap(mBoxes[wIdxLeft + 1], mBoxes[wIdxRight + 1]);
     std::swap(mBoxes[wIdxLeft + 2], mBoxes[wIdxRight + 2]);
     std::swap(mBoxes[wIdxLeft + 3], mBoxes[wIdxRight + 3]);
@@ -485,13 +561,8 @@ namespace flatbush {
   }
 
   template <typename ArrayType>
-  std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, FilterCb iFilterFn) const
+  std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, FilterCb iFilterFn) const noexcept
   {
-    if (mPosition != mBoxes.size())
-    {
-      throw std::runtime_error("Data not yet indexed - call index.finish().");
-    }
-
     const auto wNumItems = numItems() << 2;
     const auto wNodeSize = nodeSize() << 2;
     auto wNodeIndex = mBoxes.size() - 4;
@@ -533,13 +604,8 @@ namespace flatbush {
   }
 
   template <typename ArrayType>
-  std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iTarget, size_t iMaxResults, double iMaxDistance, FilterCb iFilterFn) const
+  std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iTarget, size_t iMaxResults, double iMaxDistance, FilterCb iFilterFn) const noexcept
   {
-    if (mPosition != mBoxes.size())
-    {
-      throw std::runtime_error("Data not yet indexed - call index.finish().");
-    }
-
     auto wAxisDist = [](ArrayType iValue, ArrayType iMin, ArrayType iMax)
     {
       return iValue < iMin ? iMin - iValue : iValue <= iMax ? 0 : iValue - iMax;
@@ -591,66 +657,8 @@ namespace flatbush {
     }
 
     return wResults;
-  }
+  };
 
-  template <typename ArrayType>
-  Flatbush<ArrayType> from(const uint8_t* iData)
-  {
-    if (!iData)
-    {
-      throw std::invalid_argument("Data is incomplete or missing.");
-    }
-
-    auto wMagic = iData[0];
-    if (wMagic != gValidityFlag)
-    {
-      throw std::invalid_argument("Data does not appear to be in a Flatbush format.");
-    }
-
-    auto wEncodedVersion = iData[1] >> 4;
-    if (wEncodedVersion != gVersion)
-    {
-      throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) + " data when expected v" + std::to_string(gVersion) + ".");
-    }
-
-    auto wExpectedType = arrayTypeIndex<ArrayType>();
-    auto wEncodedType = iData[1] & 0x0f;
-    if (wExpectedType != wEncodedType)
-    {
-      throw std::runtime_error("Expected type is " + arrayTypeName(wEncodedType) + ", but got template type " + arrayTypeName(wExpectedType));
-    }
-
-    return Flatbush<ArrayType>(iData);
-  }
-
-  template <typename ArrayType>
-  Flatbush<ArrayType> start(uint32_t iNumItems, uint16_t iNodeSize)
-  {
-    if (arrayTypeIndex<ArrayType>() == gInvalidArrayType)
-    {
-      throw std::runtime_error("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
-    }
-
-    if (iNumItems <= 0)
-    {
-      throw std::invalid_argument("Unpexpected numItems value: " + std::to_string(iNumItems) + ".");
-    }
-
-    return Flatbush<ArrayType>(iNumItems, iNodeSize);
-  }
-
-  template <typename ArrayType>
-  auto create(const std::vector<Box<ArrayType>>& iBoxes, uint16_t iNodeSize = 16) -> Flatbush<ArrayType> {
-    auto wIndex = start<ArrayType>(static_cast<uint32_t>(iBoxes.size()), iNodeSize);
-
-    for (const auto& wBox : iBoxes)
-    {
-      wIndex.add(wBox);
-    }
-    wIndex.finish();
-
-    return wIndex;
-  }
 }
 
 #endif // LIB_FLATBUSH_H

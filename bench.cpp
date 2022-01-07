@@ -93,11 +93,11 @@ int main(int argc, char** argv)
 
   auto wStartTime = std::chrono::high_resolution_clock::now();
 
-  auto wIndex = flatbush::start<double>(wNumItems, wNodeSize);
+  flatbush::FlatbushBuilder<double> wBuilder(wNodeSize);
   for (size_t wIdx = 0; wIdx < wCoords.size(); wIdx += 4) {
-    wIndex.add({ wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3] });
+    wBuilder.add({ wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3] });
   }
-  wIndex.finish();
+  auto wIndex = wBuilder.finish();
 
   auto wEndTime = std::chrono::high_resolution_clock::now();
   std::cout << "index " << wNumItems << " rectangles: " << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count() << "ms" << std::endl;
