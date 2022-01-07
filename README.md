@@ -15,33 +15,27 @@ As such, unit tests and benchmarks are virtually identical in order to provide a
 ### Create and build the index
 
 ```cpp
+using namespace flatbush;
+
 // initialize Flatbush for 1000 items
-auto index = flatbush::start<double>(1000);
+FlatbushBuilder<double> builder(1000);
 
 // fill it with 1000 rectangles
 for (const auto& box : boxes) {
-    index.add({ box.minX, box.minY, box.maxX, box.maxY });
+    builder.add({ box.minX, box.minY, box.maxX, box.maxY });
     // if boxes is a container of Box<double>
-    index.add(box);
+    builder.add(box);
 }
 
 // perform the indexing
-index.finish();
-
-//... or use convenience method
-std::vector<flatbush::Box<double>> boxes;
-
-// ... fill boxes ...
-
-auto index = flatbush::create(boxes);
-
+auto index = builder.finish();
 ```
 
 ### Searching a bounding box
 
 ```cpp
 // make a bounding box query
-flatbush::Box<double> boundingBox{40, 40, 60, 60};
+Box<double> boundingBox{40, 40, 60, 60};
 auto foundIds = index.search(boundingBox);
 
 // make a bounding box query using a filter function 
@@ -53,7 +47,7 @@ auto evenIds = index.search({40, 40, 60, 60}, filterEven);
 
 ```cpp
 // make a k-nearest-neighbors query
-flatbush::Point<double> targetPoint{40, 60};
+Point<double> targetPoint{40, 60};
 auto neighborIds = index.neighbors(targetPoint);
 
 // make a k-nearest-neighbors query with a maximum result threshold
@@ -74,9 +68,9 @@ auto buffer = index.data();
 
 // then pass the underlying data, specifying the template type
 // NOTE: an exception will be thrown if template != encoded type
-auto other = flatbush::from<double>(buffer.data());
+auto other = FlatbushBuilder<double>::from(buffer.data());
 // or
-auto other = flatbush::from<double>(&buffer[0]);
+auto other = FlatbushBuilder<double>::from(&buffer[0]);
 ```
 
 ## Compiling
