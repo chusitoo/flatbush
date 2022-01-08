@@ -96,6 +96,7 @@ namespace flatbush {
 namespace flatbush {
 
   using FilterCb = std::function<bool(size_t)>;
+  constexpr auto gHilbertMax = std::numeric_limits<uint16_t>::max();
   constexpr double gMaxDouble = std::numeric_limits<double>::max();
   constexpr size_t gMaxUint32 = std::numeric_limits<size_t>::max();
   constexpr size_t gDefaultNodeSize = 16;
@@ -457,9 +458,8 @@ namespace flatbush {
     }
 
     std::vector<uint32_t> wHilbertValues(wNumItems);
-    const auto wHilbertMax = std::numeric_limits<uint16_t>::max();
-    const auto wHilbertWidth = wHilbertMax / (mBounds.mMaxX - mBounds.mMinX);
-    const auto wHilbertHeight = wHilbertMax / (mBounds.mMaxY - mBounds.mMinY);
+    const auto wHilbertWidth = gHilbertMax / (mBounds.mMaxX - mBounds.mMinX);
+    const auto wHilbertHeight = gHilbertMax / (mBounds.mMaxY - mBounds.mMinY);
 
     // map item centers into Hilbert coordinate space and calculate Hilbert values
     for (size_t wIdx = 0, wPosition = 0; wIdx < wNumItems; ++wIdx)
