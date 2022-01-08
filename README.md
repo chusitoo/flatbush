@@ -17,18 +17,24 @@ As such, unit tests and benchmarks are virtually identical in order to provide a
 ```cpp
 using namespace flatbush;
 
-// initialize Flatbush for 1000 items
+// initialize the builder
+FlatbushBuilder<double> builder;
+// ... or preallocate buffer for 1000 items 
 FlatbushBuilder<double> builder(1000);
 
 // fill it with 1000 rectangles
 for (const auto& box : boxes) {
-    builder.add({ box.minX, box.minY, box.maxX, box.maxY });
-    // if boxes is a container of Box<double>
     builder.add(box);
 }
 
 // perform the indexing
 auto index = builder.finish();
+
+// can reuse existing builder
+// call builder.clear() or keep adding items
+builder.add({ box.minX, box.minY, box.maxX, box.maxY });
+auto other = builder.finish();
+
 ```
 
 ### Searching a bounding box
