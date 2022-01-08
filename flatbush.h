@@ -34,7 +34,7 @@ SOFTWARE.
 #include <type_traits>
 #include <vector>
 
-#ifndef MINIMAL_SPAN
+#ifndef FLATBUSH_SPAN
 #include <span>
 namespace flatbush {
   using std::span;
@@ -91,7 +91,7 @@ namespace flatbush {
   };
 
 }
-#endif // MINIMAL_SPAN
+#endif // FLATBUSH_SPAN
 
 namespace flatbush {
 

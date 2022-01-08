@@ -82,7 +82,7 @@ auto other = FlatbushBuilder<double>::from(&buffer[0]);
 ## Compiling
 This is a single header library with the aim to support C++11 and up.
 
-If the target compiler does not have support for C++20 features, namely the ```<span>``` header, a minimalistic implementation is available if **MINIMAL_SPAN** flag is defined.
+If the target compiler does not have support for C++20 features, namely the ```<span>``` header, a minimalistic implementation is available if **FLATBUSH_SPAN** flag is defined.
 
 ### Unit tests
     
@@ -96,15 +96,15 @@ ctest -C Release
 
 #### Standalone
 ```shell
-gcc test.cpp -lstdc++ -Wall -O2 -DMINIMAL_SPAN -o test && ./test
+gcc test.cpp -lstdc++ -Wall -O2 -DFLATBUSH_SPAN -o test && ./test
 ```
 
 ```shell
-clang++ -Wall -O2 -DMINIMAL_SPAN -o test test.cpp && ./test
+clang++ -Wall -O2 -DFLATBUSH_SPAN -o test test.cpp && ./test
 ```
 
 ```shell
-cl /EHsc /O2 /DMINIMAL_SPAN test.cpp && .\test.exe
+cl /EHsc /O2 /DFLATBUSH_SPAN test.cpp && .\test.exe
 ```
 
 ## Performance
