@@ -494,6 +494,31 @@ void clearAndReuseBuilder()
   assert(wIndex3.nodeSize() == wIndex2.nodeSize());
 }
 
+void testOneMillionItems()
+{
+  std::cout << "test adding one million items" << std::endl;
+
+  flatbush::FlatbushBuilder<uint32_t> wBuilder;
+  uint32_t wNumItems = 1000000;
+
+  for (uint32_t wIdx = 0; wIdx < wNumItems; ++wIdx)
+  {
+    wBuilder.add({ wIdx, wIdx, wIdx, wIdx });
+  }
+
+  auto wIndex = wBuilder.finish();
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
+
+  auto wIds = wIndex.search({ 0, 0, 0, 0 });
+  assert(wIds.size() == 1);
+  assert(wIds.front() == 0);
+
+  auto wIds2 = wIndex.search({ 0, 0, wNumItems, wNumItems });
+  assert(wIds2.size() == wNumItems);
+}
+
+
 int main(int argc, char** argv)
 {
   indexBunchOfRectangles();
@@ -517,6 +542,7 @@ int main(int argc, char** argv)
   searchQueryMultiPointSmallNumItems();
   searchQueryMultiPointLargeNumItems();
   clearAndReuseBuilder();
+  testOneMillionItems();
 
   return EXIT_SUCCESS;
 }
