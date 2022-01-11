@@ -855,8 +855,7 @@ class FlatbushBuilder {
   explicit FlatbushBuilder(size_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
       : mNodeSize(std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize)), mData(gHeaderByteSize, 0U) {
     static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
-                  "Unexpected typed array class. Expecting non 64-bit integral "
-                  "or floating point.");
+                  "Unexpected typed array class. Expecting an integral or floating point.");
 
     size_t wDataSize;
     if (!detail::tryCalculateDataSize<ArrayType>(iNumItems, mNodeSize, wDataSize)) {
@@ -952,8 +951,7 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   static constexpr auto kWideNodeByteSize = kBoxByteSize + sizeof(WideIndexType);
 
   static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
-                "Unexpected typed array class. Expecting non 64-bit integral "
-                "or floating point.");
+                "Unexpected typed array class. Expecting an integral or floating point.");
 
   if (iSize < gHeaderByteSize) {
     throw std::invalid_argument("Data buffer size must be at least " + std::to_string(gHeaderByteSize) + " bytes.");
