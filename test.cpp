@@ -518,6 +518,39 @@ void testOneMillionItems()
   assert(wIds2.size() == wNumItems);
 }
 
+void testBigInt()
+{
+  std::cout << "test bigint (64-bit)" << std::endl;
+
+  flatbush::FlatbushBuilder<uint64_t> wBuilder;
+  uint32_t wNumItems = 9;
+
+  wBuilder.add({ 0,                 0,                 0,                                 0 });
+  wBuilder.add({ 0,                 10000000000000000, 0,                 10000000000000000 });
+  wBuilder.add({ 10000000000000000, 0,                 10000000000000000,                 0 });
+  wBuilder.add({ 10000000000000000, 10000000000000000, 10000000000000000, 10000000000000000 });
+  wBuilder.add({ 10000000000000000, 20000000000000000, 30000000000000000, 40000000000000000 });
+  wBuilder.add({ 50000000000000000, 60000000000000000, 70000000000000000, 80000000000000000 });
+  wBuilder.add({ 10000000000000000, 30000000000000000, 50000000000000000, 70000000000000000 });
+  wBuilder.add({ 20000000000000000, 40000000000000000, 60000000000000000, 80000000000000000 });
+  wBuilder.add({ 90000000000000000, 90000000000000000, 90000000000000000, 90000000000000000 });
+
+  auto wIndex = wBuilder.finish();
+  assert(wIndex.numItems() == wNumItems);
+  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
+
+  auto wNone = wIndex.search({ 90000000000000001, 90000000000000000, 90000000000000000, 90000000000000000 });
+  assert(wNone.size() == 0);
+
+  auto wIds = wIndex.search({ 10000000000000000, 10000000000000000, 10000000000000000, 10000000000000000 });
+  assert(wIds.size() == 1);
+  assert(wIds.front() == 3);
+
+  auto wNeighbors = wIndex.neighbors({ 10000000000000000, 10000000000000000 });
+  assert(wNeighbors.size() == 9);
+  assert(wNeighbors.front() == 3);
+  assert(wNeighbors.back() == 8);
+}
 
 int main(int argc, char** argv)
 {
@@ -543,6 +576,7 @@ int main(int argc, char** argv)
   searchQueryMultiPointLargeNumItems();
   clearAndReuseBuilder();
   testOneMillionItems();
+  testBigInt();
 
   return EXIT_SUCCESS;
 }

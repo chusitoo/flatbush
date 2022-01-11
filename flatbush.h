@@ -106,6 +106,7 @@ namespace flatbush {
   constexpr uint8_t gVersion = 3; // serialized format version
 
   namespace detail {
+
     // From https://github.com/rawrunprotected/hilbert_curves (public domain)
     inline uint32_t Interleave(uint32_t x)
     {
@@ -197,17 +198,19 @@ namespace flatbush {
     if (std::is_same<ArrayType, std::uint32_t>::value) return 6;
     if (std::is_same<ArrayType, float>::value)         return 7;
     if (std::is_same<ArrayType, double>::value)        return 8;
+    if (std::is_same<ArrayType, std::int64_t>::value)  return 9;
+    if (std::is_same<ArrayType, std::uint64_t>::value) return 10;
     return gInvalidArrayType;
   }
 
   inline std::string arrayTypeName(size_t iIndex)
   {
-    static const std::string sArrayTypeNames[9]
+    static const std::string sArrayTypeNames[11]
     {
-      "int8_t", "uint8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "float", "double"
+      "int8_t", "uint8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "float", "double", "int64_t", "uint64_t"
     };
 
-    return iIndex < 9 ? sArrayTypeNames[iIndex] : "unknown";
+    return iIndex < 11 ? sArrayTypeNames[iIndex] : "unknown";
   }
 
   template <typename ArrayType>
