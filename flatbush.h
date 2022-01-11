@@ -239,7 +239,7 @@ namespace flatbush {
     {
       if (arrayTypeIndex<ArrayType>() == gInvalidArrayType)
       {
-        throw std::runtime_error("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
+        throw std::runtime_error("Unexpected typed array class. Expecting an integral or floating point.");
       }
       mItems.reserve(iNumItems);
     };

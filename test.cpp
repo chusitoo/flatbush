@@ -340,7 +340,7 @@ void wrongTemplateType()
   }
   catch (const std::runtime_error& iError)
   {
-    wIsThrown = (std::string("Unexpected typed array class. Expecting non 64-bit integral or floating point.").compare(iError.what()) == 0);
+    wIsThrown = (std::string("Unexpected typed array class. Expecting an integral or floating point.").compare(iError.what()) == 0);
   }
 
   assert(wIsThrown);
