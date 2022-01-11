@@ -306,8 +306,19 @@ constexpr typename std::enable_if<std::is_same<ArrayType, double>::value, uint8_
 }
 
 template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, int64_t>::value, uint8_t>::type arrayTypeIndex() {
+  return 9;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, uint64_t>::value, uint8_t>::type arrayTypeIndex() {
+  return 10;
+}
+
+template <typename ArrayType>
 constexpr typename std::enable_if<
-    !is_contained<ArrayType, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>::value,
+    !is_contained<ArrayType, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double, int64_t,
+                  uint64_t>::value,
     uint8_t>::type
 arrayTypeIndex() {
   return gInvalidArrayType;
@@ -321,9 +332,10 @@ constexpr bool isArrayTypeCompatible(size_t iIndex) {
 
 inline const char* arrayTypeName(size_t iIndex) {
   static constexpr auto kUnknownType = "unknown";
-  static constexpr auto kArrayTypeNames = std::array<const char*, 9> { "int8_t",   "uint8_t",  "uint8_t",
-                                                                       "int16_t",  "uint16_t", "int32_t",
-                                                                       "uint32_t", "float",    "double" };
+  static constexpr auto kArrayTypeNames = std::array<const char*, 11> { "int8_t",   "uint8_t",  "uint8_t",
+                                                                        "int16_t",  "uint16_t", "int32_t",
+                                                                        "uint32_t", "float",    "double",
+                                                                        "int64_t",  "uint64_t" };
   return iIndex < kArrayTypeNames.size() ? kArrayTypeNames.at(iIndex) : kUnknownType;
 }
 
