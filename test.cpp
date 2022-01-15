@@ -124,7 +124,7 @@ void indexBunchOfRectangles()
   assert(wBoxes[wBoxLen - 1] == 95);
 
   auto wIndices = reinterpret_cast<const uint16_t*>(&wBoxes[wBoxLen]);
-  assert(wIndices[wBoxLen / 4 - 1] == 400);
+  assert(wIndices[wBoxLen / 4 - 1] == 100);
 }
 
 void skipSortingLessThanNodeSizeRectangles()
@@ -217,7 +217,7 @@ void doesNotFreezeOnZeroNumItems()
   }
   catch (const std::invalid_argument& iError)
   {
-    wIsThrown = (std::string("Unpexpected numItems value: 0.").compare(iError.what()) == 0);
+    wIsThrown = (std::string("No items have been added. Nothing to build.").compare(iError.what()) == 0);
   }
 
   assert(wIsThrown);
