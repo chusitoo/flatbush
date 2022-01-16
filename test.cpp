@@ -24,7 +24,7 @@ SOFTWARE.
 
 #include "flatbush.h"
 
-#include <assert.h>
+#include <cassert>
 #include <iostream>
 #include <vector>
 
