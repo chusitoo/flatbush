@@ -217,7 +217,7 @@ void doesNotFreezeOnZeroNumItems()
   }
   catch (const std::invalid_argument& iError)
   {
-    wIsThrown = (std::string("Unpexpected numItems value: 0.").compare(iError.what()) == 0);
+    wIsThrown = (std::string("No items have been added. Nothing to build.").compare(iError.what()) == 0);
   }
 
   assert(wIsThrown);

@@ -265,7 +265,7 @@ namespace flatbush {
   {
     if (mItems.empty())
     {
-      throw std::invalid_argument("Unpexpected numItems value: " + std::to_string(mItems.size()) + ".");
+      throw std::invalid_argument("No items have been added. Nothing to build.");
     }
 
     Flatbush<ArrayType> wIndex(static_cast<uint32_t>(mItems.size()), mNodeSize);
