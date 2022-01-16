@@ -468,7 +468,7 @@ namespace flatbush {
       // generate a parent node for each block of consecutive <nodeSize> nodes
       while (wPosition < wEnd)
       {
-        const auto wNodeIndex = wPosition;
+        const auto wNodeIndex = wPosition << 2; // need to shift for binary compatibility with JS
 
         // calculate bbox for the new node
         auto wNodeBox = mBoxes[wPosition];
@@ -567,7 +567,7 @@ namespace flatbush {
       }
 
       if (wQueue.empty()) break;
-      wNodeIndex = wQueue.back();
+      wNodeIndex = wQueue.back() >> 2; // need to shift for binary compatibility with JS
       wQueue.pop_back();
     }
 
@@ -575,7 +575,7 @@ namespace flatbush {
   }
 
   template <typename ArrayType>
-  std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iTarget, size_t iMaxResults, double iMaxDistance, FilterCb iFilterFn) const noexcept
+  std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size_t iMaxResults, double iMaxDistance, FilterCb iFilterFn) const noexcept
   {
     auto wAxisDist = [](ArrayType iValue, ArrayType iMin, ArrayType iMax)
     {
@@ -598,8 +598,8 @@ namespace flatbush {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition)
       {
         const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]) | 0;
-        const auto wDistX = wAxisDist(iTarget.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
-        const auto wDistY = wAxisDist(iTarget.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
+        const auto wDistX = wAxisDist(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
+        const auto wDistY = wAxisDist(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
         const auto wDistance = wDistX * wDistX + wDistY * wDistY;
 
         if (wNodeIndex >= wNumItems)
@@ -623,7 +623,7 @@ namespace flatbush {
       }
 
       if (wQueue.empty()) break;
-      wNodeIndex = wQueue.top().mId >> 1;
+      wNodeIndex = wQueue.top().mId >> 3; // 1 to undo queue indexing + 2 for binary compatibility with JS
       wQueue.pop();
     }
 

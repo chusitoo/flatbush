@@ -24,7 +24,7 @@ SOFTWARE.
 
 #include "flatbush.h"
 
-#include <assert.h>
+#include <cassert>
 #include <iostream>
 #include <vector>
 
@@ -124,7 +124,7 @@ void indexBunchOfRectangles()
   assert(wBoxes[wBoxLen - 1] == 95);
 
   auto wIndices = reinterpret_cast<const uint16_t*>(&wBoxes[wBoxLen]);
-  assert(wIndices[wBoxLen / 4 - 1] == 100);
+  assert(wIndices[wBoxLen / 4 - 1] == 400);
 }
 
 void skipSortingLessThanNodeSizeRectangles()
