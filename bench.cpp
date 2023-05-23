@@ -31,12 +31,12 @@ SOFTWARE.
 
 using randomDouble = std::uniform_real_distribution<double>;
 
-void addRandomBox(std::vector<double>& iBoxes, size_t iBoxSize)
+void addRandomBox(std::vector<double>& iBoxes, double iBoxSize)
 {
   std::random_device wDevice;
   std::mt19937 wEngine(wDevice());
-  double wMinX = randomDouble(0.0, 100 - iBoxSize)(wEngine);
-  double wMinY = randomDouble(0.0, 100 - iBoxSize)(wEngine);
+  double wMinX = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
+  double wMinY = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
   double wMaxX = wMinX + randomDouble(0.0, iBoxSize)(wEngine);
   double wMaxY = wMinY + randomDouble(0.0, iBoxSize)(wEngine);
   iBoxes.push_back(wMinX);
@@ -69,7 +69,7 @@ void benchNeighbors(const flatbush::Flatbush<double>& iIndex, const std::vector<
   std::cout << iNumTests << " searches of " << iNeighbors << " neighbors: " << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count() << "ms" << std::endl;
 }
 
-int main(int argc, char** argv)
+int main(int /*argc*/, char** /*argv*/)
 {
   size_t wNumItems = 1000000;
   size_t wNumTests = 1000;
@@ -78,7 +78,7 @@ int main(int argc, char** argv)
   std::vector<double> wCoords;
   for (size_t wCount = 0; wCount < wNumItems; ++wCount)
   {
-    addRandomBox(wCoords, 1);
+    addRandomBox(wCoords, 1.0);
   }
 
   std::vector<double> wBoxes100;
@@ -86,9 +86,9 @@ int main(int argc, char** argv)
   std::vector<double> wBoxes1;
   for (size_t wCount = 0; wCount < wNumTests; ++wCount)
   {
-    addRandomBox(wBoxes100, 100 * std::sqrt(0.1));
-    addRandomBox(wBoxes10, 10);
-    addRandomBox(wBoxes1, 1);
+    addRandomBox(wBoxes100, 100.0 * std::sqrt(0.1));
+    addRandomBox(wBoxes10, 10.0);
+    addRandomBox(wBoxes1, 1.0);
   }
 
   auto wStartTime = std::chrono::high_resolution_clock::now();

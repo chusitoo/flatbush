@@ -177,12 +177,12 @@ void performBoxSearch()
   std::vector<double> wExpected = { 57, 59, 58, 59, 48, 53, 52, 56, 40, 42, 43, 43, 43, 41, 47, 43 };
   std::vector<double> wResults;
 
-  for (size_t wIdx = 0; wIdx < wIds.size(); ++wIdx)
+  for (const auto wId : wIds)
   {
-    wResults.push_back(gData[4 * wIds[wIdx]]);
-    wResults.push_back(gData[4 * wIds[wIdx] + 1]);
-    wResults.push_back(gData[4 * wIds[wIdx] + 2]);
-    wResults.push_back(gData[4 * wIds[wIdx] + 3]);
+    wResults.push_back(gData[4 * wId]);
+    wResults.push_back(gData[4 * wId + 1]);
+    wResults.push_back(gData[4 * wId + 2]);
+    wResults.push_back(gData[4 * wId + 3]);
   }
 
   assert(wExpected.size() == wResults.size());
@@ -255,7 +255,7 @@ void neighborsQueryFilterFunc()
 {
   std::cout << "k-nearest-neighbors query accepts filterFn" << std::endl;
   auto wIndex = createIndex();
-  auto wIds = wIndex.neighbors({ 50, 50 }, 6, flatbush::gMaxDouble, [](size_t iValue) -> bool { return iValue % 2 == 0; });
+  auto wIds = wIndex.neighbors({ 50, 50 }, 6, flatbush::gMaxDouble, [](size_t iValue) { return iValue % 2 == 0; });
   std::vector<size_t> wExpected = { 6, 16, 18, 24, 54, 80 };
 
   assert(wExpected.size() == wIds.size());
@@ -279,7 +279,7 @@ void searchQueryFilterFunc()
 {
   std::cout << "bbox search query accepts filterFn" << std::endl;
   auto wIndex = createIndex();
-  auto wIds = wIndex.search({ 40, 40, 60, 60 }, [](size_t iValue) -> bool { return iValue % 2 == 0; });
+  auto wIds = wIndex.search({ 40, 40, 60, 60 }, [](size_t iValue) { return iValue % 2 == 0; });
 
   assert(wIds.size() == 1);
   assert(wIds.front() == 6);
@@ -305,7 +305,7 @@ void wrongTemplateType()
   {
     flatbush::FlatbushBuilder<std::string> wBuilder;
   }
-  catch (const std::runtime_error& iError)
+  catch (const std::invalid_argument& iError)
   {
     wIsThrown = (std::string("Unexpected typed array class. Expecting non 64-bit integral or floating point.").compare(iError.what()) == 0);
   }
@@ -373,7 +373,7 @@ void fromWrongEncodedType()
   {
     flatbush::FlatbushBuilder<int>::from(gFlatbush.data());
   }
-  catch (const std::runtime_error& iError)
+  catch (const std::invalid_argument& iError)
   {
     wIsThrown = (std::string("Expected type is double, but got template type int32_t").compare(iError.what()) == 0);
   }
@@ -519,7 +519,7 @@ void testOneMillionItems()
 }
 
 
-int main(int argc, char** argv)
+int main(int /*argc*/, char** /*argv*/)
 {
   indexBunchOfRectangles();
   skipSortingLessThanNodeSizeRectangles();

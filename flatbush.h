@@ -26,6 +26,7 @@ SOFTWARE.
 #define LIB_FLATBUSH_H
 
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <limits>
 #include <queue>
@@ -204,12 +205,12 @@ inline uint8_t arrayTypeIndex()
 
 inline std::string arrayTypeName(size_t iIndex)
 {
-  static const std::string sArrayTypeNames[]
+  static const std::array<std::string, 9> sArrayTypeNames
   {
     "int8_t", "uint8_t", "uint8_t", "int16_t", "uint16_t", "int32_t", "uint32_t", "float", "double"
   };
 
-  return iIndex < 9 ? sArrayTypeNames[iIndex] : "unknown";
+  return iIndex < sArrayTypeNames.size() ? sArrayTypeNames[iIndex] : "unknown";
 }
 
 template <typename ArrayType>
@@ -233,12 +234,12 @@ template<class ArrayType>
 class FlatbushBuilder
 {
  public:
-  explicit FlatbushBuilder(uint32_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
+  explicit FlatbushBuilder(size_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
     : mNodeSize(iNodeSize)
   {
     if (arrayTypeIndex<ArrayType>() == gInvalidArrayType)
     {
-      throw std::runtime_error("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
+      throw std::invalid_argument("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
     }
     mItems.reserve(iNumItems);
   };
@@ -248,7 +249,7 @@ class FlatbushBuilder
     mItems.clear();
   };
 
-  inline size_t add(Box<ArrayType> iBox) noexcept
+  inline size_t add(const Box<ArrayType>& iBox) noexcept
   {
     mItems.push_back(iBox);
     return mItems.size() - 1;
@@ -304,7 +305,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData)
   auto wEncodedType = iData[1] & 0x0f;
   if (wExpectedType != wEncodedType)
   {
-    throw std::runtime_error("Expected type is " + arrayTypeName(wEncodedType) + ", but got template type " + arrayTypeName(wExpectedType));
+    throw std::invalid_argument("Expected type is " + arrayTypeName(wEncodedType) + ", but got template type " + arrayTypeName(wExpectedType));
   }
 
   return Flatbush<ArrayType>(iData);
@@ -316,14 +317,14 @@ class Flatbush
  public:
   Flatbush(const Flatbush&) = delete;
   Flatbush& operator=(const Flatbush&) = delete;
-  Flatbush(Flatbush&&) = default;
-  Flatbush& operator=(Flatbush&&) = default;
+  Flatbush(Flatbush&&) noexcept = default;
+  Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  std::vector<size_t> search(Box<ArrayType> iBounds, FilterCb iFilterFn = nullptr) const noexcept;
-  std::vector<size_t> neighbors(Point<ArrayType> iPoint, size_t iMaxResults = gMaxUint32, double iMaxDistance = gMaxDouble, FilterCb iFilterFn = nullptr) const noexcept;
-  inline uint16_t nodeSize() const noexcept { return mData[2] | mData[3] << 8; };
-  inline uint32_t numItems() const noexcept { return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24; };
+  std::vector<size_t> search(Box<ArrayType> iBounds, const FilterCb& iFilterFn = nullptr) const noexcept;
+  std::vector<size_t> neighbors(Point<ArrayType> iPoint, size_t iMaxResults = gMaxUint32, double iMaxDistance = gMaxDouble, const FilterCb& iFilterFn = nullptr) const noexcept;
+  inline size_t nodeSize() const noexcept { return mData[2] | mData[3] << 8; };
+  inline size_t numItems() const noexcept { return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24; };
   inline size_t boxSize() const noexcept { return mBoxes.size() * 4; };
   inline size_t indexSize() const noexcept { return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size(); };
   inline span<const uint8_t> data() const noexcept { return { mData.data(), mData.capacity() }; };
@@ -333,11 +334,15 @@ class Flatbush
  private:
   static constexpr ArrayType cMaxValue = std::numeric_limits<ArrayType>::max();
   static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
+  static inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept
+  {
+    return iValue < iMin ? iMin - iValue : std::max(iValue - iMax, 0.0);
+  }
 
   explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
   explicit Flatbush(const uint8_t* iData) noexcept;
 
-  size_t add(Box<ArrayType> iBox) noexcept;
+  size_t add(const Box<ArrayType>& iBox) noexcept;
   void finish() noexcept;
   void init(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
@@ -360,7 +365,7 @@ class Flatbush
   // pick appropriate index view
   bool mIsWideIndex;
   // box stuff
-  size_t mPosition;
+  size_t mPosition = 0;
   std::vector<size_t> mLevelBounds;
   Box<ArrayType> mBounds;
 };
@@ -376,7 +381,6 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept
   mData[1] = (gVersion << 4) + arrayTypeIndex<ArrayType>();
   *reinterpret_cast<uint16_t*>(&mData[2]) = iNodeSize;
   *reinterpret_cast<uint32_t*>(&mData[4]) = iNumItems;
-  mPosition = 0;
   mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
 }
 
@@ -421,17 +425,16 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint16_t iNodeSize) noexcept
 }
 
 template <typename ArrayType>
-size_t Flatbush<ArrayType>::add(Box<ArrayType> iBox) noexcept
+size_t Flatbush<ArrayType>::add(const Box<ArrayType>& iBox) noexcept
 {
   if (mIsWideIndex) mIndicesUint32[mPosition] = uint32_t(mPosition);
   else mIndicesUint16[mPosition] = uint16_t(mPosition);
 
   mBoxes[mPosition] = iBox;
-
-  if (iBox.mMinX < mBounds.mMinX) mBounds.mMinX = iBox.mMinX;
-  if (iBox.mMinY < mBounds.mMinY) mBounds.mMinY = iBox.mMinY;
-  if (iBox.mMaxX > mBounds.mMaxX) mBounds.mMaxX = iBox.mMaxX;
-  if (iBox.mMaxY > mBounds.mMaxY) mBounds.mMaxY = iBox.mMaxY;
+  mBounds.mMinX = std::min(mBounds.mMinX, iBox.mMinX);
+  mBounds.mMinY = std::min(mBounds.mMinY, iBox.mMinY);
+  mBounds.mMaxX = std::max(mBounds.mMaxX, iBox.mMaxX);
+  mBounds.mMaxY = std::max(mBounds.mMaxY, iBox.mMaxY);
 
   return mPosition++;
 }
@@ -478,10 +481,10 @@ void Flatbush<ArrayType>::finish() noexcept
       // calculate bbox for the new node
       for (size_t wCount = 0; wCount < wNodeSize && wPosition < wEnd; ++wCount, ++wPosition)
       {
-        if (mBoxes[wPosition].mMinX < wNodeBox.mMinX) wNodeBox.mMinX = mBoxes[wPosition].mMinX;
-        if (mBoxes[wPosition].mMinY < wNodeBox.mMinY) wNodeBox.mMinY = mBoxes[wPosition].mMinY;
-        if (mBoxes[wPosition].mMaxX > wNodeBox.mMaxX) wNodeBox.mMaxX = mBoxes[wPosition].mMaxX;
-        if (mBoxes[wPosition].mMaxY > wNodeBox.mMaxY) wNodeBox.mMaxY = mBoxes[wPosition].mMaxY;
+        wNodeBox.mMinX = std::min(wNodeBox.mMinX, mBoxes[wPosition].mMinX);
+        wNodeBox.mMinY = std::min(wNodeBox.mMinY, mBoxes[wPosition].mMinY);
+        wNodeBox.mMaxX = std::max(wNodeBox.mMaxX, mBoxes[wPosition].mMaxX);
+        wNodeBox.mMaxY = std::max(wNodeBox.mMaxY, mBoxes[wPosition].mMaxY);
       }
 
       // add the new node to the tree data
@@ -535,7 +538,7 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, FilterCb iFilterFn) const noexcept
+std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, const FilterCb& iFilterFn) const noexcept
 {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
@@ -578,7 +581,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, FilterCb
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size_t iMaxResults, double iMaxDistance, FilterCb iFilterFn) const noexcept
+std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size_t iMaxResults, double iMaxDistance, const FilterCb& iFilterFn) const noexcept
 {
   std::priority_queue<IndexDistance> wQueue;
   std::vector<size_t> wResults;
@@ -587,23 +590,19 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1;
 
-  auto wAxisDist = [](ArrayType iValue, ArrayType iMin, ArrayType iMax)
-  {
-    return iValue < iMin ? iMin - iValue : iValue <= iMax ? 0 : iValue - iMax;
-  };
-
   while (true)
   {
     // find the end index of the node
     const auto wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
 
     // search through child nodes
-    for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition)
+    for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition)
     {
       const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]) | 0;
-      const auto wDistX = wAxisDist(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
-      const auto wDistY = wAxisDist(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
+      const auto wDistX = axisDistance(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
+      const auto wDistY = axisDistance(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
       const auto wDistance = wDistX * wDistX + wDistY * wDistY;
+      if (wDistance > wMaxDistSquared) continue;
 
       if (wNodeIndex >= wNumItems)
       {
