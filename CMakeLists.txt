@@ -24,11 +24,13 @@ endif()
 if(WITH_BENCHMARKS)
   set(BENCHMARKS bench)
   add_executable(${BENCHMARKS} "bench.cpp")
+  target_compile_features(${BENCHMARKS} INTERFACE cxx_std_11)
 endif()
 
 if(WITH_TESTS)
   set(UNIT_TESTS unit_test)
   add_executable(${UNIT_TESTS} "test.cpp")
+  target_compile_features(${UNIT_TESTS} INTERFACE cxx_std_11)
 
   enable_testing()
   add_test(NAME ${UNIT_TESTS} COMMAND ${UNIT_TESTS})
