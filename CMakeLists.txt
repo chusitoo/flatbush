@@ -5,8 +5,8 @@ project(flatbush VERSION 1.0.0 LANGUAGES CXX)
 set(FLATBUSH_TARGET ${PROJECT_NAME})
 
 option(WITH_SPAN "Use custom span if not available in the C++ standard" ON)
-option(WITH_TESTS "Build unit tests" ON)
-option(WITH_BENCHMARKS "Build benchmarks" ON)
+option(WITH_TESTS "Build unit tests" OFF)
+option(WITH_BENCHMARKS "Build benchmarks" OFF)
 
 include(GNUInstallDirs)
 
