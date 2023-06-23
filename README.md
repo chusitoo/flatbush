@@ -1,6 +1,6 @@
 # Flatbush for C++
 
-[![CMake](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml)
+[![CMake](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cmake.yml) [![CodeQL](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml) [![GitHub release (latest by date)](https://img.shields.io/github/v/release/chusitoo/flatbush)](https://github.com/chusitoo/flatbush/releases/latest) [![Conan Center](https://img.shields.io/conan/v/flatbush)](https://conan.io/center/flatbush) [![Vcpkg](https://img.shields.io/vcpkg/v/flatbush)](https://github.com/microsoft/vcpkg/tree/master/ports/flatbush)
 
 A C++ adaptation of the great Flatbush JS library which implements a packed Hilbert R-tree algorithm.
 
