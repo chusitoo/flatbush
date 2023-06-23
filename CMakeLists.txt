@@ -22,18 +22,16 @@ if(WITH_SPAN)
 endif()
 
 if(WITH_BENCHMARKS)
-  set(BENCHMARKS bench)
-  add_executable(${BENCHMARKS} "bench.cpp")
-  target_compile_features(${BENCHMARKS} INTERFACE cxx_std_11)
+  set(bench_target bench)
+  add_executable(${bench_target} "bench.cpp")
 endif()
 
 if(WITH_TESTS)
-  set(UNIT_TESTS unit_test)
-  add_executable(${UNIT_TESTS} "test.cpp")
-  target_compile_features(${UNIT_TESTS} INTERFACE cxx_std_11)
+  set(test_target unit_test)
+  add_executable(${test_target} "test.cpp")
 
   enable_testing()
-  add_test(NAME ${UNIT_TESTS} COMMAND ${UNIT_TESTS})
+  add_test(NAME ${test_target} COMMAND ${test_target})
 endif()
 
 configure_file(
