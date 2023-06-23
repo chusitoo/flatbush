@@ -2,9 +2,9 @@ name: Windows
 
 on:
   push:
-    branches: [ TestCMakeBuilds ]
+    branches: [ master ]
   pull_request:
-    branches: [ TestCMakeBuilds ]
+    branches: [ master ]
 
 env:
   BUILD_TYPE: Release
