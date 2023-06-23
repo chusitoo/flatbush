@@ -24,19 +24,11 @@ endif()
 if(WITH_BENCHMARKS)
   set(bench_target bench)
   add_executable(${bench_target} "bench.cpp")
-  set_target_properties(${test_target} PROPERTIES
-    CXX_STANDARD 11
-    CXX_STANDARD_REQUIRED ON
-  )
 endif()
 
 if(WITH_TESTS)
   set(test_target unit_test)
   add_executable(${test_target} "test.cpp")
-  set_target_properties(${test_target} PROPERTIES
-    CXX_STANDARD 11
-    CXX_STANDARD_REQUIRED ON
-  )
 
   enable_testing()
   add_test(NAME ${test_target} COMMAND ${test_target})
