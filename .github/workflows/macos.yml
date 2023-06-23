@@ -1,17 +1,17 @@
-name: tests
+name: macOS
 
 on:
   push:
-    branches: [ master ]
+    branches: [ TestCMakeBuilds ]
   pull_request:
-    branches: [ master ]
+    branches: [ TestCMakeBuilds ]
 
 env:
   BUILD_TYPE: Release
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
     - uses: actions/checkout@v3
