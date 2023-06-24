@@ -237,6 +237,15 @@ void performNeighborsQuery()
   assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
 }
 
+void neighborsQueryAllItems()
+{
+  std::cout << "performs a k-nearest-neighbors query with all items" << std::endl;
+  auto wIndex = createIndex();
+  auto wIds = wIndex.neighbors({ 50, 50 });
+
+  assert(wIds.size() == wIndex.numItems());
+}
+
 void neighborsQueryMaxDistance()
 {
   std::cout << "k-nearest-neighbors query accepts maxDistance" << std::endl;
@@ -528,6 +537,7 @@ int main(int /*argc*/, char** /*argv*/)
   doesNotFreezeOnZeroNumItems();
   returnIndexOfNewlyAddedRectangle();
   performNeighborsQuery();
+  neighborsQueryAllItems();
   neighborsQueryMaxDistance();
   neighborsQueryFilterFunc();
   searchQueryFilterFunc();
