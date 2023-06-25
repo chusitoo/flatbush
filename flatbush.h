@@ -27,6 +27,7 @@ SOFTWARE.
 
 #include <algorithm>
 #include <array>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <queue>
@@ -108,6 +109,16 @@ constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
 
 namespace detail {
+
+template<class To, class From>
+To bit_cast(From const& from)
+{
+    static_assert(sizeof(To) == sizeof(From));
+
+    To to;
+    std::memcpy(&to, &from, sizeof(To));
+    return to;
+}
 
 // From https://github.com/rawrunprotected/hilbert_curves (public domain)
 inline uint32_t Interleave(uint32_t x)
@@ -362,16 +373,16 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept
   mData.assign(mData.capacity(), 0);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4) + arrayTypeIndex<ArrayType>();
-  *reinterpret_cast<uint16_t*>(&mData[2]) = iNodeSize;
-  *reinterpret_cast<uint32_t*>(&mData[4]) = iNumItems;
+  *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
+  *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
   mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(const uint8_t* iData) noexcept
 {
-  auto wNodeSize = *reinterpret_cast<const uint16_t*>(&iData[2]);
-  auto wNumItems = *reinterpret_cast<const uint32_t*>(&iData[4]);
+  auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
+  auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
   init(wNumItems, wNodeSize);
 
   mData.insert(mData.begin(), &iData[0], &iData[mData.capacity()]);
@@ -402,9 +413,9 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint16_t iNodeSize) noexcept
   const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   // Views
   mData.reserve(wDataSize);
-  mBoxes = span<Box<ArrayType>>(reinterpret_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes);
-  mIndicesUint16 = span<uint16_t>(reinterpret_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
-  mIndicesUint32 = span<uint32_t>(reinterpret_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
+  mBoxes = span<Box<ArrayType>>(detail::bit_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes);
+  mIndicesUint16 = span<uint16_t>(detail::bit_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
+  mIndicesUint32 = span<uint32_t>(detail::bit_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
 }
 
 template <typename ArrayType>
