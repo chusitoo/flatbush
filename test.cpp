@@ -116,14 +116,14 @@ void indexBunchOfRectangles()
   assert(wIndex.boxSize() + wIndex.indexSize() == 540);
 
   auto wData = wIndex.data();
-  auto wBoxes = reinterpret_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
+  auto wBoxes = flatbush::detail::bit_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
   size_t wBoxLen = wIndex.boxSize();
   assert(wBoxes[wBoxLen - 4] == 0);
   assert(wBoxes[wBoxLen - 3] == 1);
   assert(wBoxes[wBoxLen - 2] == 96);
   assert(wBoxes[wBoxLen - 1] == 95);
 
-  auto wIndices = reinterpret_cast<const uint16_t*>(&wBoxes[wBoxLen]);
+  auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
   assert(wIndices[wBoxLen / 4 - 1] == 400);
 }
 
@@ -150,10 +150,10 @@ void skipSortingLessThanNodeSizeRectangles()
   }
 
   auto wData = wIndex.data();
-  auto wBoxes = reinterpret_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
+  auto wBoxes = flatbush::detail::bit_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
   size_t wBoxLen = wIndex.boxSize();
 
-  auto wIndices = reinterpret_cast<const uint16_t*>(&wBoxes[wBoxLen]);
+  auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
   // sort should be skipped, ordered progressing indices expected
   for (size_t wIdx = 0; wIdx < wSize; ++wIdx)
   {
@@ -303,23 +303,6 @@ void reconstructIndexFromJSArrayBuffer()
   assert(wIndexBuffer.size() == gFlatbush.size());
 
   assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), gFlatbush.data()));
-}
-
-void wrongTemplateType()
-{
-  std::cout << "throws an error if creating instance of unsupported template type" << std::endl;
-  bool wIsThrown = false;
-
-  try
-  {
-    flatbush::FlatbushBuilder<std::string> wBuilder;
-  }
-  catch (const std::invalid_argument& iError)
-  {
-    wIsThrown = (std::string("Unexpected typed array class. Expecting non 64-bit integral or floating point.").compare(iError.what()) == 0);
-  }
-
-  assert(wIsThrown);
 }
 
 void fromNull()
@@ -542,7 +525,6 @@ int main(int /*argc*/, char** /*argv*/)
   neighborsQueryFilterFunc();
   searchQueryFilterFunc();
   reconstructIndexFromJSArrayBuffer();
-  wrongTemplateType();
   fromNull();
   fromWrongMagic();
   fromWrongVersion();

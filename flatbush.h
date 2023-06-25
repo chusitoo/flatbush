@@ -100,11 +100,11 @@ namespace flatbush {
 
 using FilterCb = std::function<bool(size_t)>;
 constexpr auto gHilbertMax = std::numeric_limits<uint16_t>::max();
-constexpr double gMaxDouble = std::numeric_limits<double>::max();
-constexpr size_t gMaxUint32 = std::numeric_limits<size_t>::max();
+constexpr auto gMaxDouble = std::numeric_limits<double>::max();
+constexpr auto gMaxUint32 = std::numeric_limits<size_t>::max();
+constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
 constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
-constexpr uint8_t gInvalidArrayType = std::numeric_limits<uint8_t>::max();
 constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
 
@@ -181,20 +181,77 @@ inline uint32_t HilbertXYToIndex(uint32_t n, uint32_t x, uint32_t y)
 
   return ((Interleave(i1) << 1) | Interleave(i0)) >> (32 - 2 * n);
 }
-}  // namespace detail
+
+template <typename T, typename...>
+struct is_contained : std::false_type {};
+
+template <typename Type, typename Head, typename... Tail>
+struct is_contained<Type, Head, Tail...>
+    : std::integral_constant<bool, std::is_same<Type, Head>::value ||
+                             is_contained<Type, Tail...>::value> {};
 
 template <typename ArrayType>
-inline uint8_t arrayTypeIndex()
+constexpr typename std::enable_if<std::is_same<ArrayType, int8_t>::value, uint8_t>::type
+arrayTypeIndex()
 {
-  if (std::is_same<ArrayType, std::int8_t>::value)   return 0;
-  if (std::is_same<ArrayType, std::uint8_t>::value)  return 1;
-  if (std::is_same<ArrayType, std::int16_t>::value)  return 3;
-  if (std::is_same<ArrayType, std::uint16_t>::value) return 4;
-  if (std::is_same<ArrayType, std::int32_t>::value)  return 5;
-  if (std::is_same<ArrayType, std::uint32_t>::value) return 6;
-  if (std::is_same<ArrayType, float>::value)         return 7;
-  if (std::is_same<ArrayType, double>::value)        return 8;
-  return gInvalidArrayType;
+    return 0;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, uint8_t>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 1;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, int16_t>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 3;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, uint16_t>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 4;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, int32_t>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 5;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, uint32_t>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 6;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, float>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 7;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<std::is_same<ArrayType, double>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return 8;
+}
+
+template <typename ArrayType>
+constexpr typename std::enable_if<!is_contained<ArrayType,
+    int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>::value, uint8_t>::type
+arrayTypeIndex()
+{
+    return gInvalidArrayType;
 }
 
 inline std::string arrayTypeName(size_t iIndex)
@@ -206,6 +263,7 @@ inline std::string arrayTypeName(size_t iIndex)
 
   return iIndex < sArrayTypeNames.size() ? sArrayTypeNames[iIndex] : "unknown";
 }
+}  // namespace detail
 
 template <typename ArrayType>
 struct Box
@@ -231,10 +289,9 @@ class FlatbushBuilder
   explicit FlatbushBuilder(size_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
     : mNodeSize(iNodeSize)
   {
-    if (arrayTypeIndex<ArrayType>() == gInvalidArrayType)
-    {
-      throw std::invalid_argument("Unexpected typed array class. Expecting non 64-bit integral or floating point.");
-    }
+    static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
+        "Unexpected typed array class. Expecting non 64-bit integral or floating point.");
+
     mItems.reserve(iNumItems);
   };
 
@@ -292,14 +349,16 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData)
   auto wEncodedVersion = iData[1] >> 4;
   if (wEncodedVersion != gVersion)
   {
-    throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) + " data when expected v" + std::to_string(gVersion) + ".");
+    throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) +
+                                " data when expected v"+ std::to_string(gVersion) + ".");
   }
 
-  auto wExpectedType = arrayTypeIndex<ArrayType>();
+  auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
   auto wEncodedType = iData[1] & 0x0f;
   if (wExpectedType != wEncodedType)
   {
-    throw std::invalid_argument("Expected type is " + arrayTypeName(wEncodedType) + ", but got template type " + arrayTypeName(wExpectedType));
+    throw std::invalid_argument("Expected type is " + detail::arrayTypeName(wEncodedType) +
+                                ", but got template type " + detail::arrayTypeName(wExpectedType));
   }
 
   return Flatbush<ArrayType>(iData);
@@ -372,7 +431,7 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept
 
   mData.assign(mData.capacity(), 0);
   mData[0] = gValidityFlag;
-  mData[1] = (gVersion << 4) + arrayTypeIndex<ArrayType>();
+  mData[1] = (gVersion << 4) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
   mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
