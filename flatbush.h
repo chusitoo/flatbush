@@ -124,20 +124,15 @@ inline uint32_t HilbertXYToIndex(uint32_t n, uint32_t x, uint32_t y)
   x = x << (16 - n);
   y = y << (16 - n);
 
-  uint32_t A;
-  uint32_t B;
-  uint32_t C;
-  uint32_t D;
-
   // Initial prefix scan round, prime with x and y
   uint32_t a = x ^ y;
   uint32_t b = 0xFFFF ^ a;
   uint32_t c = 0xFFFF ^ (x | y);
   uint32_t d = x & (y ^ 0xFFFF);
-  A = a | (b >> 1);
-  B = (a >> 1) ^ a;
-  C = ((c >> 1) ^ (b & (d >> 1))) ^ c;
-  D = ((a & (c >> 1)) ^ (d >> 1)) ^ d;
+  uint32_t A = a | (b >> 1);
+  uint32_t B = (a >> 1) ^ a;
+  uint32_t C = ((c >> 1) ^ (b & (d >> 1))) ^ c;
+  uint32_t D = ((a & (c >> 1)) ^ (d >> 1)) ^ d;
 
   a = A;
   b = B;
