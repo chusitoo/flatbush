@@ -99,7 +99,7 @@ class span
 namespace flatbush {
 
 using FilterCb = std::function<bool(size_t)>;
-constexpr auto gHilbertMax = std::numeric_limits<uint16_t>::max();
+constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDouble = std::numeric_limits<double>::max();
 constexpr auto gMaxUint32 = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
@@ -110,6 +110,7 @@ constexpr uint8_t gVersion = 3;  // serialized format version
 
 namespace detail {
 
+// From https://www.boost.org/doc/libs/1_81_0/boost/core/bit.hpp (modified)
 template<class To, class From>
 To bit_cast(From const& from)
 {
@@ -182,76 +183,77 @@ inline uint32_t HilbertXYToIndex(uint32_t n, uint32_t x, uint32_t y)
   return ((Interleave(i1) << 1) | Interleave(i0)) >> (32 - 2 * n);
 }
 
+// Template specialization for the supported array types
 template <typename T, typename...>
 struct is_contained : std::false_type {};
 
 template <typename Type, typename Head, typename... Tail>
 struct is_contained<Type, Head, Tail...>
-    : std::integral_constant<bool, std::is_same<Type, Head>::value ||
-                             is_contained<Type, Tail...>::value> {};
+  : std::integral_constant<bool, std::is_same<Type, Head>::value ||
+                           is_contained<Type, Tail...>::value> {};
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, int8_t>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 0;
+  return 0;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, uint8_t>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 1;
+  return 1;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, int16_t>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 3;
+  return 3;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, uint16_t>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 4;
+  return 4;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, int32_t>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 5;
+  return 5;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, uint32_t>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 6;
+  return 6;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, float>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 7;
+  return 7;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, double>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return 8;
+  return 8;
 }
 
 template <typename ArrayType>
 constexpr typename std::enable_if<!is_contained<ArrayType,
-    int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>::value, uint8_t>::type
+  int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>::value, uint8_t>::type
 arrayTypeIndex()
 {
-    return gInvalidArrayType;
+  return gInvalidArrayType;
 }
 
 inline std::string arrayTypeName(size_t iIndex)
@@ -374,13 +376,31 @@ class Flatbush
   Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  std::vector<size_t> search(Box<ArrayType> iBounds, const FilterCb& iFilterFn = nullptr) const noexcept;
-  std::vector<size_t> neighbors(Point<ArrayType> iPoint, size_t iMaxResults = gMaxUint32, double iMaxDistance = gMaxDouble, const FilterCb& iFilterFn = nullptr) const noexcept;
-  inline size_t nodeSize() const noexcept { return mData[2] | mData[3] << 8; };
-  inline size_t numItems() const noexcept { return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24; };
-  inline size_t boxSize() const noexcept { return mBoxes.size() * 4; };
-  inline size_t indexSize() const noexcept { return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size(); };
-  inline span<const uint8_t> data() const noexcept { return { mData.data(), mData.capacity() }; };
+  std::vector<size_t> search(Box<ArrayType> iBounds,
+                             const FilterCb& iFilterFn = nullptr) const noexcept;
+  std::vector<size_t> neighbors(Point<ArrayType> iPoint,
+                                size_t iMaxResults = gMaxUint32,
+                                double iMaxDistance = gMaxDouble,
+                                const FilterCb& iFilterFn = nullptr) const noexcept;
+  inline size_t nodeSize() const noexcept
+  {
+    return mData[2] | mData[3] << 8;
+  };
+  inline size_t numItems() const noexcept
+  {
+    return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24;
+  };
+  inline size_t boxSize() const noexcept
+  {
+    return mBoxes.size() * 4;
+  };
+  inline size_t indexSize() const noexcept
+  {
+    return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size();
+  };
+  inline span<const uint8_t> data() const noexcept {
+    return { mData.data(), mData.capacity() };
+  };
 
   friend class FlatbushBuilder<ArrayType>;
 
@@ -404,10 +424,12 @@ class Flatbush
 
   struct IndexDistance
   {
-    size_t mId;
-    ArrayType mDistance;
+    IndexDistance(size_t iId, ArrayType iDistance) : mId(iId), mDistance(iDistance) {}
     bool operator< (const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
     bool operator> (const IndexDistance& iOther) const { return iOther.mDistance > mDistance; }
+
+    size_t mId;
+    ArrayType mDistance;
   };
 
   // views
@@ -472,9 +494,15 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint16_t iNodeSize) noexcept
   const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   // Views
   mData.reserve(wDataSize);
-  mBoxes = span<Box<ArrayType>>(detail::bit_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes);
-  mIndicesUint16 = span<uint16_t>(detail::bit_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
-  mIndicesUint32 = span<uint32_t>(detail::bit_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes);
+  mBoxes = span<Box<ArrayType>>(
+    detail::bit_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes
+  );
+  mIndicesUint16 = span<uint16_t>(
+    detail::bit_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes
+  );
+  mIndicesUint32 = span<uint32_t>(
+    detail::bit_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes
+  );
 }
 
 template <typename ArrayType>
@@ -505,8 +533,8 @@ void Flatbush<ArrayType>::finish() noexcept
   }
 
   std::vector<uint32_t> wHilbertValues(wNumItems);
-  const auto wHilbertWidth = gHilbertMax / (mBounds.mMaxX - mBounds.mMinX);
-  const auto wHilbertHeight = gHilbertMax / (mBounds.mMaxY - mBounds.mMinY);
+  const auto wHilbertWidth = gMaxHilbert / (mBounds.mMaxX - mBounds.mMinX);
+  const auto wHilbertHeight = gMaxHilbert / (mBounds.mMaxY - mBounds.mMinY);
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
   for (size_t wIdx = 0; wIdx < wNumItems; ++wIdx)
@@ -591,12 +619,13 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, const FilterCb& iFilterFn) const noexcept
+std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds,
+                                                const FilterCb& iFilterFn) const noexcept
 {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1;
-  std::vector<size_t> wQueue;
+  std::queue<size_t> wQueue;
   std::vector<size_t> wResults;
 
   while (true)
@@ -613,11 +642,11 @@ std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, const Fi
       if (iBounds.mMinX > mBoxes[wPosition].mMaxX) continue;  // minX > nodeMaxX
       if (iBounds.mMinY > mBoxes[wPosition].mMaxY) continue;  // minY > nodeMaxY
 
-      const auto wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]) | 0;
+      const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]);
 
       if (wNodeIndex >= wNumItems)
       {
-        wQueue.push_back(wIndex);  // node; add it to the search queue
+        wQueue.push(wIndex);  // node; add it to the search queue
       }
       else if (!iFilterFn || iFilterFn(wIndex))
       {
@@ -626,22 +655,25 @@ std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds, const Fi
     }
 
     if (wQueue.empty()) break;
-    wNodeIndex = wQueue.back() >> 2;  // need to shift for binary compatibility with JS
-    wQueue.pop_back();
+    wNodeIndex = wQueue.front() >> 2;  // need to shift for binary compatibility with JS
+    wQueue.pop();
   }
 
   return wResults;
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size_t iMaxResults, double iMaxDistance, const FilterCb& iFilterFn) const noexcept
+std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint,
+                                                   size_t iMaxResults,
+                                                   double iMaxDistance,
+                                                   const FilterCb& iFilterFn) const noexcept
 {
-  std::priority_queue<IndexDistance> wQueue;
-  std::vector<size_t> wResults;
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1;
+  std::priority_queue<IndexDistance> wQueue;
+  std::vector<size_t> wResults;
 
   while (true)
   {
@@ -651,7 +683,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size
     // search through child nodes
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition)
     {
-      const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]) | 0;
+      const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]);
       const auto wDistX = axisDistance(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
       const auto wDistY = axisDistance(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
       const auto wDistance = wDistX * wDistX + wDistY * wDistY;
@@ -659,12 +691,12 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint, size
 
       if (wNodeIndex >= wNumItems)
       {
-        wQueue.push({ wIndex << 1, wDistance });
+        wQueue.emplace(wIndex << 1, wDistance);
       }
       else if (!iFilterFn || iFilterFn(wIndex))  // leaf node
       {
         // put an odd index if it's an item rather than a node, to recognize later
-        wQueue.push({ (wIndex << 1) + 1, wDistance });
+        wQueue.emplace((wIndex << 1) + 1, wDistance);
       }
     }
 
