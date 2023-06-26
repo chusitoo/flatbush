@@ -197,7 +197,7 @@ void reconstructIndexFromArrayBuffer()
   std::cout << "reconstructs an index from array buffer" << std::endl;
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();
-  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(wIndexBuffer.data());
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(wIndexBuffer.data(), wIndexBuffer.size());
   auto wIndex2Buffer = wIndex2.data();
 
   assert(wIndexBuffer.size() == wIndex2Buffer.size());
@@ -297,7 +297,7 @@ void searchQueryFilterFunc()
 void reconstructIndexFromJSArrayBuffer()
 {
   std::cout << "reconstructs an index from JS array buffer" << std::endl;
-  auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data());
+  auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), gFlatbush.size());
   auto wIndexBuffer = wIndex.data();
 
   assert(wIndexBuffer.size() == gFlatbush.size());
@@ -312,7 +312,7 @@ void fromNull()
 
   try
   {
-    flatbush::FlatbushBuilder<double>::from(nullptr);
+    flatbush::FlatbushBuilder<double>::from(nullptr, flatbush::gHeaderByteSize);
   }
   catch (const std::invalid_argument& iError)
   {
@@ -329,7 +329,7 @@ void fromWrongMagic()
 
   try
   {
-    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 0xf1 }.data());
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 0xf1 }.data(), flatbush::gHeaderByteSize);
   }
   catch (const std::invalid_argument& iError)
   {
@@ -346,7 +346,7 @@ void fromWrongVersion()
 
   try
   {
-    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 0xfb, 2 << 4 }.data());
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 0xfb, 2 << 4 }.data(), flatbush::gHeaderByteSize);
   }
   catch (const std::invalid_argument& iError)
   {
@@ -363,7 +363,7 @@ void fromWrongEncodedType()
 
   try
   {
-    flatbush::FlatbushBuilder<int>::from(gFlatbush.data());
+    flatbush::FlatbushBuilder<int>::from(gFlatbush.data(), gFlatbush.size());
   }
   catch (const std::invalid_argument& iError)
   {
@@ -371,6 +371,57 @@ void fromWrongEncodedType()
   }
 
   assert(wIsThrown);
+}
+
+void fromInvalidHeaderSize()
+{
+  std::cout << "throws an error when the buffer size is less than header size" << std::endl;
+  bool wIsThrown = false;
+
+  try
+  {
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 251, 56, 0, 0 }.data(), 4);
+  }
+  catch (const std::invalid_argument& iError)
+  {
+    wIsThrown = (std::string("Data buffer size must be at least 8 bytes.").compare(iError.what()) == 0);
+  }
+
+  assert(wIsThrown);
+}
+
+void fromInvalidNodeSize()
+{
+  std::cout << "throws an error if nodeSize is less that minimum allowed" << std::endl;
+  bool wIsThrown = false;
+
+  try
+  {
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 251, 56, 0, 0, 0, 0, 0, 0 }.data(), flatbush::gHeaderByteSize);
+  }
+  catch (const std::invalid_argument& iError)
+  {
+    wIsThrown = (std::string("Node size cannot be less than 2.").compare(iError.what()) == 0);
+  }
+
+  assert(wIsThrown);
+}
+
+void adjustedNodeSize()
+{
+  std::cout << "adjusts the minimum nodeSize when constructing new index" << std::endl;
+
+  flatbush::FlatbushBuilder<int> wBuilder0(1, 0);
+  wBuilder0.add({ 0, 0, 0, 0 });
+  auto wIndex0 = wBuilder0.finish();
+  assert(wIndex0.numItems() == 1);
+  assert(wIndex0.nodeSize() == 2);
+
+  flatbush::FlatbushBuilder<int> wBuilder1(1, 0);
+  wBuilder1.add({ 0, 0, 0, 0 });
+  auto wIndex1 = wBuilder1.finish();
+  assert(wIndex1.numItems() == 1);
+  assert(wIndex1.nodeSize() == 2);
 }
 
 void searchQuerySinglePointSmallNumItems()
@@ -510,7 +561,6 @@ void testOneMillionItems()
   assert(wIds2.size() == wNumItems);
 }
 
-
 int main(int /*argc*/, char** /*argv*/)
 {
   indexBunchOfRectangles();
@@ -529,6 +579,9 @@ int main(int /*argc*/, char** /*argv*/)
   fromWrongMagic();
   fromWrongVersion();
   fromWrongEncodedType();
+  fromInvalidHeaderSize();
+  fromInvalidNodeSize();
+  adjustedNodeSize();
   searchQuerySinglePointSmallNumItems();
   searchQuerySinglePointLargeNumItems();
   searchQueryMultiPointSmallNumItems();

@@ -103,6 +103,8 @@ constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDouble = std::numeric_limits<double>::max();
 constexpr auto gMaxUint32 = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
+constexpr uint16_t gMinNodeSize = 2;
+constexpr uint16_t gMaxNodeSize = 65535;
 constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
 constexpr uint8_t gValidityFlag = 0xfb;
@@ -184,7 +186,7 @@ inline uint32_t HilbertXYToIndex(uint32_t n, uint32_t x, uint32_t y)
 }
 
 // Template specialization for the supported array types
-template <typename T, typename...>
+template <typename Type, typename...>
 struct is_contained : std::false_type {};
 
 template <typename Type, typename Head, typename... Tail>
@@ -309,7 +311,7 @@ class FlatbushBuilder
   };
 
   Flatbush<ArrayType> finish() const;
-  static Flatbush<ArrayType> from(const uint8_t* iData);
+  static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
 
  private:
   std::uint16_t mNodeSize;
@@ -335,32 +337,45 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() const
 };
 
 template <typename ArrayType>
-Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData)
+Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize)
 {
+  if (iSize < gHeaderByteSize)
+  {
+    throw std::invalid_argument("Data buffer size must be at least " +
+                                std::to_string(gHeaderByteSize) + " bytes.");
+  }
+
   if (!iData)
   {
     throw std::invalid_argument("Data is incomplete or missing.");
   }
 
-  auto wMagic = iData[0];
+  const auto wMagic = iData[0];
   if (wMagic != gValidityFlag)
   {
     throw std::invalid_argument("Data does not appear to be in a Flatbush format.");
   }
 
-  auto wEncodedVersion = iData[1] >> 4;
+  const auto wEncodedVersion = iData[1] >> 4;
   if (wEncodedVersion != gVersion)
   {
     throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) +
                                 " data when expected v"+ std::to_string(gVersion) + ".");
   }
 
-  auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
-  auto wEncodedType = iData[1] & 0x0f;
+  const auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
+  const auto wEncodedType = iData[1] & 0x0f;
   if (wExpectedType != wEncodedType)
   {
     throw std::invalid_argument("Expected type is " + detail::arrayTypeName(wEncodedType) +
                                 ", but got template type " + detail::arrayTypeName(wExpectedType));
+  }
+
+  const auto wNodeSize = (iData[2] | iData[3] << 8);
+  if (wNodeSize < gMinNodeSize)
+  {
+    throw std::invalid_argument("Node size cannot be less than " +
+                                std::to_string(gMinNodeSize) + ".");
   }
 
   return Flatbush<ArrayType>(iData);
@@ -386,18 +401,22 @@ class Flatbush
   {
     return mData[2] | mData[3] << 8;
   };
+
   inline size_t numItems() const noexcept
   {
     return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24;
   };
+
   inline size_t boxSize() const noexcept
   {
     return mBoxes.size() * 4;
   };
+
   inline size_t indexSize() const noexcept
   {
     return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size();
   };
+
   inline span<const uint8_t> data() const noexcept {
     return { mData.data(), mData.capacity() };
   };
@@ -448,7 +467,7 @@ class Flatbush
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept
 {
-  iNodeSize = std::min(std::max(iNodeSize, uint16_t{ 2 }), uint16_t{ 65535 });
+  iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
   init(iNumItems, iNodeSize);
 
   mData.assign(mData.capacity(), 0);
@@ -462,8 +481,8 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(const uint8_t* iData) noexcept
 {
-  auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
-  auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
+  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
+  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
   init(wNumItems, wNodeSize);
 
   mData.insert(mData.begin(), &iData[0], &iData[mData.capacity()]);
@@ -614,8 +633,8 @@ void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues, size_t iLeft, siz
 template <typename ArrayType>
 size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept
 {
-  auto wIt = std::upper_bound(mLevelBounds.begin(), mLevelBounds.end(), iNodeIndex);
-  return (mLevelBounds.end() == wIt) ? mLevelBounds.back() : *wIt;
+  const auto& wIt = std::upper_bound(mLevelBounds.cbegin(), mLevelBounds.cend(), iNodeIndex);
+  return (mLevelBounds.cend() == wIt) ? mLevelBounds.back() : *wIt;
 }
 
 template <typename ArrayType>
