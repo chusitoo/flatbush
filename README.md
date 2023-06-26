@@ -34,7 +34,6 @@ auto index = builder.finish();
 // call builder.clear() or keep adding items
 builder.add({ box.minX, box.minY, box.maxX, box.maxY });
 auto other = builder.finish();
-
 ```
 
 ### Searching a bounding box
@@ -68,15 +67,16 @@ auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
 ### Reconstruct from raw data
+
 ```cpp
 // get the view to the raw array buffer
 auto buffer = index.data();
 
 // then pass the underlying data, specifying the template type
 // NOTE: an exception will be thrown if template != encoded type
-auto other = FlatbushBuilder<double>::from(buffer.data());
+auto other = FlatbushBuilder<double>::from(buffer.data(), buffer.size());
 // or
-auto other = FlatbushBuilder<double>::from(&buffer[0]);
+auto other = FlatbushBuilder<double>::from(&buffer[0], buffer.size());
 ```
 
 ## Compiling
@@ -120,4 +120,3 @@ index 1000000 rectangles: | 93ms | 112ms | 124ms
 1000 searches of 100 neighbors: | 12ms | 12ms | 17ms
 1 searches of 1000000 neighbors: | 80ms | 59ms | 61ms
 100000 searches of 1 neighbors: | 297ms | 363ms | 503ms
-```
