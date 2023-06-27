@@ -116,7 +116,7 @@ namespace detail {
 template<class To, class From>
 To bit_cast(From const& from)
 {
-    static_assert(sizeof(To) == sizeof(From));
+    static_assert(sizeof(To) == sizeof(From), "Cannot cast types of different size");
 
     To to;
     std::memcpy(&to, &from, sizeof(To));
@@ -357,6 +357,9 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() const
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize)
 {
+  static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
+        "Unexpected typed array class. Expecting non 64-bit integral or floating point.");
+
   if (iSize < gHeaderByteSize)
   {
     throw std::invalid_argument("Data buffer size must be at least " +
