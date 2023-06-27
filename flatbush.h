@@ -267,6 +267,24 @@ inline std::string arrayTypeName(size_t iIndex)
 
   return iIndex < sArrayTypeNames.size() ? sArrayTypeNames[iIndex] : "unknown";
 }
+
+std::vector<size_t> calculateNumNodesPerLevel(uint32_t iNumItems, uint32_t iNodeSize)
+{
+  // calculate the total number of nodes in the R-tree to allocate space for
+  // and the index of each tree level (used in search later)
+  size_t wCount = iNumItems;
+  size_t wNumNodes = iNumItems;
+  std::vector<size_t> wLevelBounds{ wNumNodes };
+
+  do
+  {
+    wCount = (wCount + iNodeSize - 1) / iNodeSize;
+    wNumNodes += wCount;
+    wLevelBounds.push_back(wNumNodes);
+  } while (wCount > 1);
+
+  return wLevelBounds;
+}
 }  // namespace detail
 
 template <typename ArrayType>
@@ -378,6 +396,19 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
                                 std::to_string(gMinNodeSize) + ".");
   }
 
+  const auto wNumItems = (iData[4] | iData[5] << 8 | iData[6] << 16 | iData[7] << 24);
+  const auto& wLevelBounds = detail::calculateNumNodesPerLevel(wNumItems, wNodeSize);
+  const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
+  const auto wIndicesByteSize = wNumNodes * ((wNumNodes >= 16384) ? sizeof(uint32_t) : sizeof(uint16_t));
+  const auto wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
+  const auto wSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
+
+  if (wSize != iSize)
+  {
+    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
+                                ", but got buffer size " + std::to_string(iSize) + ".");
+  }
+
   return Flatbush<ArrayType>(iData);
 }
 
@@ -436,7 +467,7 @@ class Flatbush
 
   size_t add(const Box<ArrayType>& iBox) noexcept;
   void finish() noexcept;
-  void init(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
+  void init(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   size_t upperBound(size_t iNodeIndex) const noexcept;
@@ -491,20 +522,10 @@ Flatbush<ArrayType>::Flatbush(const uint8_t* iData) noexcept
 }
 
 template <typename ArrayType>
-void Flatbush<ArrayType>::init(uint32_t iNumItems, uint16_t iNodeSize) noexcept
+void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept
 {
-  // calculate the total number of nodes in the R-tree to allocate space for
-  // and the index of each tree level (used in search later)
-  size_t wCount = iNumItems;
-  size_t wNumNodes = iNumItems;
-  mLevelBounds.push_back(wNumNodes);
-
-  do
-  {
-    wCount = (wCount + iNodeSize - 1) / iNodeSize;
-    wNumNodes += wCount;
-    mLevelBounds.push_back(wNumNodes);
-  } while (wCount > 1);
+  mLevelBounds = detail::calculateNumNodesPerLevel(iNumItems, iNodeSize);
+  const auto wNumNodes = mLevelBounds.empty() ? iNumItems : mLevelBounds.back();
 
   // Sizes
   mIsWideIndex = wNumNodes >= 16384;

@@ -392,7 +392,7 @@ void fromInvalidHeaderSize()
 
 void fromInvalidNodeSize()
 {
-  std::cout << "throws an error if nodeSize is less that minimum allowed" << std::endl;
+  std::cout << "throws an error if nodeSize is less than minimum allowed" << std::endl;
   bool wIsThrown = false;
 
   try
@@ -402,6 +402,23 @@ void fromInvalidNodeSize()
   catch (const std::invalid_argument& iError)
   {
     wIsThrown = (std::string("Node size cannot be less than 2.").compare(iError.what()) == 0);
+  }
+
+  assert(wIsThrown);
+}
+
+void fromInvalidNumItems()
+{
+  std::cout << "throws an error if buffer of numItems does not match provided size" << std::endl;
+  bool wIsThrown = false;
+
+  try
+  {
+    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{ 251, 56, 16, 0, 14, 0, 0, 0 }.data(), flatbush::gHeaderByteSize);
+  }
+  catch (const std::invalid_argument& iError)
+  {
+    wIsThrown = (std::string("Num items dictates a total size of 518, but got buffer size 8.").compare(iError.what()) == 0);
   }
 
   assert(wIsThrown);
@@ -417,7 +434,7 @@ void adjustedNodeSize()
   assert(wIndex0.numItems() == 1);
   assert(wIndex0.nodeSize() == 2);
 
-  flatbush::FlatbushBuilder<int> wBuilder1(1, 0);
+  flatbush::FlatbushBuilder<int> wBuilder1(1, 1);
   wBuilder1.add({ 0, 0, 0, 0 });
   auto wIndex1 = wBuilder1.finish();
   assert(wIndex1.numItems() == 1);
@@ -581,6 +598,7 @@ int main(int /*argc*/, char** /*argv*/)
   fromWrongEncodedType();
   fromInvalidHeaderSize();
   fromInvalidNodeSize();
+  fromInvalidNumItems();
   adjustedNodeSize();
   searchQuerySinglePointSmallNumItems();
   searchQuerySinglePointLargeNumItems();
