@@ -509,7 +509,6 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept
   mData[1] = (gVersion << 4) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
-  mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
 }
 
 template <typename ArrayType>
@@ -520,13 +519,14 @@ Flatbush<ArrayType>::Flatbush(const uint8_t* iData) noexcept
   init(wNumItems, wNodeSize);
 
   mData.insert(mData.begin(), &iData[0], &iData[mData.capacity()]);
-  mPosition = mLevelBounds.back();
-  mBounds = mBoxes[mPosition - 1];
+  mPosition = mLevelBounds.empty() ? 0 : mLevelBounds.back();
+  if (mPosition > 0) mBounds = mBoxes[mPosition - 1];
 }
 
 template <typename ArrayType>
 void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept
 {
+  mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
   mLevelBounds = detail::calculateNumNodesPerLevel(iNumItems, iNodeSize);
   const auto wNumNodes = mLevelBounds.empty() ? iNumItems : mLevelBounds.back();
 
