@@ -29,4 +29,4 @@ jobs:
       - name: flawfinder_scan
         uses: david-a-wheeler/flawfinder@614801f704906a94ae420a5023c37008e22d7b95
         with:
-          arguments: '--error-level=4'
+          arguments: '--error-level=4 .'
