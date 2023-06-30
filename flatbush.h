@@ -27,6 +27,7 @@ SOFTWARE.
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -425,9 +426,9 @@ class Flatbush
   Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  std::vector<size_t> search(Box<ArrayType> iBounds,
+  std::vector<size_t> search(const Box<ArrayType>& iBounds,
                              const FilterCb& iFilterFn = nullptr) const noexcept;
-  std::vector<size_t> neighbors(Point<ArrayType> iPoint,
+  std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
                                 size_t iMaxResults = gMaxUint32,
                                 double iMaxDistance = gMaxDouble,
                                 const FilterCb& iFilterFn = nullptr) const noexcept;
@@ -662,9 +663,12 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds,
+std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
                                                 const FilterCb& iFilterFn) const noexcept
 {
+  if (std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
+      std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY)) return {};
+
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1;
@@ -706,11 +710,15 @@ std::vector<size_t> Flatbush<ArrayType>::search(Box<ArrayType> iBounds,
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::neighbors(Point<ArrayType> iPoint,
+std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
                                                    size_t iMaxResults,
                                                    double iMaxDistance,
                                                    const FilterCb& iFilterFn) const noexcept
 {
+  if (std::isnan(iPoint.mX) || std::isnan(iPoint.mY) ||
+      std::isnan(iMaxDistance) || std::isnan(iMaxResults) ||
+      iMaxDistance < 0 || iMaxResults == 0) return {};
+
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
