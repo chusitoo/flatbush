@@ -189,7 +189,7 @@ void performBoxSearch()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wResults.begin(), wResults.end());
 
-  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wResults.data()));
+  assert(std::equal(wExpected.begin(), wExpected.end(), wResults.begin()));
 }
 
 void reconstructIndexFromArrayBuffer()
@@ -202,7 +202,7 @@ void reconstructIndexFromArrayBuffer()
 
   assert(wIndexBuffer.size() == wIndex2Buffer.size());
 
-  assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), wIndex2Buffer.data()));
+  assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
 
 void doesNotFreezeOnZeroNumItems()
@@ -234,7 +234,7 @@ void performNeighborsQuery()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
+  assert(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
 void neighborsQueryAllItems()
@@ -257,7 +257,7 @@ void neighborsQueryMaxDistance()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
+  assert(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
 void neighborsQueryFilterFunc()
@@ -271,7 +271,7 @@ void neighborsQueryFilterFunc()
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  assert(std::equal(wExpected.data(), wExpected.data() + wExpected.size(), wIds.data()));
+  assert(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
 void returnIndexOfNewlyAddedRectangle()
@@ -302,7 +302,7 @@ void reconstructIndexFromJSArrayBuffer()
 
   assert(wIndexBuffer.size() == gFlatbush.size());
 
-  assert(std::equal(wIndexBuffer.data(), wIndexBuffer.data() + wIndexBuffer.size(), gFlatbush.data()));
+  assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), gFlatbush.begin()));
 }
 
 void fromNull()

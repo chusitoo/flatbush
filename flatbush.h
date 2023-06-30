@@ -378,7 +378,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
     throw std::invalid_argument("Data does not appear to be in a Flatbush format.");
   }
 
-  const auto wEncodedVersion = iData[1] >> 4;
+  const uint8_t wEncodedVersion = iData[1] >> 4;
   if (wEncodedVersion != gVersion)
   {
     throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) +
@@ -386,21 +386,21 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
   }
 
   const auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
-  const auto wEncodedType = iData[1] & 0x0f;
+  const uint8_t wEncodedType = iData[1] & 0x0f;
   if (wExpectedType != wEncodedType)
   {
     throw std::invalid_argument("Expected type is " + detail::arrayTypeName(wEncodedType) +
                                 ", but got template type " + detail::arrayTypeName(wExpectedType));
   }
 
-  const auto wNodeSize = (iData[2] | iData[3] << 8);
+  const auto wNodeSize = *detail::bit_cast<uint16_t*>(&iData[2]);
   if (wNodeSize < gMinNodeSize)
   {
     throw std::invalid_argument("Node size cannot be less than " +
                                 std::to_string(gMinNodeSize) + ".");
   }
 
-  const auto wNumItems = (iData[4] | iData[5] << 8 | iData[6] << 16 | iData[7] << 24);
+  const auto wNumItems = *detail::bit_cast<uint32_t*>(&iData[4]);
   const auto& wLevelBounds = detail::calculateNumNodesPerLevel(wNumItems, wNodeSize);
   const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
   const auto wIndicesByteSize = wNumNodes * ((wNumNodes >= 16384) ? sizeof(uint32_t) : sizeof(uint16_t));
@@ -434,12 +434,12 @@ class Flatbush
                                 const FilterCb& iFilterFn = nullptr) const noexcept;
   inline size_t nodeSize() const noexcept
   {
-    return mData[2] | mData[3] << 8;
+    return *detail::bit_cast<uint16_t*>(&mData[2]);
   };
 
   inline size_t numItems() const noexcept
   {
-    return mData[4] | mData[5] << 8 | mData[6] << 16 | mData[7] << 24;
+    return *detail::bit_cast<uint32_t*>(&mData[4]);
   };
 
   inline size_t boxSize() const noexcept
@@ -449,7 +449,7 @@ class Flatbush
 
   inline size_t indexSize() const noexcept
   {
-    return mIsWideIndex ? mIndicesUint32.size() : mIndicesUint16.size();
+    return mBoxes.size();
   };
 
   inline span<const uint8_t> data() const noexcept {
