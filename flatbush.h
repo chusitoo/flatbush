@@ -467,21 +467,30 @@ class Flatbush
   }
   static inline bool canDoSearch(const Box<ArrayType>& iBounds)
   {
-    // Only because on Windows, isnan throws on anything that is not float, double or lond double
-    const auto wIsNan = std::is_integral<ArrayType>() ? false :
-        (std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
-         std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY));
-    return !wIsNan;
+#ifdef _WIN32
+    // Only because on Windows, isnan throws on anything that is not float, double or long double
+    const auto wIsNanBounds = (std::isnan(static_cast<double>(iBounds.mMinX)) ||
+                               std::isnan(static_cast<double>(iBounds.mMinY)) ||
+                               std::isnan(static_cast<double>(iBounds.mMaxX)) ||
+                               std::isnan(static_cast<double>(iBounds.mMaxY)));
+#else
+    const auto wIsNanBounds = (std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
+                               std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY));
+#endif
+    return !wIsNanBounds;
   }
   static inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iMaxDistance)
   {
-    // Only because on Windows, isnan throws on anything that is not float, double or lond double
-    const auto wIsNan = std::is_integral<ArrayType>() ? false :
-        (std::isnan(iPoint.mX) || std::isnan(iPoint.mY) ||
-         std::isnan(iMaxDistance) || std::isnan(iMaxResults));
-    return !wIsNan && iMaxDistance >= 0 && iMaxResults != 0;
+#ifdef _WIN32
+    // Only because on Windows, isnan throws on anything that is not float, double or long double
+    const auto wIsNanPoint = (std::isnan(static_cast<double>(iPoint.mX)) ||
+                              std::isnan(static_cast<double>(iPoint.mY)));
+#else
+    const auto wIsNanPoint = (std::isnan(iPoint.mX) || std::isnan(iPoint.mY));
+#endif
+    return !wIsNanPoint && !std::isnan(iMaxDistance) && iMaxDistance >= 0 && iMaxResults != 0;
   }
 
   explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
