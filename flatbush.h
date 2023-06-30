@@ -465,6 +465,20 @@ class Flatbush
   {
     return iValue < iMin ? iMin - iValue : std::max(iValue - iMax, 0.0);
   }
+  static inline bool canDoSearch(const Box<ArrayType>& iBounds)
+  {
+    return !(std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
+             std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY));
+
+  }
+  static inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
+                                    size_t iMaxResults,
+                                    double iMaxDistance)
+  {
+    return !(std::isnan(iPoint.mX) || std::isnan(iPoint.mY) ||
+             std::isnan(iMaxDistance) || std::isnan(iMaxResults) ||
+             iMaxDistance < 0 || iMaxResults == 0);
+  }
 
   explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
   explicit Flatbush(const uint8_t* iData) noexcept;
@@ -666,16 +680,14 @@ template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
                                                 const FilterCb& iFilterFn) const noexcept
 {
-  if (std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
-      std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY)) return {};
-
+  const auto wCanLoop = canDoSearch(iBounds);
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1;
   std::queue<size_t> wQueue;
   std::vector<size_t> wResults;
 
-  while (true)
+  while (wCanLoop)
   {
     // find the end index of the node
     const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
@@ -715,10 +727,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    double iMaxDistance,
                                                    const FilterCb& iFilterFn) const noexcept
 {
-  if (std::isnan(iPoint.mX) || std::isnan(iPoint.mY) ||
-      std::isnan(iMaxDistance) || std::isnan(iMaxResults) ||
-      iMaxDistance < 0 || iMaxResults == 0) return {};
-
+  const auto wCanLoop = canDoNeighbors(iPoint, iMaxResults, iMaxDistance);
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
@@ -726,7 +735,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
   std::priority_queue<IndexDistance> wQueue;
   std::vector<size_t> wResults;
 
-  while (true)
+  while (wCanLoop)
   {
     // find the end index of the node
     const auto wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
