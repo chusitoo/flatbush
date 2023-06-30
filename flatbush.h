@@ -467,17 +467,21 @@ class Flatbush
   }
   static inline bool canDoSearch(const Box<ArrayType>& iBounds)
   {
-    return !(std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
-             std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY));
-
+    // Only because on Windows, isnan throws on anything that is not float, double or lond double
+    const auto wIsNan = std::is_integral<ArrayType>() ? false :
+        (std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
+         std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY));
+    return !wIsNan;
   }
   static inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iMaxDistance)
   {
-    return !(std::isnan(iPoint.mX) || std::isnan(iPoint.mY) ||
-             std::isnan(iMaxDistance) || std::isnan(iMaxResults) ||
-             iMaxDistance < 0 || iMaxResults == 0);
+    // Only because on Windows, isnan throws on anything that is not float, double or lond double
+    const auto wIsNan = std::is_integral<ArrayType>() ? false :
+        (std::isnan(iPoint.mX) || std::isnan(iPoint.mY) ||
+         std::isnan(iMaxDistance) || std::isnan(iMaxResults));
+    return !wIsNan && iMaxDistance >= 0 && iMaxResults != 0;
   }
 
   explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
