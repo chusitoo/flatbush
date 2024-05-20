@@ -268,24 +268,6 @@ inline std::string arrayTypeName(size_t iIndex)
 
   return iIndex < sArrayTypeNames.size() ? sArrayTypeNames[iIndex] : "unknown";
 }
-
-std::vector<size_t> calculateNumNodesPerLevel(uint32_t iNumItems, uint32_t iNodeSize)
-{
-  // calculate the total number of nodes in the R-tree to allocate space for
-  // and the index of each tree level (used in search later)
-  size_t wCount = iNumItems;
-  size_t wNumNodes = iNumItems;
-  std::vector<size_t> wLevelBounds{ wNumNodes };
-
-  do
-  {
-    wCount = (wCount + iNodeSize - 1) / iNodeSize;
-    wNumNodes += wCount;
-    wLevelBounds.push_back(wNumNodes);
-  } while (wCount > 1);
-
-  return wLevelBounds;
-}
 }  // namespace detail
 
 template <typename ArrayType>
@@ -400,12 +382,8 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
                                 std::to_string(gMinNodeSize) + ".");
   }
 
-  const auto wNumItems = *detail::bit_cast<uint32_t*>(&iData[4]);
-  const auto& wLevelBounds = detail::calculateNumNodesPerLevel(wNumItems, wNodeSize);
-  const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
-  const auto wIndicesByteSize = wNumNodes * ((wNumNodes >= 16384) ? sizeof(uint32_t) : sizeof(uint16_t));
-  const auto wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
-  const auto wSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
+  auto wInstance = Flatbush<ArrayType>(iData);
+  const auto wSize = wInstance.data().size();
 
   if (wSize != iSize)
   {
@@ -413,7 +391,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
                                 ", but got buffer size " + std::to_string(iSize) + ".");
   }
 
-  return Flatbush<ArrayType>(iData);
+  return wInstance;
 }
 
 template <typename ArrayType>
@@ -555,8 +533,18 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept
 {
   mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
-  mLevelBounds = detail::calculateNumNodesPerLevel(iNumItems, iNodeSize);
-  const auto wNumNodes = mLevelBounds.empty() ? iNumItems : mLevelBounds.back();
+
+  // calculate the total number of nodes in the R-tree to allocate space for
+  // and the index of each tree level (used in search later)
+  size_t wCount = iNumItems;
+  size_t wNumNodes = iNumItems;
+  mLevelBounds.push_back(wNumNodes);
+
+  do {
+    wCount = (wCount + iNodeSize - 1) / iNodeSize;
+    wNumNodes += wCount;
+    mLevelBounds.push_back(wNumNodes);
+  } while (wCount > 1);
 
   // Sizes
   mIsWideIndex = wNumNodes >= 16384;
