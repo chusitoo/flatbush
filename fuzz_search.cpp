@@ -47,15 +47,15 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize)
     const auto wMaxX = *flatbush::detail::bit_cast<const double*>(&iData[16]);
     const auto wMaxY = *flatbush::detail::bit_cast<const double*>(&iData[24]);
 
-    auto result = sIndex.search({ wMinX, wMinY, wMaxX, wMaxY });
+    auto wResult = sIndex.search({ wMinX, wMinY, wMaxX, wMaxY });
 
     if (wMinX <= 42 && wMaxX >= 42 && wMinY <= 0 && wMaxY >= 0)
     {
-        assert(result.size() == 1);
+        assert(wResult.size() == 1);
     }
     else
     {
-        assert(result.size() == 0);
+        assert(wResult.size() == 0);
     }
   }
 

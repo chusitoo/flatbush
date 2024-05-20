@@ -49,20 +49,17 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize)
     const auto wMaxResults = *flatbush::detail::bit_cast<const size_t*>(&iData[16]);
     const auto wMaxDistance = *flatbush::detail::bit_cast<const double*>(&iData[24]);
 
-    auto result = sIndex.neighbors(wPoint, wMaxResults, wMaxDistance);
+    auto wResult = sIndex.neighbors(wPoint, wMaxResults, wMaxDistance);
 
-    if (wMaxResults > 0)
+    const auto wDistance = std::pow(wX - 42, 2.0) + std::pow(wY, 2.0);
+
+    if (wMaxResults > 0 && wMaxDistance >= 0 && wDistance <= std::pow(wMaxDistance, 2.0))
     {
-        const auto wDistance = std::pow(wX - 42, 2.0) + std::pow(wY, 2.0);
-
-        if (wMaxDistance >= 0 && wDistance <= std::pow(wMaxDistance, 2.0))
-        {
-            assert(result.size() == 1);
-        }
-        else
-        {
-            assert(result.size() == 0);
-        }
+        assert(wResult.size() == 1);
+    }
+    else
+    {
+        assert(wResult.size() == 0);
     }
   }
 

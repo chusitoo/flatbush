@@ -384,7 +384,6 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
 
   auto wInstance = Flatbush<ArrayType>(iData);
   const auto wSize = wInstance.data().size();
-
   if (wSize != iSize)
   {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
@@ -445,7 +444,7 @@ class Flatbush
   }
   static inline bool canDoSearch(const Box<ArrayType>& iBounds)
   {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_WIN64)
     // Only because on Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanBounds = (std::isnan(static_cast<double>(iBounds.mMinX)) ||
                                std::isnan(static_cast<double>(iBounds.mMinY)) ||
@@ -461,7 +460,7 @@ class Flatbush
                                     size_t iMaxResults,
                                     double iMaxDistance)
   {
-#ifdef _WIN32
+#if defined(_WIN32) || defined(_WIN64)
     // Only because on Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanPoint = (std::isnan(static_cast<double>(iPoint.mX)) ||
                               std::isnan(static_cast<double>(iPoint.mY)));
@@ -526,7 +525,9 @@ Flatbush<ArrayType>::Flatbush(const uint8_t* iData) noexcept
 
   mData.insert(mData.begin(), &iData[0], &iData[mData.capacity()]);
   mPosition = mLevelBounds.empty() ? 0 : mLevelBounds.back();
-  if (mPosition > 0) mBounds = mBoxes[mPosition - 1];
+  if (mPosition > 0) {
+    mBounds = mBoxes[mPosition - 1];
+  }
 }
 
 template <typename ArrayType>
@@ -575,7 +576,6 @@ size_t Flatbush<ArrayType>::add(const Box<ArrayType>& iBox) noexcept
   mBounds.mMinY = std::min(mBounds.mMinY, iBox.mMinY);
   mBounds.mMaxX = std::max(mBounds.mMaxX, iBox.mMaxX);
   mBounds.mMaxY = std::max(mBounds.mMaxY, iBox.mMaxY);
-
   return mPosition++;
 }
 
@@ -610,7 +610,7 @@ void Flatbush<ArrayType>::finish() noexcept
 
   for (size_t wIdx = 0, wPosition = 0; wIdx < mLevelBounds.size() - 1; ++wIdx)
   {
-    const auto& wEnd = mLevelBounds[wIdx];
+    const auto wEnd = mLevelBounds[wIdx];
 
     // generate a parent node for each block of consecutive <nodeSize> nodes
     while (wPosition < wEnd)
@@ -648,8 +648,8 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, siz
 
     while (true)
     {
-      do wPivotLeft++; while (iValues[wPivotLeft] < wPivot);
-      do wPivotRight--; while (iValues[wPivotRight] > wPivot);
+      do ++wPivotLeft; while (iValues[wPivotLeft] < wPivot);
+      do --wPivotRight; while (iValues[wPivotRight] > wPivot);
       if (wPivotLeft >= wPivotRight) break;
       swap(iValues, wPivotLeft, wPivotRight);
     }
