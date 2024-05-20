@@ -22,40 +22,34 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include "flatbush.h"
-
 #include <cassert>
 
-flatbush::Flatbush<double> createIndex()
-{
+#include "flatbush.h"
+
+flatbush::Flatbush<double> createIndex() {
   flatbush::FlatbushBuilder<double> wBuilder;
 
-  wBuilder.add({ 42, 0, 42, 0 });
+  wBuilder.add({42, 0, 42, 0});
   auto wIndex = wBuilder.finish();
 
   return wIndex;
 }
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize)
-{
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize) {
   static auto sIndex = createIndex();
 
-  if (iSize == 32)
-  {
-    const auto wMinX = *flatbush::detail::bit_cast<const double*>(&iData[0]);
-    const auto wMinY = *flatbush::detail::bit_cast<const double*>(&iData[8]);
-    const auto wMaxX = *flatbush::detail::bit_cast<const double*>(&iData[16]);
-    const auto wMaxY = *flatbush::detail::bit_cast<const double*>(&iData[24]);
+  if (iSize == 32) {
+    const auto wMinX = *flatbush::detail::bit_cast<const double *>(&iData[0]);
+    const auto wMinY = *flatbush::detail::bit_cast<const double *>(&iData[8]);
+    const auto wMaxX = *flatbush::detail::bit_cast<const double *>(&iData[16]);
+    const auto wMaxY = *flatbush::detail::bit_cast<const double *>(&iData[24]);
 
-    auto wResult = sIndex.search({ wMinX, wMinY, wMaxX, wMaxY });
+    auto wResult = sIndex.search({wMinX, wMinY, wMaxX, wMaxY});
 
-    if (wMinX <= 42 && wMaxX >= 42 && wMinY <= 0 && wMaxY >= 0)
-    {
-        assert(wResult.size() == 1);
-    }
-    else
-    {
-        assert(wResult.size() == 0);
+    if (wMinX <= 42 && wMaxX >= 42 && wMinY <= 0 && wMaxY >= 0) {
+      assert(wResult.size() == 1);
+    } else {
+      assert(wResult.size() == 0);
     }
   }
 

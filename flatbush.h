@@ -48,24 +48,17 @@ namespace flatbush {
 
 template <typename Type>
 class span {
-  Type* mPtr;
-  size_t mLen;
+  Type* mPtr = nullptr;
+  size_t mLen = 0;
 
  public:
-  span() noexcept : mPtr{nullptr}, mLen{0} {}
-
+  span() = default;
   span(Type* iPtr, size_t iLen) noexcept : mPtr{iPtr}, mLen{iLen} {}
-
   Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
-
   Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
-
   const Type* data() const noexcept { return mPtr; }
-
   size_t size() const noexcept { return mLen; }
-
   Type* begin() noexcept { return mPtr; }
-
   Type* end() noexcept { return mPtr + mLen; }
 };
 
@@ -76,11 +69,12 @@ namespace flatbush {
 
 using FilterCb = std::function<bool(size_t)>;
 constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
-constexpr auto gMaxDouble = std::numeric_limits<double>::max();
-constexpr auto gMaxUint32 = std::numeric_limits<size_t>::max();
+constexpr auto gMaxDistance = std::numeric_limits<double>::max();
+constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
 constexpr uint16_t gMinNodeSize = 2;
-constexpr uint16_t gMaxNodeSize = 65535;
+constexpr uint16_t gMaxNodeSize = std::numeric_limits<uint16_t>::max();
+constexpr size_t gMaxNumNodes = std::numeric_limits<uint16_t>::max() / 4U;
 constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
 constexpr uint8_t gValidityFlag = 0xfb;
@@ -155,7 +149,7 @@ inline uint32_t HilbertXYToIndex(uint32_t n, uint32_t x, uint32_t y) {
   uint32_t i0 = x ^ y;
   uint32_t i1 = b | (0xFFFF ^ (i0 | a));
 
-  return ((Interleave(i1) << 1) | Interleave(i0)) >> (32 - 2 * n);
+  return ((Interleave(i1) << 1U) | Interleave(i0)) >> (32 - 2 * n);
 }
 
 // Template specialization for the supported array types
@@ -223,12 +217,18 @@ arrayTypeIndex() {
   return gInvalidArrayType;
 }
 
-inline std::string arrayTypeName(size_t iIndex) {
-  static const std::array<std::string, 9> sArrayTypeNames{"int8_t",   "uint8_t",  "uint8_t",
-                                                          "int16_t",  "uint16_t", "int32_t",
-                                                          "uint32_t", "float",    "double"};
-
-  return iIndex < sArrayTypeNames.size() ? sArrayTypeNames[iIndex] : "unknown";
+inline const std::string& arrayTypeName(size_t iIndex) {
+  static const std::string kUnknownType{"unknown"};
+  static const std::array<std::string, 9> kArrayTypeNames{"int8_t",
+                                                          "uint8_t",
+                                                          "uint8_t",
+                                                          "int16_t",
+                                                          "uint16_t",
+                                                          "int32_t",
+                                                          "uint32_t",
+                                                          "float",
+                                                          "double"};
+  return iIndex < kArrayTypeNames.size() ? kArrayTypeNames[iIndex] : kUnknownType;
 }
 }  // namespace detail
 
@@ -301,7 +301,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
                                 std::to_string(gHeaderByteSize) + " bytes.");
   }
 
-  if (!iData) {
+  if (iData == nullptr) {
     throw std::invalid_argument("Data is incomplete or missing.");
   }
 
@@ -310,14 +310,14 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
     throw std::invalid_argument("Data does not appear to be in a Flatbush format.");
   }
 
-  const uint8_t wEncodedVersion = iData[1] >> 4;
+  const uint8_t wEncodedVersion = iData[1] >> 4U;
   if (wEncodedVersion != gVersion) {
     throw std::invalid_argument("Got v" + std::to_string(wEncodedVersion) +
                                 " data when expected v" + std::to_string(gVersion) + ".");
   }
 
   const auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
-  const uint8_t wEncodedType = iData[1] & 0x0f;
+  const uint8_t wEncodedType = iData[1] & 0x0fU;
   if (wExpectedType != wEncodedType) {
     throw std::invalid_argument("Expected type is " + detail::arrayTypeName(wEncodedType) +
                                 ", but got template type " + detail::arrayTypeName(wExpectedType));
@@ -350,8 +350,8 @@ class Flatbush {
   std::vector<size_t> search(const Box<ArrayType>& iBounds,
                              const FilterCb& iFilterFn = nullptr) const noexcept;
 
-  std::vector<size_t> neighbors(const Point<ArrayType>& iPoint, size_t iMaxResults = gMaxUint32,
-                                double iMaxDistance = gMaxDouble,
+  std::vector<size_t> neighbors(const Point<ArrayType>& iPoint, size_t iMaxResults = gMaxResults,
+                                double iMaxDistance = gMaxDistance,
                                 const FilterCb& iFilterFn = nullptr) const noexcept;
 
   inline size_t nodeSize() const noexcept { return *detail::bit_cast<uint16_t*>(&mData[2]); };
@@ -366,7 +366,6 @@ class Flatbush {
 
  private:
   static constexpr ArrayType cMaxValue = std::numeric_limits<ArrayType>::max();
-
   static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
 
   static inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
@@ -424,7 +423,7 @@ class Flatbush {
   span<uint16_t> mIndicesUint16;
   span<uint32_t> mIndicesUint32;
   // pick appropriate index view
-  bool mIsWideIndex;
+  bool mIsWideIndex = false;
   // box stuff
   size_t mPosition = 0;
   std::vector<size_t> mLevelBounds;
@@ -438,7 +437,7 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
 
   mData.assign(mData.capacity(), 0);
   mData[0] = gValidityFlag;
-  mData[1] = (gVersion << 4) + detail::arrayTypeIndex<ArrayType>();
+  mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
 }
@@ -473,7 +472,7 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept 
   } while (wCount > 1);
 
   // Sizes
-  mIsWideIndex = wNumNodes >= 16384;
+  mIsWideIndex = wNumNodes > gMaxNumNodes;
   const size_t wIndicesByteSize = wNumNodes * (mIsWideIndex ? sizeof(uint32_t) : sizeof(uint16_t));
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
   const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
@@ -532,7 +531,7 @@ void Flatbush<ArrayType>::finish() noexcept {
 
     // generate a parent node for each block of consecutive <nodeSize> nodes
     while (wPosition < wEnd) {
-      const auto wNodeIndex = wPosition << 2;  // for binary compatibility with JS
+      const auto wNodeIndex = wPosition << 2U;  // for binary compatibility with JS
       auto wNodeBox = mBoxes[wPosition];
 
       // calculate bbox for the new node
@@ -568,10 +567,15 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft,
       do {
         ++wPivotLeft;
       } while (iValues[wPivotLeft] < wPivot);
+
       do {
         --wPivotRight;
       } while (iValues[wPivotRight] > wPivot);
-      if (wPivotLeft >= wPivotRight) break;
+
+      if (wPivotLeft >= wPivotRight) {
+        break;
+      }
+
       swap(iValues, wPivotLeft, wPivotRight);
     }
 
@@ -617,11 +621,12 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
     // search through child nodes
     for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       // check if node bbox intersects with query bbox
-      if (iBounds.mMaxX < mBoxes[wPosition].mMinX) continue;  // maxX < nodeMinX
-      if (iBounds.mMaxY < mBoxes[wPosition].mMinY) continue;  // maxY < nodeMinY
-      if (iBounds.mMinX > mBoxes[wPosition].mMaxX) continue;  // minX > nodeMaxX
-      if (iBounds.mMinY > mBoxes[wPosition].mMaxY) continue;  // minY > nodeMaxY
-
+      if (iBounds.mMaxX < mBoxes[wPosition].mMinX /* maxX < nodeMinX */ ||
+          iBounds.mMaxY < mBoxes[wPosition].mMinY /* maxY < nodeMinY */ ||
+          iBounds.mMinX > mBoxes[wPosition].mMaxX /* minX > nodeMaxX */ ||
+          iBounds.mMinY > mBoxes[wPosition].mMaxY /* minY > nodeMaxY */) {
+        continue;
+      }
       const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]);
 
       if (wNodeIndex >= wNumItems) {
@@ -631,7 +636,9 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
       }
     }
 
-    if (wQueue.empty()) break;
+    if (wQueue.empty()) {
+      break;
+    }
     wNodeIndex = wQueue.front() >> 2;  // for binary compatibility with JS
     wQueue.pop();
   }
@@ -661,25 +668,33 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
       const auto wDistX = axisDistance(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
       const auto wDistY = axisDistance(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
       const auto wDistance = wDistX * wDistX + wDistY * wDistY;
-      if (wDistance > wMaxDistSquared) continue;
+      if (wDistance > wMaxDistSquared) {
+        continue;
+      }
 
       if (wNodeIndex >= wNumItems) {
-        wQueue.emplace(wIndex << 1, wDistance);
+        wQueue.emplace(wIndex << 1U, wDistance);
       } else if (!iFilterFn || iFilterFn(wIndex)) {
         // put an odd index if it's an item rather than a node, to recognize later
-        wQueue.emplace((wIndex << 1) + 1, wDistance);  // leaf node
+        wQueue.emplace((wIndex << 1U) + 1, wDistance);  // leaf node
       }
     }
 
     // pop items from the queue
     while (!wQueue.empty() && (wQueue.top().mId & 1)) {
-      if (wQueue.top().mDistance > wMaxDistSquared) return wResults;
+      if (wQueue.top().mDistance > wMaxDistSquared) {
+        return wResults;
+      }
       wResults.push_back(wQueue.top().mId >> 1);
       wQueue.pop();
-      if (wResults.size() >= iMaxResults) return wResults;
+      if (wResults.size() >= iMaxResults) {
+        return wResults;
+      }
     }
 
-    if (wQueue.empty()) break;
+    if (wQueue.empty()) {
+      break;
+    }
     wNodeIndex = wQueue.top().mId >> 3;  // 1 to undo indexing + 2 for binary compatibility with JS
     wQueue.pop();
   }

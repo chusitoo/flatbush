@@ -22,17 +22,16 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include "flatbush.h"
-
 #include <chrono>
 #include <iostream>
 #include <random>
 #include <vector>
 
+#include "flatbush.h"
+
 using randomDouble = std::uniform_real_distribution<double>;
 
-void addRandomBox(std::vector<double>& iBoxes, double iBoxSize)
-{
+void addRandomBox(std::vector<double>& iBoxes, double iBoxSize) {
   std::random_device wDevice;
   std::mt19937 wEngine(wDevice());
   double wMinX = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
@@ -45,47 +44,50 @@ void addRandomBox(std::vector<double>& iBoxes, double iBoxSize)
   iBoxes.push_back(wMaxY);
 }
 
-void benchSearch(const flatbush::Flatbush<double>& iIndex, const std::vector<double>& iBoxes, size_t iNumTests, double iPercentage)
-{
+void benchSearch(const flatbush::Flatbush<double>& iIndex, const std::vector<double>& iBoxes,
+                 size_t iNumTests, double iPercentage) {
   auto wStartTime = std::chrono::high_resolution_clock::now();
 
   for (size_t wIdx = 0; wIdx < iBoxes.size(); wIdx += 4) {
-    iIndex.search({ iBoxes[wIdx], iBoxes[wIdx + 1], iBoxes[wIdx + 2], iBoxes[wIdx + 3] });
+    iIndex.search({iBoxes[wIdx], iBoxes[wIdx + 1], iBoxes[wIdx + 2], iBoxes[wIdx + 3]});
   }
 
   auto wEndTime = std::chrono::high_resolution_clock::now();
-  std::cout << iNumTests << " searches " << iPercentage << "%: " << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count() << "ms" << std::endl;
+  std::cout
+      << iNumTests << " searches " << iPercentage << "%: "
+      << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count()
+      << "ms" << std::endl;
 }
 
-void benchNeighbors(const flatbush::Flatbush<double>& iIndex, const std::vector<double>& iCoords, size_t iNumTests, size_t iNeighbors)
-{
+void benchNeighbors(const flatbush::Flatbush<double>& iIndex, const std::vector<double>& iCoords,
+                    size_t iNumTests, size_t iNeighbors) {
   auto wStartTime = std::chrono::high_resolution_clock::now();
 
   for (size_t wIdx = 0; wIdx < iNumTests; ++wIdx) {
-    iIndex.neighbors({ iCoords[4 * wIdx], iCoords[4 * wIdx + 1] }, iNeighbors);
+    iIndex.neighbors({iCoords[4 * wIdx], iCoords[4 * wIdx + 1]}, iNeighbors);
   }
 
   auto wEndTime = std::chrono::high_resolution_clock::now();
-  std::cout << iNumTests << " searches of " << iNeighbors << " neighbors: " << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count() << "ms" << std::endl;
+  std::cout
+      << iNumTests << " searches of " << iNeighbors << " neighbors: "
+      << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count()
+      << "ms" << std::endl;
 }
 
-int main(int /*argc*/, char** /*argv*/)
-{
+int main(int /*argc*/, char** /*argv*/) {
   size_t wNumItems = 1000000;
   size_t wNumTests = 1000;
   size_t wNodeSize = 16;
 
   std::vector<double> wCoords;
-  for (size_t wCount = 0; wCount < wNumItems; ++wCount)
-  {
+  for (size_t wCount = 0; wCount < wNumItems; ++wCount) {
     addRandomBox(wCoords, 1.0);
   }
 
   std::vector<double> wBoxes100;
   std::vector<double> wBoxes10;
   std::vector<double> wBoxes1;
-  for (size_t wCount = 0; wCount < wNumTests; ++wCount)
-  {
+  for (size_t wCount = 0; wCount < wNumTests; ++wCount) {
     addRandomBox(wBoxes100, 100.0 * std::sqrt(0.1));
     addRandomBox(wBoxes10, 10.0);
     addRandomBox(wBoxes1, 1.0);
@@ -95,12 +97,15 @@ int main(int /*argc*/, char** /*argv*/)
 
   flatbush::FlatbushBuilder<double> wBuilder(wNodeSize);
   for (size_t wIdx = 0; wIdx < wCoords.size(); wIdx += 4) {
-    wBuilder.add({ wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3] });
+    wBuilder.add({wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3]});
   }
   auto wIndex = wBuilder.finish();
 
   auto wEndTime = std::chrono::high_resolution_clock::now();
-  std::cout << "index " << wNumItems << " rectangles: " << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count() << "ms" << std::endl;
+  std::cout
+      << "index " << wNumItems << " rectangles: "
+      << std::chrono::duration_cast<std::chrono::milliseconds>((wEndTime - wStartTime)).count()
+      << "ms" << std::endl;
   std::cout << "index size: " << wIndex.data().size() << std::endl;
 
   benchSearch(wIndex, wBoxes100, wNumTests, 10);
