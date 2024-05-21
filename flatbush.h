@@ -158,8 +158,9 @@ struct is_contained : std::false_type {};
 
 template <typename Type, typename Head, typename... Tail>
 struct is_contained<Type, Head, Tail...>
-    : std::integral_constant<bool, std::is_same<Type, Head>::value ||
-                                       is_contained<Type, Tail...>::value> {};
+    : std::integral_constant<bool,
+                             std::is_same<Type, Head>::value ||
+                                 is_contained<Type, Tail...>::value> {};
 
 template <typename ArrayType>
 constexpr typename std::enable_if<std::is_same<ArrayType, int8_t>::value, uint8_t>::type
@@ -210,9 +211,10 @@ arrayTypeIndex() {
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<!is_contained<ArrayType, int8_t, uint8_t, int16_t, uint16_t,
-                                                int32_t, uint32_t, float, double>::value,
-                                  uint8_t>::type
+constexpr typename std::enable_if<
+    !is_contained<ArrayType, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>::
+        value,
+    uint8_t>::type
 arrayTypeIndex() {
   return gInvalidArrayType;
 }
@@ -246,7 +248,7 @@ struct Point {
   ArrayType mY;
 };
 
-template <typename ArrayType>
+template <class ArrayType>
 class Flatbush;
 template <class ArrayType>
 class FlatbushBuilder {
@@ -328,7 +330,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
 
-  auto wInstance = Flatbush<ArrayType>(iData);
+  auto wInstance = Flatbush<ArrayType>(iData, iSize);
   const auto wSize = wInstance.data().size();
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
@@ -350,7 +352,8 @@ class Flatbush {
   std::vector<size_t> search(const Box<ArrayType>& iBounds,
                              const FilterCb& iFilterFn = nullptr) const noexcept;
 
-  std::vector<size_t> neighbors(const Point<ArrayType>& iPoint, size_t iMaxResults = gMaxResults,
+  std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
+                                size_t iMaxResults = gMaxResults,
                                 double iMaxDistance = gMaxDistance,
                                 const FilterCb& iFilterFn = nullptr) const noexcept;
 
@@ -386,7 +389,8 @@ class Flatbush {
     return !wIsNanBounds;
   }
 
-  static inline bool canDoNeighbors(const Point<ArrayType>& iPoint, size_t iMaxResults,
+  static inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
+                                    size_t iMaxResults,
                                     double iMaxDistance) {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
@@ -399,7 +403,7 @@ class Flatbush {
   }
 
   explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
-  explicit Flatbush(const uint8_t* iData) noexcept;
+  explicit Flatbush(const uint8_t* iData, size_t iSize) noexcept;
 
   size_t add(const Box<ArrayType>& iBox) noexcept;
   void finish() noexcept;
@@ -443,12 +447,12 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(const uint8_t* iData) noexcept {
+Flatbush<ArrayType>::Flatbush(const uint8_t* iData, size_t iSize) noexcept {
   const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
   const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
   init(wNumItems, wNodeSize);
 
-  mData.insert(mData.begin(), &iData[0], &iData[mData.capacity()]);
+  mData.insert(mData.begin(), iData, iData + iSize);
   mPosition = mLevelBounds.empty() ? 0 : mLevelBounds.back();
   if (mPosition > 0) {
     mBounds = mBoxes[mPosition - 1];
@@ -556,7 +560,8 @@ void Flatbush<ArrayType>::finish() noexcept {
 
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
-void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft,
+void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
+                               size_t iLeft,
                                size_t iRight) noexcept {
   if (iLeft < iRight) {
     const auto wPivot = iValues[(iLeft + iRight) >> 1];
@@ -586,7 +591,8 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft,
 
 // swap two values and two corresponding boxes
 template <typename ArrayType>
-void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues, size_t iLeft,
+void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues,
+                               size_t iLeft,
                                size_t iRight) noexcept {
   std::swap(iValues[iLeft], iValues[iRight]);
   std::swap(mBoxes[iLeft], mBoxes[iRight]);
@@ -648,7 +654,8 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
 
 template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
-                                                   size_t iMaxResults, double iMaxDistance,
+                                                   size_t iMaxResults,
+                                                   double iMaxDistance,
                                                    const FilterCb& iFilterFn) const noexcept {
   const auto wCanLoop = canDoNeighbors(iPoint, iMaxResults, iMaxDistance);
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;

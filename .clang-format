@@ -6,3 +6,4 @@ IndentWidth: 2
 TabWidth: 2
 UseTab: Never
 BinPackArguments: false
+BinPackParameters: false
