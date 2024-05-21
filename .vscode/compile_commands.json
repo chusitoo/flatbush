@@ -1,11 +1,11 @@
 [
     {
-        "command": "clang++ test.cpp -lstdc++ -std=c++11 -Wall -Wextra -pedantic -Wold-style-cast -Wdelete-incomplete -Wformat-nonliteral -Wno-varargs -Wconversion -O2 -DFLATBUSH_SPAN -o test",
+        "command": "clang++ test.cpp -lstdc++ -std=c++11 -Wall -Wextra -Werror -Wpedantic -Wold-style-cast -Wdelete-incomplete -Wformat-nonliteral -Wno-varargs -Wconversion -O2 -DFLATBUSH_SPAN -o test",
         "directory": "/flatbush",
         "file": "/flatbush/test.cpp"
     },
     {
-        "command": "clang++ bench.cpp -lstdc++ -std=c++11 -Wall -Wextra -pedantic -Wold-style-cast -Wdelete-incomplete -Wformat-nonliteral -Wno-varargs -Wconversion -O2 -DFLATBUSH_SPAN -o bench",
+        "command": "clang++ bench.cpp -lstdc++ -std=c++11 -Wall -Wextra -Werror -Wpedantic -Wold-style-cast -Wdelete-incomplete -Wformat-nonliteral -Wno-varargs -Wconversion -O2 -DFLATBUSH_SPAN -o bench",
         "directory": "/flatbush",
         "file": "/flatbush/bench.cpp"
     },

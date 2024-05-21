@@ -40,6 +40,20 @@ flatbush::Flatbush<ArrayType> createIndex(uint32_t iNumItems, uint16_t iNodeSize
   return wIndex;
 }
 
+std::vector<size_t> calculateNumNodesPerLevel(uint32_t iNumItems, uint32_t iNodeSize) {
+  size_t wCount = iNumItems;
+  size_t wNumNodes = iNumItems;
+  std::vector<size_t> wLevelBounds{wNumNodes};
+
+  do {
+    wCount = (wCount + iNodeSize - 1) / iNodeSize;
+    wNumNodes += wCount;
+    wLevelBounds.push_back(wNumNodes);
+  } while (wCount > 1);
+
+  return wLevelBounds;
+}
+
 template <typename ArrayType>
 int from(const uint8_t *iData, size_t iSize) {
   if (iSize < flatbush::gHeaderByteSize) return 0;
@@ -50,10 +64,10 @@ int from(const uint8_t *iData, size_t iSize) {
   if (wNodeSize < 2) return 0;
 
   const auto wNumItems = *flatbush::detail::bit_cast<uint32_t *>(&iData[4]);
-  const auto &wLevelBounds = flatbush::detail::calculateNumNodesPerLevel(wNumItems, wNodeSize);
+  const auto &wLevelBounds = calculateNumNodesPerLevel(wNumItems, wNodeSize);
   const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
   const auto wIndicesByteSize =
-      wNumNodes * ((wNumNodes >= 16384) ? sizeof(uint32_t) : sizeof(uint16_t));
+      wNumNodes * ((wNumNodes > flatbush::gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
   const auto wNodesByteSize = wNumNodes * sizeof(flatbush::Box<ArrayType>);
   const auto wSize = flatbush::gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   if (wSize != iSize) return 0;

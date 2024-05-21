@@ -25,18 +25,19 @@ SOFTWARE.
 #ifndef FLATBUSH_H_
 #define FLATBUSH_H_
 
-#include <algorithm>
-#include <array>
-#include <cmath>
-#include <cstring>
-#include <functional>
-#include <limits>
-#include <queue>
-#include <stdexcept>
-#include <string>
-#include <type_traits>
-#include <utility>
-#include <vector>
+#include <algorithm>    // for max, min, upper_bound
+#include <array>        // for array
+#include <cmath>        // for isnan
+#include <cstdint>      // for uint32_t, uint8_t, uint16_t, int16_t, int32_t, int8_t
+#include <cstring>      // for size_t, memcpy
+#include <functional>   // for function
+#include <limits>       // for numeric_limits
+#include <queue>        // for queue, priority_queue
+#include <stdexcept>    // for invalid_argument
+#include <string>       // for operator+, to_string, allocator, basic_string, char_traits, string
+#include <type_traits>  // for enable_if, is_same, false_type, integral_constant
+#include <utility>      // for swap
+#include <vector>       // for vector
 
 #ifndef FLATBUSH_SPAN
 #include <span>
@@ -52,7 +53,7 @@ class span {
   size_t mLen = 0;
 
  public:
-  span() = default;
+  span() noexcept = default;
   span(Type* iPtr, size_t iLen) noexcept : mPtr{iPtr}, mLen{iLen} {}
   Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
   Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
