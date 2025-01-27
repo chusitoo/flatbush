@@ -95,62 +95,59 @@ To bit_cast(From const& from) {
 
 // From https://github.com/rawrunprotected/hilbert_curves (public domain)
 inline uint32_t Interleave(uint32_t x) {
-  x = (x | (x << 8)) & 0x00FF00FF;
-  x = (x | (x << 4)) & 0x0F0F0F0F;
-  x = (x | (x << 2)) & 0x33333333;
-  x = (x | (x << 1)) & 0x55555555;
+  x = (x | (x << 8U)) & 0x00FF00FF;
+  x = (x | (x << 4U)) & 0x0F0F0F0F;
+  x = (x | (x << 2U)) & 0x33333333;
+  x = (x | (x << 1U)) & 0x55555555;
   return x;
 }
 
-inline uint32_t HilbertXYToIndex(uint32_t n, uint32_t x, uint32_t y) {
-  x = x << (16 - n);
-  y = y << (16 - n);
-
+inline uint32_t HilbertXYToIndex(uint32_t x, uint32_t y) {
   // Initial prefix scan round, prime with x and y
   uint32_t a = x ^ y;
   uint32_t b = 0xFFFF ^ a;
   uint32_t c = 0xFFFF ^ (x | y);
   uint32_t d = x & (y ^ 0xFFFF);
-  uint32_t A = a | (b >> 1);
-  uint32_t B = (a >> 1) ^ a;
-  uint32_t C = ((c >> 1) ^ (b & (d >> 1))) ^ c;
-  uint32_t D = ((a & (c >> 1)) ^ (d >> 1)) ^ d;
+  uint32_t A = a | (b >> 1U);
+  uint32_t B = (a >> 1U) ^ a;
+  uint32_t C = ((c >> 1U) ^ (b & (d >> 1U))) ^ c;
+  uint32_t D = ((a & (c >> 1U)) ^ (d >> 1U)) ^ d;
 
   a = A;
   b = B;
   c = C;
   d = D;
-  A = ((a & (a >> 2)) ^ (b & (b >> 2)));
-  B = ((a & (b >> 2)) ^ (b & ((a ^ b) >> 2)));
-  C ^= ((a & (c >> 2)) ^ (b & (d >> 2)));
-  D ^= ((b & (c >> 2)) ^ ((a ^ b) & (d >> 2)));
+  A = ((a & (a >> 2U)) ^ (b & (b >> 2U)));
+  B = ((a & (b >> 2U)) ^ (b & ((a ^ b) >> 2U)));
+  C ^= ((a & (c >> 2U)) ^ (b & (d >> 2U)));
+  D ^= ((b & (c >> 2U)) ^ ((a ^ b) & (d >> 2U)));
 
   a = A;
   b = B;
   c = C;
   d = D;
-  A = ((a & (a >> 4)) ^ (b & (b >> 4)));
-  B = ((a & (b >> 4)) ^ (b & ((a ^ b) >> 4)));
-  C ^= ((a & (c >> 4)) ^ (b & (d >> 4)));
-  D ^= ((b & (c >> 4)) ^ ((a ^ b) & (d >> 4)));
+  A = ((a & (a >> 4U)) ^ (b & (b >> 4U)));
+  B = ((a & (b >> 4U)) ^ (b & ((a ^ b) >> 4U)));
+  C ^= ((a & (c >> 4U)) ^ (b & (d >> 4U)));
+  D ^= ((b & (c >> 4U)) ^ ((a ^ b) & (d >> 4U)));
 
   // Final round and projection
   a = A;
   b = B;
   c = C;
   d = D;
-  C ^= ((a & (c >> 8)) ^ (b & (d >> 8)));
-  D ^= ((b & (c >> 8)) ^ ((a ^ b) & (d >> 8)));
+  C ^= ((a & (c >> 8U)) ^ (b & (d >> 8U)));
+  D ^= ((b & (c >> 8U)) ^ ((a ^ b) & (d >> 8U)));
 
   // Undo transformation prefix scan
-  a = C ^ (C >> 1);
-  b = D ^ (D >> 1);
+  a = C ^ (C >> 1U);
+  b = D ^ (D >> 1U);
 
   // Recover index bits
   uint32_t i0 = x ^ y;
   uint32_t i1 = b | (0xFFFF ^ (i0 | a));
 
-  return ((Interleave(i1) << 1U) | Interleave(i0)) >> (32 - 2 * n);
+  return ((Interleave(i1) << 1U) | Interleave(i0));
 }
 
 // Template specialization for the supported array types
@@ -267,7 +264,7 @@ class FlatbushBuilder {
 
   inline size_t add(const Box<ArrayType>& iBox) noexcept {
     mItems.push_back(iBox);
-    return mItems.size() - 1;
+    return mItems.size() - 1UL;
   }
 
   Flatbush<ArrayType> finish() const;
@@ -319,7 +316,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
                                 " data when expected v" + std::to_string(gVersion) + ".");
   }
 
-  const auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
+  constexpr auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
   const uint8_t wEncodedType = iData[1] & 0x0fU;
   if (wExpectedType != wEncodedType) {
     throw std::invalid_argument("Expected type is " + detail::arrayTypeName(wEncodedType) +
@@ -400,7 +397,7 @@ class Flatbush {
 #else
     const auto wIsNanPoint = (std::isnan(iPoint.mX) || std::isnan(iPoint.mY));
 #endif
-    return !wIsNanPoint && !std::isnan(iMaxDistance) && iMaxDistance >= 0 && iMaxResults != 0;
+    return !wIsNanPoint && !std::isnan(iMaxDistance) && iMaxDistance >= 0.0 && iMaxResults != 0UL;
   }
 
   explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
@@ -414,7 +411,7 @@ class Flatbush {
   size_t upperBound(size_t iNodeIndex) const noexcept;
 
   struct IndexDistance {
-    IndexDistance(size_t iId, ArrayType iDistance) : mId(iId), mDistance(iDistance) {}
+    IndexDistance(size_t iId, ArrayType iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
     bool operator>(const IndexDistance& iOther) const { return iOther.mDistance > mDistance; }
 
@@ -440,7 +437,7 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
   init(iNumItems, iNodeSize);
 
-  mData.assign(mData.capacity(), 0);
+  mData.assign(mData.capacity(), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -454,9 +451,9 @@ Flatbush<ArrayType>::Flatbush(const uint8_t* iData, size_t iSize) noexcept {
   init(wNumItems, wNodeSize);
 
   mData.insert(mData.begin(), iData, iData + iSize);
-  mPosition = mLevelBounds.empty() ? 0 : mLevelBounds.back();
-  if (mPosition > 0) {
-    mBounds = mBoxes[mPosition - 1];
+  mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
+  if (mPosition > 0UL) {
+    mBounds = mBoxes[mPosition - 1UL];
   }
 }
 
@@ -471,10 +468,10 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept 
   mLevelBounds.push_back(wNumNodes);
 
   do {
-    wCount = (wCount + iNodeSize - 1) / iNodeSize;
+    wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
     wNumNodes += wCount;
     mLevelBounds.push_back(wNumNodes);
-  } while (wCount > 1);
+  } while (wCount > 1UL);
 
   // Sizes
   mIsWideIndex = wNumNodes > gMaxNumNodes;
@@ -521,17 +518,16 @@ void Flatbush<ArrayType>::finish() noexcept {
   const auto wHilbertHeight = gMaxHilbert / (mBounds.mMaxY - mBounds.mMinY);
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
-  for (size_t wIdx = 0; wIdx < wNumItems; ++wIdx) {
-    wHilbertValues[wIdx] = detail::HilbertXYToIndex(
-        16,
+  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+    wHilbertValues.at(wIdx) = detail::HilbertXYToIndex(
         uint32_t(wHilbertWidth * ((mBoxes[wIdx].mMinX + mBoxes[wIdx].mMaxX) / 2 - mBounds.mMinX)),
         uint32_t(wHilbertHeight * ((mBoxes[wIdx].mMinY + mBoxes[wIdx].mMaxY) / 2 - mBounds.mMinY)));
   }
 
   // sort items by their Hilbert value (for packing later)
-  sort(wHilbertValues, 0, wNumItems - 1);
+  sort(wHilbertValues, 0U, wNumItems - 1U);
 
-  for (size_t wIdx = 0, wPosition = 0; wIdx < mLevelBounds.size() - 1; ++wIdx) {
+  for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
 
     // generate a parent node for each block of consecutive <nodeSize> nodes
@@ -565,18 +561,18 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
                                size_t iLeft,
                                size_t iRight) noexcept {
   if (iLeft < iRight) {
-    const auto wPivot = iValues[(iLeft + iRight) >> 1];
-    auto wPivotLeft = iLeft - 1;
-    auto wPivotRight = iRight + 1;
+    const auto wPivot = iValues.at((iLeft + iRight) >> 1U);
+    auto wPivotLeft = iLeft - 1U;
+    auto wPivotRight = iRight + 1U;
 
     while (true) {
       do {
         ++wPivotLeft;
-      } while (iValues[wPivotLeft] < wPivot);
+      } while (iValues.at(wPivotLeft) < wPivot);
 
       do {
         --wPivotRight;
-      } while (iValues[wPivotRight] > wPivot);
+      } while (iValues.at(wPivotRight) > wPivot);
 
       if (wPivotLeft >= wPivotRight) {
         break;
@@ -586,7 +582,7 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
     }
 
     sort(iValues, iLeft, wPivotRight);
-    sort(iValues, wPivotRight + 1, iRight);
+    sort(iValues, wPivotRight + 1U, iRight);
   }
 }
 
@@ -595,7 +591,7 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues,
                                size_t iLeft,
                                size_t iRight) noexcept {
-  std::swap(iValues[iLeft], iValues[iRight]);
+  std::swap(iValues.at(iLeft), iValues.at(iRight));
   std::swap(mBoxes[iLeft], mBoxes[iRight]);
 
   if (mIsWideIndex) {
@@ -617,7 +613,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
   const auto wCanLoop = canDoSearch(iBounds);
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  auto wNodeIndex = mBoxes.size() - 1;
+  auto wNodeIndex = mBoxes.size() - 1UL;
   std::queue<size_t> wQueue;
   std::vector<size_t> wResults;
 
@@ -634,7 +630,8 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
           iBounds.mMinY > mBoxes[wPosition].mMaxY /* minY > nodeMaxY */) {
         continue;
       }
-      const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]);
+
+      const size_t wIndex = mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition];
 
       if (wNodeIndex >= wNumItems) {
         wQueue.push(wIndex);  // node; add it to the search queue
@@ -646,7 +643,8 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
     if (wQueue.empty()) {
       break;
     }
-    wNodeIndex = wQueue.front() >> 2;  // for binary compatibility with JS
+
+    wNodeIndex = wQueue.front() >> 2U;  // for binary compatibility with JS
     wQueue.pop();
   }
 
@@ -662,7 +660,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  auto wNodeIndex = mBoxes.size() - 1;
+  auto wNodeIndex = mBoxes.size() - 1UL;
   std::priority_queue<IndexDistance> wQueue;
   std::vector<size_t> wResults;
 
@@ -676,24 +674,20 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
       const auto wDistX = axisDistance(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
       const auto wDistY = axisDistance(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
       const auto wDistance = wDistX * wDistX + wDistY * wDistY;
+
       if (wDistance > wMaxDistSquared) {
         continue;
-      }
-
-      if (wNodeIndex >= wNumItems) {
+      } else if (wNodeIndex >= wNumItems) {
         wQueue.emplace(wIndex << 1U, wDistance);
       } else if (!iFilterFn || iFilterFn(wIndex)) {
         // put an odd index if it's an item rather than a node, to recognize later
-        wQueue.emplace((wIndex << 1U) + 1, wDistance);  // leaf node
+        wQueue.emplace((wIndex << 1U) + 1U, wDistance);  // leaf node
       }
     }
 
     // pop items from the queue
-    while (!wQueue.empty() && (wQueue.top().mId & 1)) {
-      if (wQueue.top().mDistance > wMaxDistSquared) {
-        return wResults;
-      }
-      wResults.push_back(wQueue.top().mId >> 1);
+    while (!wQueue.empty() && (wQueue.top().mId & 1U)) {
+      wResults.push_back(wQueue.top().mId >> 1U);
       wQueue.pop();
       if (wResults.size() >= iMaxResults) {
         return wResults;
@@ -703,7 +697,8 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
     if (wQueue.empty()) {
       break;
     }
-    wNodeIndex = wQueue.top().mId >> 3;  // 1 to undo indexing + 2 for binary compatibility with JS
+
+    wNodeIndex = wQueue.top().mId >> 3U;  // 1 to undo indexing + 2 for binary compatibility with JS
     wQueue.pop();
   }
 
