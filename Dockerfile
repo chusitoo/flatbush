@@ -1,6 +1,6 @@
-FROM mcr.microsoft.com/cbl-mariner/base/core:2.0
+FROM ubuntu:24.04
 
-RUN tdnf update -y \
- && tdnf install -y build-essential ca-certificates clang curl git tar unzip zip \
- && tdnf clean all \
+RUN apt update -y \
+ && apt install -y build-essential ca-certificates clang curl git tar unzip zip \
+ && apt clean all \
  && rm -rf /var/cache/tdnf
