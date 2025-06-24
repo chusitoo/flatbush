@@ -527,6 +527,40 @@ void testOneMillionItems() {
   assert(wIds2.size() == wNumItems);
 }
 
+void quickSortImbalancedDataset() {
+  std::cout << "quicksort should work with an imbalanced dataset" << std::endl;
+
+  static const auto linspace =
+      [](double wStart, double wStop, uint32_t wNum, bool wEndpoint = true) {
+        const auto wDiv = wEndpoint ? (wNum - 1) : wNum;
+        const auto wStep = (wStop - wStart) / wDiv;
+        std::vector<double> wItems(wNum);
+        for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
+          wItems.at(wIndex) = wStart + wStep * static_cast<double>(wIndex);
+        }
+        return wItems;
+      };
+
+  bool wIsThrown = false;
+
+  try {
+    flatbush::FlatbushBuilder<double> wBuilder;
+    uint32_t wNumItems = 15000;
+    const auto& wItems = linspace(0, 1000, wNumItems);
+
+    for (uint32_t count = 0; count < 10; ++count) {
+      for (const auto wItem : wItems) {
+        wBuilder.add({wItem, 0, wItem, 0});
+      }
+    }
+    wBuilder.finish();
+  } catch (const std::exception&) {
+    wIsThrown = true;
+  }
+
+  assert(!wIsThrown);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   indexBunchOfRectangles();
   skipSortingLessThanNodeSizeRectangles();
@@ -554,6 +588,7 @@ int main(int /*argc*/, char** /*argv*/) {
   searchQueryMultiPointLargeNumItems();
   clearAndReuseBuilder();
   testOneMillionItems();
+  quickSortImbalancedDataset();
 
   return EXIT_SUCCESS;
 }

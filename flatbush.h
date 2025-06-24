@@ -217,18 +217,18 @@ arrayTypeIndex() {
   return gInvalidArrayType;
 }
 
-inline const std::string& arrayTypeName(size_t iIndex) {
-  static const std::string kUnknownType{"unknown"};
-  static const std::array<std::string, 9> kArrayTypeNames{"int8_t",
-                                                          "uint8_t",
-                                                          "uint8_t",
-                                                          "int16_t",
-                                                          "uint16_t",
-                                                          "int32_t",
-                                                          "uint32_t",
-                                                          "float",
-                                                          "double"};
-  return iIndex < kArrayTypeNames.size() ? kArrayTypeNames[iIndex] : kUnknownType;
+inline const char* arrayTypeName(size_t iIndex) {
+  static constexpr auto kUnknownType = "unknown";
+  static constexpr auto kArrayTypeNames = std::array<const char*, 9>{"int8_t",
+                                                                     "uint8_t",
+                                                                     "uint8_t",
+                                                                     "int16_t",
+                                                                     "uint16_t",
+                                                                     "int32_t",
+                                                                     "uint32_t",
+                                                                     "float",
+                                                                     "double"};
+  return iIndex < kArrayTypeNames.size() ? kArrayTypeNames.at(iIndex) : kUnknownType;
 }
 }  // namespace detail
 
@@ -319,8 +319,10 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
   constexpr auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
   const uint8_t wEncodedType = iData[1] & 0x0fU;
   if (wExpectedType != wEncodedType) {
-    throw std::invalid_argument("Expected type is " + detail::arrayTypeName(wEncodedType) +
-                                ", but got template type " + detail::arrayTypeName(wExpectedType));
+    throw std::invalid_argument(std::string("Expected type is ")
+                                    .append(detail::arrayTypeName(wEncodedType))
+                                    .append(", but got template type ")
+                                    .append(detail::arrayTypeName(wExpectedType)));
   }
 
   const auto wNodeSize = *detail::bit_cast<uint16_t*>(&iData[2]);
@@ -406,6 +408,9 @@ class Flatbush {
   size_t add(const Box<ArrayType>& iBox) noexcept;
   void finish() noexcept;
   void init(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
+  uint32_t medianOfThree(const std::vector<uint32_t>& iValues,
+                         size_t iLeft,
+                         size_t iRight) noexcept;
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   size_t upperBound(size_t iNodeIndex) const noexcept;
@@ -555,13 +560,33 @@ void Flatbush<ArrayType>::finish() noexcept {
   }
 }
 
+template <typename ArrayType>
+uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues,
+                                            size_t iLeft,
+                                            size_t iRight) noexcept {
+  const auto wStart = iValues.at(iLeft);
+  const auto wMid = iValues.at((iLeft + iRight) >> 1);
+  const auto wEnd = iValues.at(iRight);
+  const auto wX = std::max(wStart, wMid);
+
+  if (wEnd > wX) {
+    return wX;
+  } else if (wX == wStart) {
+    return std::max(wMid, wEnd);
+  } else if (wX == wMid) {
+    return std::max(wStart, wEnd);
+  }
+
+  return wEnd;
+}
+
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
 void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
                                size_t iLeft,
                                size_t iRight) noexcept {
   if (iLeft < iRight) {
-    const auto wPivot = iValues.at((iLeft + iRight) >> 1U);
+    const auto wPivot = medianOfThree(iValues, iLeft, iRight);
     auto wPivotLeft = iLeft - 1U;
     auto wPivotRight = iRight + 1U;
 
