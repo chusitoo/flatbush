@@ -76,8 +76,9 @@ auto buffer = index.data();
 // then pass the underlying data, specifying the template type
 // NOTE: an exception will be thrown if template != encoded type
 auto other = FlatbushBuilder<double>::from(buffer.data(), buffer.size());
-// or
-auto other = FlatbushBuilder<double>::from(&buffer[0], buffer.size());
+// or, move the source vector into the builder
+auto vector = std::vector<uint8_t>{buffer.begin(), buffer.end()};
+auto other = FlatbushBuilder<double>::from(std::move(vector));
 ```
 
 ## Compiling

@@ -269,8 +269,10 @@ class FlatbushBuilder {
 
   Flatbush<ArrayType> finish() const;
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
+  static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
 
  private:
+  static void validate(const uint8_t* iData, size_t iSize);
   std::uint16_t mNodeSize;
   std::vector<Box<ArrayType>> mItems;
 };
@@ -292,6 +294,35 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() const {
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize) {
+  validate(iData, iSize);
+
+  auto wInstance = Flatbush<ArrayType>(iData, iSize);
+  const auto wSize = wInstance.data().size();
+  if (wSize != iSize) {
+    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
+                                ", but got buffer size " + std::to_string(iSize) + ".");
+  }
+
+  return wInstance;
+}
+
+template <typename ArrayType>
+Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(std::vector<uint8_t>&& iData) {
+  validate(iData.data(), iData.size());
+
+  const auto wDataSize = iData.size();
+  auto wInstance = Flatbush<ArrayType>(std::move(iData));
+  const auto wSize = wInstance.data().size();
+  if (wSize != wDataSize) {
+    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
+                                ", but got buffer size " + std::to_string(wDataSize) + ".");
+  }
+
+  return wInstance;
+}
+
+template <typename ArrayType>
+void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
                 "Unexpected typed array class. Expecting non 64-bit integral "
                 "or floating point.");
@@ -329,15 +360,6 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
   if (wNodeSize < gMinNodeSize) {
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
-
-  auto wInstance = Flatbush<ArrayType>(iData, iSize);
-  const auto wSize = wInstance.data().size();
-  if (wSize != iSize) {
-    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
-                                ", but got buffer size " + std::to_string(iSize) + ".");
-  }
-
-  return wInstance;
 }
 
 template <typename ArrayType>
@@ -402,8 +424,9 @@ class Flatbush {
     return !wIsNanPoint && !std::isnan(iMaxDistance) && iMaxDistance >= 0.0 && iMaxResults != 0UL;
   }
 
-  explicit Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
-  explicit Flatbush(const uint8_t* iData, size_t iSize) noexcept;
+  Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
+  Flatbush(const uint8_t* iData, size_t iSize) noexcept;
+  explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
 
   size_t add(const Box<ArrayType>& iBox) noexcept;
   void finish() noexcept;
@@ -456,6 +479,19 @@ Flatbush<ArrayType>::Flatbush(const uint8_t* iData, size_t iSize) noexcept {
   init(wNumItems, wNodeSize);
 
   mData.insert(mData.begin(), iData, iData + iSize);
+  mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
+  if (mPosition > 0UL) {
+    mBounds = mBoxes[mPosition - 1UL];
+  }
+}
+
+template <typename ArrayType>
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
+  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData.at(2));
+  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData.at(4));
+  init(wNumItems, wNodeSize);
+
+  mData = std::move(iData);
   mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
   if (mPosition > 0UL) {
     mBounds = mBoxes[mPosition - 1UL];

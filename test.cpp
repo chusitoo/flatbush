@@ -561,6 +561,19 @@ void quickSortImbalancedDataset() {
   assert(!wIsThrown);
 }
 
+void reconstructIndexFromMovedVector() {
+  std::cout << "reconstructs an index from a moved vector" << std::endl;
+  auto wIndex = createIndex();
+  auto wIndexBuffer = wIndex.data();
+  auto wIndexVector = std::vector<uint8_t>{wIndexBuffer.begin(), wIndexBuffer.end()};
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wIndexVector));
+  auto wIndex2Buffer = wIndex2.data();
+
+  assert(wIndexBuffer.size() == wIndex2Buffer.size());
+
+  assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   indexBunchOfRectangles();
   skipSortingLessThanNodeSizeRectangles();
@@ -589,6 +602,7 @@ int main(int /*argc*/, char** /*argv*/) {
   clearAndReuseBuilder();
   testOneMillionItems();
   quickSortImbalancedDataset();
+  reconstructIndexFromMovedVector();
 
   return EXIT_SUCCESS;
 }
