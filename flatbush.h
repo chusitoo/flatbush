@@ -68,7 +68,6 @@ class span {
 
 namespace flatbush {
 
-using FilterCb = std::function<bool(size_t)>;
 constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = std::numeric_limits<double>::max();
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
@@ -364,6 +363,8 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
 
 template <typename ArrayType>
 class Flatbush {
+  using FilterCb = std::function<bool(size_t, const Box<ArrayType>&)>;
+
  public:
   Flatbush(const Flatbush&) = delete;
   Flatbush& operator=(const Flatbush&) = delete;
@@ -696,7 +697,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
 
       if (wNodeIndex >= wNumItems) {
         wQueue.push(wIndex);  // node; add it to the search queue
-      } else if (!iFilterFn || iFilterFn(wIndex)) {
+      } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         wResults.push_back(wIndex);  // leaf item
       }
     }
@@ -740,7 +741,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
         continue;
       } else if (wNodeIndex >= wNumItems) {
         wQueue.emplace(wIndex << 1U, wDistance);
-      } else if (!iFilterFn || iFilterFn(wIndex)) {
+      } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         // put an odd index if it's an item rather than a node, to recognize later
         wQueue.emplace((wIndex << 1U) + 1U, wDistance);  // leaf node
       }

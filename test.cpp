@@ -242,7 +242,9 @@ void neighborsQueryFilterFunc() {
   std::cout << "k-nearest-neighbors query accepts filterFn" << std::endl;
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors(
-      {50, 50}, 6, flatbush::gMaxDistance, [](size_t iValue) { return iValue % 2 == 0; });
+      {50, 50}, 6, flatbush::gMaxDistance, [](size_t iValue, const flatbush::Box<double>&) {
+        return iValue % 2 == 0;
+      });
   std::vector<size_t> wExpected = {6, 16, 18, 24, 54, 80};
 
   assert(wExpected.size() == wIds.size());
@@ -264,8 +266,9 @@ void returnIndexOfNewlyAddedRectangle() {
 void searchQueryFilterFunc() {
   std::cout << "bbox search query accepts filterFn" << std::endl;
   auto wIndex = createIndex();
-  auto wIds = wIndex.search({40, 40, 60, 60}, [](size_t iValue) { return iValue % 2 == 0; });
-
+  auto wIds = wIndex.search({40, 40, 60, 60}, [](size_t iValue, const flatbush::Box<double>&) {
+    return iValue % 2 == 0;
+  });
   assert(wIds.size() == 1);
   assert(wIds.front() == 6);
 }
