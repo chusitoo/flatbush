@@ -622,29 +622,44 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
                                size_t iLeft,
                                size_t iRight) noexcept {
-  if (iLeft < iRight) {
-    const auto wPivot = medianOfThree(iValues, iLeft, iRight);
-    auto wPivotLeft = iLeft - 1U;
-    auto wPivotRight = iRight + 1U;
+  const auto wNodeSize = nodeSize();
+  std::vector<std::size_t> wStack;
+  wStack.reserve(iRight - iLeft);
+  wStack.push_back(iLeft);
+  wStack.push_back(iRight);
 
-    while (true) {
-      do {
-        ++wPivotLeft;
-      } while (iValues.at(wPivotLeft) < wPivot);
+  while (wStack.size() > 1) {
+    const auto wRight = wStack.back();
+    wStack.pop_back();
+    const auto wLeft = wStack.back();
+    wStack.pop_back();
 
-      do {
-        --wPivotRight;
-      } while (iValues.at(wPivotRight) > wPivot);
+    if ((wRight - wLeft) > wNodeSize || wLeft < wRight) {
+      const auto wPivot = medianOfThree(iValues, wLeft, wRight);
+      auto wPivotLeft = wLeft - 1UL;
+      auto wPivotRight = wRight + 1UL;
 
-      if (wPivotLeft >= wPivotRight) {
-        break;
+      while (true) {
+        do {
+          ++wPivotLeft;
+        } while (iValues.at(wPivotLeft) < wPivot);
+
+        do {
+          --wPivotRight;
+        } while (iValues.at(wPivotRight) > wPivot);
+
+        if (wPivotLeft >= wPivotRight) {
+          break;
+        }
+
+        swap(iValues, wPivotLeft, wPivotRight);
       }
 
-      swap(iValues, wPivotLeft, wPivotRight);
+      wStack.push_back(wLeft);
+      wStack.push_back(wPivotRight);
+      wStack.push_back(wPivotRight + 1UL);
+      wStack.push_back(wRight);
     }
-
-    sort(iValues, iLeft, wPivotRight);
-    sort(iValues, wPivotRight + 1U, iRight);
   }
 }
 
