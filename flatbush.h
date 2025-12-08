@@ -32,7 +32,7 @@ SOFTWARE.
 #include <cstring>      // for size_t, memcpy
 #include <functional>   // for function
 #include <limits>       // for numeric_limits
-#include <queue>        // for queue, priority_queue
+#include <queue>        // for priority_queue
 #include <stdexcept>    // for invalid_argument
 #include <string>       // for operator+, to_string, allocator, basic_string, char_traits, string
 #include <type_traits>  // for enable_if, is_same, false_type, integral_constant
@@ -74,7 +74,7 @@ constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
 constexpr uint16_t gMinNodeSize = 2;
 constexpr uint16_t gMaxNodeSize = std::numeric_limits<uint16_t>::max();
-constexpr size_t gMaxNumNodes = std::numeric_limits<uint16_t>::max() / 4U;
+constexpr size_t gMaxNumNodes = gMaxNodeSize / 4U;
 constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
 constexpr uint8_t gValidityFlag = 0xfb;
@@ -355,7 +355,7 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
                                     .append(detail::arrayTypeName(wExpectedType)));
   }
 
-  const auto wNodeSize = *detail::bit_cast<uint16_t*>(&iData[2]);
+  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
   if (wNodeSize < gMinNodeSize) {
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
@@ -380,9 +380,9 @@ class Flatbush {
                                 double iMaxDistance = gMaxDistance,
                                 const FilterCb& iFilterFn = nullptr) const noexcept;
 
-  inline size_t nodeSize() const noexcept { return *detail::bit_cast<uint16_t*>(&mData[2]); };
+  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(&mData[2]); };
 
-  inline size_t numItems() const noexcept { return *detail::bit_cast<uint32_t*>(&mData[4]); };
+  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(&mData[4]); };
 
   inline size_t indexSize() const noexcept { return mBoxes.size(); };
 
@@ -398,7 +398,7 @@ class Flatbush {
     return iValue < iMin ? iMin - iValue : std::max(iValue - iMax, 0.0);
   }
 
-  static inline bool canDoSearch(const Box<ArrayType>& iBounds) {
+  inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanBounds = (std::isnan(static_cast<double>(iBounds.mMinX)) ||
@@ -409,12 +409,14 @@ class Flatbush {
     const auto wIsNanBounds = (std::isnan(iBounds.mMinX) || std::isnan(iBounds.mMinY) ||
                                std::isnan(iBounds.mMaxX) || std::isnan(iBounds.mMaxY));
 #endif
-    return !wIsNanBounds;
+
+    return !wIsNanBounds && iBounds.mMaxX >= mBounds.mMinX && iBounds.mMinX <= mBounds.mMaxX &&
+           iBounds.mMaxY >= mBounds.mMinY && iBounds.mMinY <= mBounds.mMaxY;
   }
 
-  static inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
-                                    size_t iMaxResults,
-                                    double iMaxDistance) {
+  inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
+                             size_t iMaxResults,
+                             double iMaxDistSquared) const {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanPoint =
@@ -422,7 +424,13 @@ class Flatbush {
 #else
     const auto wIsNanPoint = (std::isnan(iPoint.mX) || std::isnan(iPoint.mY));
 #endif
-    return !wIsNanPoint && !std::isnan(iMaxDistance) && iMaxDistance >= 0.0 && iMaxResults != 0UL;
+
+    const auto wDistX = axisDistance(iPoint.mX, mBounds.mMinX, mBounds.mMaxX);
+    const auto wDistY = axisDistance(iPoint.mY, mBounds.mMinY, mBounds.mMaxY);
+    const auto wDistance = wDistX * wDistX + wDistY * wDistY;
+
+    return !wIsNanPoint && iMaxResults != 0UL && !std::isnan(iMaxDistSquared) &&
+           iMaxDistSquared >= 0.0 && wDistance < iMaxDistSquared;
   }
 
   Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
@@ -437,7 +445,7 @@ class Flatbush {
                          size_t iRight) noexcept;
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-  size_t upperBound(size_t iNodeIndex) const noexcept;
+  inline size_t upperBound(size_t iNodeIndex) const noexcept;
 
   struct IndexDistance {
     IndexDistance(size_t iId, ArrayType iDistance) noexcept : mId(iId), mDistance(iDistance) {}
@@ -466,7 +474,7 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
   init(iNumItems, iNodeSize);
 
-  mData.assign(mData.capacity(), 0U);
+  mData.resize(mData.capacity(), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -558,12 +566,16 @@ void Flatbush<ArrayType>::finish() noexcept {
   std::vector<uint32_t> wHilbertValues(wNumItems);
   const auto wHilbertWidth = gMaxHilbert / (mBounds.mMaxX - mBounds.mMinX);
   const auto wHilbertHeight = gMaxHilbert / (mBounds.mMaxY - mBounds.mMinY);
+  const auto wMinX = mBounds.mMinX;
+  const auto wMinY = mBounds.mMinY;
+  const auto wHalfScale = 0.5;  // Precompute constant
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
   for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+    const auto& wBox = mBoxes[wIdx];
     wHilbertValues.at(wIdx) = detail::HilbertXYToIndex(
-        uint32_t(wHilbertWidth * ((mBoxes[wIdx].mMinX + mBoxes[wIdx].mMaxX) / 2 - mBounds.mMinX)),
-        uint32_t(wHilbertHeight * ((mBoxes[wIdx].mMinY + mBoxes[wIdx].mMaxY) / 2 - mBounds.mMinY)));
+        uint32_t(wHilbertWidth * ((wBox.mMinX + wBox.mMaxX) * wHalfScale - wMinX)),
+        uint32_t(wHilbertHeight * ((wBox.mMinY + wBox.mMaxY) * wHalfScale - wMinY)));
   }
 
   // sort items by their Hilbert value (for packing later)
@@ -691,8 +703,20 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
-  std::queue<size_t> wQueue;
+  std::vector<size_t> wQueue;
+  wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
+  // Calculate intersection area
+  const auto wWidth =
+      std::min(mBounds.mMaxX, iBounds.mMaxX) - std::max(mBounds.mMinX, iBounds.mMinX);
+  const auto wHeight =
+      std::min(mBounds.mMaxY, iBounds.mMaxY) - std::max(mBounds.mMinY, iBounds.mMinY);
+  // Approximate results vector size based on intersection area, assuming uniform distribution
+  const auto wSearchArea = (iBounds.mMaxX - iBounds.mMinX) * (iBounds.mMaxY - iBounds.mMinY);
+  wResults.reserve(
+      (wWidth > ArrayType{0} && wHeight > ArrayType{0} && wSearchArea > ArrayType{0})
+          ? static_cast<size_t>(static_cast<double>(wNumItems) * wSearchArea / (wWidth * wHeight))
+          : 0UL);
 
   while (wCanLoop) {
     // find the end index of the node
@@ -711,7 +735,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
       const size_t wIndex = mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition];
 
       if (wNodeIndex >= wNumItems) {
-        wQueue.push(wIndex);  // node; add it to the search queue
+        wQueue.push_back(wIndex);  // node; add it to the search queue
       } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         wResults.push_back(wIndex);  // leaf item
       }
@@ -721,8 +745,8 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
       break;
     }
 
-    wNodeIndex = wQueue.front() >> 2U;  // for binary compatibility with JS
-    wQueue.pop();
+    wNodeIndex = wQueue.back() >> 2U;  // for binary compatibility with JS
+    wQueue.pop_back();
   }
 
   return wResults;
@@ -733,13 +757,14 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    size_t iMaxResults,
                                                    double iMaxDistance,
                                                    const FilterCb& iFilterFn) const noexcept {
-  const auto wCanLoop = canDoNeighbors(iPoint, iMaxResults, iMaxDistance);
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
+  const auto wCanLoop = canDoNeighbors(iPoint, iMaxResults, wMaxDistSquared);
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
   std::priority_queue<IndexDistance> wQueue;
   std::vector<size_t> wResults;
+  wResults.reserve(std::min(wNumItems, iMaxResults));
 
   while (wCanLoop) {
     // find the end index of the node
