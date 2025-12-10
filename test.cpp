@@ -242,7 +242,9 @@ void neighborsQueryFilterFunc() {
   std::cout << "k-nearest-neighbors query accepts filterFn" << std::endl;
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors(
-      {50, 50}, 6, flatbush::gMaxDistance, [](size_t iValue) { return iValue % 2 == 0; });
+      {50, 50}, 6, flatbush::gMaxDistance, [](size_t iValue, const flatbush::Box<double>&) {
+        return iValue % 2 == 0;
+      });
   std::vector<size_t> wExpected = {6, 16, 18, 24, 54, 80};
 
   assert(wExpected.size() == wIds.size());
@@ -264,8 +266,9 @@ void returnIndexOfNewlyAddedRectangle() {
 void searchQueryFilterFunc() {
   std::cout << "bbox search query accepts filterFn" << std::endl;
   auto wIndex = createIndex();
-  auto wIds = wIndex.search({40, 40, 60, 60}, [](size_t iValue) { return iValue % 2 == 0; });
-
+  auto wIds = wIndex.search({40, 40, 60, 60}, [](size_t iValue, const flatbush::Box<double>&) {
+    return iValue % 2 == 0;
+  });
   assert(wIds.size() == 1);
   assert(wIds.front() == 6);
 }
@@ -548,7 +551,7 @@ void quickSortImbalancedDataset() {
     uint32_t wNumItems = 15000;
     const auto& wItems = linspace(0, 1000, wNumItems);
 
-    for (uint32_t count = 0; count < 10; ++count) {
+    for (uint32_t wCount = 0; wCount < 10; ++wCount) {
       for (const auto wItem : wItems) {
         wBuilder.add({wItem, 0, wItem, 0});
       }
@@ -559,6 +562,34 @@ void quickSortImbalancedDataset() {
   }
 
   assert(!wIsThrown);
+}
+
+void quickSortWorksOnDuplicates() {
+  std::cout << "quicksort should work with duplicates" << std::endl;
+
+  uint32_t wNumItems = 55000 + 5500 + 7700;
+  flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
+  auto wX = 0.0;
+
+  for (uint32_t wCount = 0; wCount < 55000; ++wCount, ++wX) {
+    wBuilder.add({wX, 3.0, wX, 3.0});
+  }
+
+  for (uint32_t wCount = 0; wCount < 5500; ++wCount, ++wX) {
+    wBuilder.add({wX, 4.0, wX, 4.0});
+  }
+
+  for (uint32_t wCount = 0; wCount < 7700; ++wCount, ++wX) {
+    wBuilder.add({wX, 5.0, wX, 5.0});
+  }
+
+  const auto wIndex = wBuilder.finish();
+
+  const auto wIds = wIndex.search({0.5, -1, 6.5, 1});
+  assert(wIds.size() == 0);
+
+  const auto wIds2 = wIndex.search({55000, 4.0, 55000, 4.0});
+  assert(wIds2.size() == 1);
 }
 
 void reconstructIndexFromMovedVector() {
@@ -602,6 +633,7 @@ int main(int /*argc*/, char** /*argv*/) {
   clearAndReuseBuilder();
   testOneMillionItems();
   quickSortImbalancedDataset();
+  quickSortWorksOnDuplicates();
   reconstructIndexFromMovedVector();
 
   return EXIT_SUCCESS;
