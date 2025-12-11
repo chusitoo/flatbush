@@ -39,6 +39,13 @@ SOFTWARE.
 #include <utility>      // for swap
 #include <vector>       // for vector
 
+// SIMD intrinsics support detection
+#if defined(__SSE2__) || \
+    (defined(_MSC_VER) && (defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)))
+#define FLATBUSH_USE_SSE2 1
+#include <emmintrin.h>
+#endif
+
 #ifndef FLATBUSH_SPAN
 #include <span>
 namespace flatbush {
@@ -79,6 +86,33 @@ constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
 constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
+
+template <typename ArrayType>
+struct Box {
+  ArrayType mMinX;
+  ArrayType mMinY;
+  ArrayType mMaxX;
+  ArrayType mMaxY;
+
+  template <typename OtherType>
+  explicit operator Box<OtherType>() const noexcept {
+    return Box<OtherType>{static_cast<OtherType>(mMinX),
+                          static_cast<OtherType>(mMinY),
+                          static_cast<OtherType>(mMaxX),
+                          static_cast<OtherType>(mMaxY)};
+  }
+};
+
+template <typename ArrayType>
+struct Point {
+  ArrayType mX;
+  ArrayType mY;
+
+  template <typename OtherType>
+  explicit operator Point<OtherType>() const noexcept {
+    return Point<OtherType>{static_cast<OtherType>(mX), static_cast<OtherType>(mY)};
+  }
+};
 
 namespace detail {
 
@@ -229,21 +263,506 @@ inline const char* arrayTypeName(size_t iIndex) {
                                                                      "double"};
   return iIndex < kArrayTypeNames.size() ? kArrayTypeNames.at(iIndex) : kUnknownType;
 }
+
+template <typename ArrayType>
+inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+  return !(iQuery.mMaxX < iBox.mMinX || iQuery.mMaxY < iBox.mMinY || iQuery.mMinX > iBox.mMaxX ||
+           iQuery.mMinY > iBox.mMaxY);
+}
+
+#if defined(FLATBUSH_USE_SSE2)
+template <>
+inline bool boxesIntersect<float>(const Box<float>& iQuery, const Box<float>& iBox) noexcept {
+  const auto wQueryMax = _mm_set_ps(0, 0, iQuery.mMaxY, iQuery.mMaxX);
+  const auto wBoxMin = _mm_set_ps(0, 0, iBox.mMinY, iBox.mMinX);
+  const auto wCmp1 = _mm_cmplt_ps(wQueryMax, wBoxMin);
+  const auto wQueryMin = _mm_set_ps(0, 0, iQuery.mMinY, iQuery.mMinX);
+  const auto wBoxMax = _mm_set_ps(0, 0, iBox.mMaxY, iBox.mMaxX);
+  const auto wCmp2 = _mm_cmpgt_ps(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_ps(wCmp1, wCmp2);
+  return _mm_movemask_ps(wCombined) == 0;
+}
+
+template <>
+inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>& iBox) noexcept {
+  const auto wQueryMax = _mm_set_pd(iQuery.mMaxY, iQuery.mMaxX);
+  const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
+  const auto wCmp1 = _mm_cmplt_pd(wQueryMax, wBoxMin);
+  const auto wQueryMin = _mm_set_pd(iQuery.mMinY, iQuery.mMinX);
+  const auto wBoxMax = _mm_set_pd(iBox.mMaxY, iBox.mMaxX);
+  const auto wCmp2 = _mm_cmpgt_pd(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_pd(wCmp1, wCmp2);
+  return _mm_movemask_pd(wCombined) == 0;
+}
+
+template <>
+inline bool boxesIntersect<int8_t>(const Box<int8_t>& iQuery, const Box<int8_t>& iBox) noexcept {
+  const auto wQueryMax =
+      _mm_setr_epi8(iQuery.mMaxX, iQuery.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wBoxMin =
+      _mm_setr_epi8(iBox.mMinX, iBox.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wCmp1 = _mm_cmplt_epi8(wQueryMax, wBoxMin);
+  const auto wQueryMin =
+      _mm_setr_epi8(iQuery.mMinX, iQuery.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wBoxMax =
+      _mm_setr_epi8(iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wCmp2 = _mm_cmpgt_epi8(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_si128(wCmp1, wCmp2);
+  return (_mm_movemask_epi8(wCombined) & 0x03) == 0;
+}
+
+template <>
+inline bool boxesIntersect<uint8_t>(const Box<uint8_t>& iQuery, const Box<uint8_t>& iBox) noexcept {
+  const auto wOffset = _mm_set1_epi8(-128);
+  const auto wQuery = static_cast<Box<int8_t>>(iQuery);
+  const auto wBox = static_cast<Box<int8_t>>(iBox);
+  auto wQueryMax =
+      _mm_setr_epi8(wQuery.mMaxX, wQuery.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  auto wBoxMin = _mm_setr_epi8(wBox.mMinX, wBox.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  wQueryMax = _mm_add_epi8(wQueryMax, wOffset);
+  wBoxMin = _mm_add_epi8(wBoxMin, wOffset);
+  const auto wCmp1 = _mm_cmplt_epi8(wQueryMax, wBoxMin);
+  auto wQueryMin =
+      _mm_setr_epi8(wQuery.mMinX, wQuery.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  auto wBoxMax = _mm_setr_epi8(wBox.mMaxX, wBox.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  wQueryMin = _mm_add_epi8(wQueryMin, wOffset);
+  wBoxMax = _mm_add_epi8(wBoxMax, wOffset);
+  const auto wCmp2 = _mm_cmpgt_epi8(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_si128(wCmp1, wCmp2);
+  return (_mm_movemask_epi8(wCombined) & 0x03) == 0;
+}
+
+template <>
+inline bool boxesIntersect<int16_t>(const Box<int16_t>& iQuery, const Box<int16_t>& iBox) noexcept {
+  const auto wQueryMax = _mm_setr_epi16(iQuery.mMaxX, iQuery.mMaxY, 0, 0, 0, 0, 0, 0);
+  const auto wBoxMin = _mm_setr_epi16(iBox.mMinX, iBox.mMinY, 0, 0, 0, 0, 0, 0);
+  const auto wCmp1 = _mm_cmplt_epi16(wQueryMax, wBoxMin);
+  const auto wQueryMin = _mm_setr_epi16(iQuery.mMinX, iQuery.mMinY, 0, 0, 0, 0, 0, 0);
+  const auto wBoxMax = _mm_setr_epi16(iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0, 0, 0);
+  const auto wCmp2 = _mm_cmpgt_epi16(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_si128(wCmp1, wCmp2);
+  return (_mm_movemask_epi8(wCombined) & 0x0F) == 0;
+}
+
+template <>
+inline bool boxesIntersect<uint16_t>(const Box<uint16_t>& iQuery,
+                                     const Box<uint16_t>& iBox) noexcept {
+  const auto wOffset = _mm_set1_epi16(-32768);
+  const auto wQuery = static_cast<Box<int16_t>>(iQuery);
+  const auto wBox = static_cast<Box<int16_t>>(iBox);
+  auto wQueryMax = _mm_setr_epi16(wQuery.mMaxX, wQuery.mMaxY, 0, 0, 0, 0, 0, 0);
+  auto wBoxMin = _mm_setr_epi16(wBox.mMinX, wBox.mMinY, 0, 0, 0, 0, 0, 0);
+  wQueryMax = _mm_add_epi16(wQueryMax, wOffset);
+  wBoxMin = _mm_add_epi16(wBoxMin, wOffset);
+  const auto wCmp1 = _mm_cmplt_epi16(wQueryMax, wBoxMin);
+  auto wQueryMin = _mm_setr_epi16(wQuery.mMinX, wQuery.mMinY, 0, 0, 0, 0, 0, 0);
+  auto wBoxMax = _mm_setr_epi16(wBox.mMaxX, wBox.mMaxY, 0, 0, 0, 0, 0, 0);
+  wQueryMin = _mm_add_epi16(wQueryMin, wOffset);
+  wBoxMax = _mm_add_epi16(wBoxMax, wOffset);
+  const auto wCmp2 = _mm_cmpgt_epi16(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_si128(wCmp1, wCmp2);
+  return (_mm_movemask_epi8(wCombined) & 0x0F) == 0;
+}
+
+template <>
+inline bool boxesIntersect<int32_t>(const Box<int32_t>& iQuery, const Box<int32_t>& iBox) noexcept {
+  const auto wQueryMax = _mm_setr_epi32(iQuery.mMaxX, iQuery.mMaxY, 0, 0);
+  const auto wBoxMin = _mm_setr_epi32(iBox.mMinX, iBox.mMinY, 0, 0);
+  const auto wCmp1 = _mm_cmplt_epi32(wQueryMax, wBoxMin);
+  const auto wQueryMin = _mm_setr_epi32(iQuery.mMinX, iQuery.mMinY, 0, 0);
+  const auto wBoxMax = _mm_setr_epi32(iBox.mMaxX, iBox.mMaxY, 0, 0);
+  const auto wCmp2 = _mm_cmpgt_epi32(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_si128(wCmp1, wCmp2);
+  return _mm_movemask_epi8(wCombined) == 0;
+}
+
+template <>
+inline bool boxesIntersect<uint32_t>(const Box<uint32_t>& iQuery,
+                                     const Box<uint32_t>& iBox) noexcept {
+  const auto wOffset = _mm_set1_epi32(static_cast<int>(0x80000000));
+  const auto wQuery = static_cast<Box<int32_t>>(iQuery);
+  const auto wBox = static_cast<Box<int32_t>>(iBox);
+  auto wQueryMax = _mm_setr_epi32(wQuery.mMaxX, wQuery.mMaxY, 0, 0);
+  auto wBoxMin = _mm_setr_epi32(wBox.mMinX, wBox.mMinY, 0, 0);
+  wQueryMax = _mm_add_epi32(wQueryMax, wOffset);
+  wBoxMin = _mm_add_epi32(wBoxMin, wOffset);
+  const auto wCmp1 = _mm_cmplt_epi32(wQueryMax, wBoxMin);
+  auto wQueryMin = _mm_setr_epi32(wQuery.mMinX, wQuery.mMinY, 0, 0);
+  auto wBoxMax = _mm_setr_epi32(wBox.mMaxX, wBox.mMaxY, 0, 0);
+  wQueryMin = _mm_add_epi32(wQueryMin, wOffset);
+  wBoxMax = _mm_add_epi32(wBoxMax, wOffset);
+  const auto wCmp2 = _mm_cmpgt_epi32(wQueryMin, wBoxMax);
+  const auto wCombined = _mm_or_si128(wCmp1, wCmp2);
+  return _mm_movemask_epi8(wCombined) == 0;
+}
+#endif  // defined(FLATBUSH_USE_SSE2)
+
+template <typename ArrayType>
+inline void updateBounds(Box<ArrayType>& ioBounds, const Box<ArrayType>& iBox) noexcept {
+  ioBounds.mMinX = std::min(ioBounds.mMinX, iBox.mMinX);
+  ioBounds.mMinY = std::min(ioBounds.mMinY, iBox.mMinY);
+  ioBounds.mMaxX = std::max(ioBounds.mMaxX, iBox.mMaxX);
+  ioBounds.mMaxY = std::max(ioBounds.mMaxY, iBox.mMaxY);
+}
+
+#if defined(FLATBUSH_USE_SSE2)
+template <>
+inline void updateBounds<float>(Box<float>& ioBounds, const Box<float>& iBox) noexcept {
+  const auto wCurrent = _mm_setr_ps(ioBounds.mMinX, ioBounds.mMinY, ioBounds.mMaxX, ioBounds.mMaxY);
+  const auto wNewVals = _mm_setr_ps(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY);
+  const auto wMins = _mm_min_ps(wCurrent, wNewVals);
+  const auto wMaxs = _mm_max_ps(wCurrent, wNewVals);
+  auto wTemp = std::array<float, 4>();
+  _mm_storeu_ps(wTemp.data(), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_ps(wTemp.data(), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+
+template <>
+inline void updateBounds<double>(Box<double>& ioBounds, const Box<double>& iBox) noexcept {
+  const auto currentMin = _mm_set_pd(ioBounds.mMinY, ioBounds.mMinX);
+  const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
+  const auto wResultMin = _mm_min_pd(currentMin, wBoxMin);
+  const auto currentMax = _mm_set_pd(ioBounds.mMaxY, ioBounds.mMaxX);
+  const auto wBoxMax = _mm_set_pd(iBox.mMaxY, iBox.mMaxX);
+  const auto wResultMax = _mm_max_pd(currentMax, wBoxMax);
+  auto wTemp = std::array<double, 2>();
+  _mm_storeu_pd(wTemp.data(), wResultMin);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_pd(wTemp.data(), wResultMax);
+  ioBounds.mMaxX = wTemp[0];
+  ioBounds.mMaxY = wTemp[1];
+}
+
+template <>
+inline void updateBounds<int8_t>(Box<int8_t>& ioBounds, const Box<int8_t>& iBox) noexcept {
+  const auto wCurrent = _mm_setr_epi8(ioBounds.mMinX,
+                                      ioBounds.mMinY,
+                                      ioBounds.mMaxX,
+                                      ioBounds.mMaxY,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0,
+                                      0);
+  const auto wNewVals = _mm_setr_epi8(
+      iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wCmpMin = _mm_cmplt_epi8(wCurrent, wNewVals);
+  const auto wCmpMax = _mm_cmpgt_epi8(wCurrent, wNewVals);
+  const auto wMins =
+      _mm_or_si128(_mm_and_si128(wCmpMin, wCurrent), _mm_andnot_si128(wCmpMin, wNewVals));
+  const auto wMaxs =
+      _mm_or_si128(_mm_and_si128(wCmpMax, wCurrent), _mm_andnot_si128(wCmpMax, wNewVals));
+  auto wTemp = std::array<int8_t, 16>();
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+
+template <>
+inline void updateBounds<uint8_t>(Box<uint8_t>& ioBounds, const Box<uint8_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Box<int8_t>>(ioBounds);
+  const auto wBox = static_cast<Box<int8_t>>(iBox);
+  const auto wCurrent = _mm_setr_epi8(
+      wQuery.mMinX, wQuery.mMinY, wQuery.mMaxX, wQuery.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wNewVals = _mm_setr_epi8(
+      wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wMins = _mm_min_epu8(wCurrent, wNewVals);
+  const auto wMaxs = _mm_max_epu8(wCurrent, wNewVals);
+  auto wTemp = std::array<uint8_t, 16>();
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+
+template <>
+inline void updateBounds<int16_t>(Box<int16_t>& ioBounds, const Box<int16_t>& iBox) noexcept {
+  const auto wCurrent =
+      _mm_setr_epi16(ioBounds.mMinX, ioBounds.mMinY, ioBounds.mMaxX, ioBounds.mMaxY, 0, 0, 0, 0);
+  const auto wNewVals = _mm_setr_epi16(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0);
+  const auto wMins = _mm_min_epi16(wCurrent, wNewVals);
+  const auto wMaxs = _mm_max_epi16(wCurrent, wNewVals);
+  auto wTemp = std::array<int16_t, 8>();
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+
+template <>
+inline void updateBounds<uint16_t>(Box<uint16_t>& ioBounds, const Box<uint16_t>& iBox) noexcept {
+  const auto wOffset = _mm_set1_epi16(-32768);
+  const auto wQuery = static_cast<Box<int16_t>>(ioBounds);
+  const auto wBox = static_cast<Box<int16_t>>(iBox);
+  auto wCurrent =
+      _mm_setr_epi16(wQuery.mMinX, wQuery.mMinY, wQuery.mMaxX, wQuery.mMaxY, 0, 0, 0, 0);
+  auto wNewVals = _mm_setr_epi16(wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY, 0, 0, 0, 0);
+  wCurrent = _mm_add_epi16(wCurrent, wOffset);
+  wNewVals = _mm_add_epi16(wNewVals, wOffset);
+  auto wMins = _mm_min_epi16(wCurrent, wNewVals);
+  auto wMaxs = _mm_max_epi16(wCurrent, wNewVals);
+  wMins = _mm_sub_epi16(wMins, wOffset);
+  wMaxs = _mm_sub_epi16(wMaxs, wOffset);
+  auto wTemp = std::array<uint16_t, 8>();
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+
+template <>
+inline void updateBounds<int32_t>(Box<int32_t>& ioBounds, const Box<int32_t>& iBox) noexcept {
+  const auto wCurrent =
+      _mm_setr_epi32(ioBounds.mMinX, ioBounds.mMinY, ioBounds.mMaxX, ioBounds.mMaxY);
+  const auto wNewVals = _mm_setr_epi32(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY);
+  const auto wCmpMin = _mm_cmplt_epi32(wCurrent, wNewVals);
+  const auto wCmpMax = _mm_cmpgt_epi32(wCurrent, wNewVals);
+  const auto wMins =
+      _mm_or_si128(_mm_and_si128(wCmpMin, wCurrent), _mm_andnot_si128(wCmpMin, wNewVals));
+  const auto wMaxs =
+      _mm_or_si128(_mm_and_si128(wCmpMax, wCurrent), _mm_andnot_si128(wCmpMax, wNewVals));
+  auto wTemp = std::array<int32_t, 4>();
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+
+template <>
+inline void updateBounds<uint32_t>(Box<uint32_t>& ioBounds, const Box<uint32_t>& iBox) noexcept {
+  const auto wOffset = _mm_set1_epi32(static_cast<int>(0x80000000));
+  const auto wBounds = static_cast<Box<int32_t>>(ioBounds);
+  const auto wBox = static_cast<Box<int32_t>>(iBox);
+  auto wCurrent = _mm_setr_epi32(wBounds.mMinX, wBounds.mMinY, wBounds.mMaxX, wBounds.mMaxY);
+  auto wNewVals = _mm_setr_epi32(wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY);
+  wCurrent = _mm_add_epi32(wCurrent, wOffset);
+  wNewVals = _mm_add_epi32(wNewVals, wOffset);
+  const auto wCmpMin = _mm_cmplt_epi32(wCurrent, wNewVals);
+  const auto wCmpMax = _mm_cmpgt_epi32(wCurrent, wNewVals);
+  auto wMins = _mm_or_si128(_mm_and_si128(wCmpMin, wCurrent), _mm_andnot_si128(wCmpMin, wNewVals));
+  auto wMaxs = _mm_or_si128(_mm_and_si128(wCmpMax, wCurrent), _mm_andnot_si128(wCmpMax, wNewVals));
+  wMins = _mm_sub_epi32(wMins, wOffset);
+  wMaxs = _mm_sub_epi32(wMaxs, wOffset);
+  auto wTemp = std::array<uint32_t, 4>();
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMins);
+  ioBounds.mMinX = wTemp[0];
+  ioBounds.mMinY = wTemp[1];
+  _mm_storeu_si128(detail::bit_cast<__m128i*>(wTemp.data()), wMaxs);
+  ioBounds.mMaxX = wTemp[2];
+  ioBounds.mMaxY = wTemp[3];
+}
+#endif  // defined(FLATBUSH_USE_SSE2)
+
+template <typename ArrayType>
+inline double computeDistanceSquared(const Point<ArrayType>& iPoint,
+                                     const Box<ArrayType>& iBox) noexcept {
+  const auto wDistX = axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX);
+  const auto wDistY = axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
+  return wDistX * wDistX + wDistY * wDistY;
+}
+
+#if defined(FLATBUSH_USE_SSE2)
+template <>
+inline double computeDistanceSquared<float>(const Point<float>& iPoint,
+                                            const Box<float>& iBox) noexcept {
+  const auto point = _mm_setr_ps(iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY);
+  const auto bounds = _mm_setr_ps(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY);
+  // Compute axis distances: max(0, point - iBox.mMax) or max(0, iBox.mMin - point)
+  const auto wCmpMin = _mm_cmplt_ps(point, bounds);  // point < min
+  const auto wCmpMax =
+      _mm_cmpgt_ps(point, _mm_shuffle_ps(bounds, bounds, _MM_SHUFFLE(3, 2, 3, 2)));  // point > max
+  const auto wDistMin = _mm_sub_ps(bounds, point);  // iBox.mMin - point
+  const auto wDistMax = _mm_sub_ps(
+      point, _mm_shuffle_ps(bounds, bounds, _MM_SHUFFLE(3, 2, 3, 2)));  // point - iBox.mMax
+  auto wDist = _mm_or_ps(_mm_and_ps(wCmpMin, wDistMin), _mm_and_ps(wCmpMax, wDistMax));
+  wDist = _mm_max_ps(wDist, _mm_setzero_ps());
+  wDist = _mm_mul_ps(wDist, wDist);
+  // Horizontal sum
+  auto wShuf = _mm_shuffle_ps(wDist, wDist, _MM_SHUFFLE(2, 3, 0, 1));
+  auto wSums = _mm_add_ps(wDist, wShuf);
+  wShuf = _mm_movehl_ps(wShuf, wSums);
+  wSums = _mm_add_ss(wSums, wShuf);
+  return static_cast<double>(_mm_cvtss_f32(wSums));
+}
+
+template <>
+inline double computeDistanceSquared<double>(const Point<double>& iPoint,
+                                             const Box<double>& iBox) noexcept {
+  // For double precision
+  const auto wPoint = _mm_set_pd(iPoint.mX, iPoint.mY);
+  const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
+  const auto wBoxMax = _mm_set_pd(iBox.mMaxY, iBox.mMaxX);
+  // Compute axis distances
+  const auto wCmpMin = _mm_cmplt_pd(wPoint, wBoxMin);
+  const auto wCmpMax = _mm_cmpgt_pd(wPoint, wBoxMax);
+  const auto wDistMin = _mm_sub_pd(wBoxMin, wPoint);
+  const auto wDistMax = _mm_sub_pd(wPoint, wBoxMax);
+  auto wDist = _mm_or_pd(_mm_and_pd(wCmpMin, wDistMin), _mm_and_pd(wCmpMax, wDistMax));
+  wDist = _mm_max_pd(wDist, _mm_setzero_pd());
+  // Square and sum
+  wDist = _mm_mul_pd(wDist, wDist);
+  const auto wShuf = _mm_shuffle_pd(wDist, wDist, 1);
+  const auto wSums = _mm_add_pd(wDist, wShuf);
+  return _mm_cvtsd_f64(wSums);
+}
+
+template <>
+inline double computeDistanceSquared<int8_t>(const Point<int8_t>& iPoint,
+                                             const Box<int8_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Point<float>>(iPoint);
+  const auto wBox = static_cast<Box<float>>(iBox);
+  const auto wPoint = _mm_setr_ps(wQuery.mX, wQuery.mY, wQuery.mX, wQuery.mY);
+  const auto wBounds = _mm_setr_ps(wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY);
+  const auto wCmpMin = _mm_cmplt_ps(wPoint, wBounds);
+  const auto wCmpMax =
+      _mm_cmpgt_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  const auto wDistMin = _mm_sub_ps(wBounds, wPoint);
+  const auto wDistMax =
+      _mm_sub_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  auto wDist = _mm_or_ps(_mm_and_ps(wCmpMin, wDistMin), _mm_and_ps(wCmpMax, wDistMax));
+  wDist = _mm_max_ps(wDist, _mm_setzero_ps());
+  wDist = _mm_mul_ps(wDist, wDist);
+  auto wShuf = _mm_shuffle_ps(wDist, wDist, _MM_SHUFFLE(2, 3, 0, 1));
+  auto wSums = _mm_add_ps(wDist, wShuf);
+  wShuf = _mm_movehl_ps(wShuf, wSums);
+  wSums = _mm_add_ss(wSums, wShuf);
+  return static_cast<double>(_mm_cvtss_f32(wSums));
+}
+
+template <>
+inline double computeDistanceSquared<uint8_t>(const Point<uint8_t>& iPoint,
+                                              const Box<uint8_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Point<float>>(iPoint);
+  const auto wBox = static_cast<Box<float>>(iBox);
+  const auto wPoint = _mm_setr_ps(wQuery.mX, wQuery.mY, wQuery.mX, wQuery.mY);
+  const auto wBounds = _mm_setr_ps(wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY);
+  const auto wCmpMin = _mm_cmplt_ps(wPoint, wPoint);
+  const auto wCmpMax =
+      _mm_cmpgt_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  const auto wDistMin = _mm_sub_ps(wBounds, wPoint);
+  const auto wDistMax =
+      _mm_sub_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  auto wDist = _mm_or_ps(_mm_and_ps(wCmpMin, wDistMin), _mm_and_ps(wCmpMax, wDistMax));
+  wDist = _mm_max_ps(wDist, _mm_setzero_ps());
+  wDist = _mm_mul_ps(wDist, wDist);
+  auto wShuf = _mm_shuffle_ps(wDist, wDist, _MM_SHUFFLE(2, 3, 0, 1));
+  auto wSums = _mm_add_ps(wDist, wShuf);
+  wShuf = _mm_movehl_ps(wShuf, wSums);
+  wSums = _mm_add_ss(wSums, wShuf);
+  return static_cast<double>(_mm_cvtss_f32(wSums));
+}
+
+template <>
+inline double computeDistanceSquared<int16_t>(const Point<int16_t>& iPoint,
+                                              const Box<int16_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Point<float>>(iPoint);
+  const auto wBox = static_cast<Box<float>>(iBox);
+  const auto wPoint = _mm_setr_ps(wQuery.mX, wQuery.mY, wQuery.mX, wQuery.mY);
+  const auto wBounds = _mm_setr_ps(wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY);
+  const auto wCmpMin = _mm_cmplt_ps(wPoint, wBounds);
+  const auto wCmpMax =
+      _mm_cmpgt_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  const auto wDistMin = _mm_sub_ps(wBounds, wPoint);
+  const auto wDistMax =
+      _mm_sub_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  auto wDist = _mm_or_ps(_mm_and_ps(wCmpMin, wDistMin), _mm_and_ps(wCmpMax, wDistMax));
+  wDist = _mm_max_ps(wDist, _mm_setzero_ps());
+  wDist = _mm_mul_ps(wDist, wDist);
+  auto wShuf = _mm_shuffle_ps(wDist, wDist, _MM_SHUFFLE(2, 3, 0, 1));
+  auto wSums = _mm_add_ps(wDist, wShuf);
+  wShuf = _mm_movehl_ps(wShuf, wSums);
+  wSums = _mm_add_ss(wSums, wShuf);
+  return static_cast<double>(_mm_cvtss_f32(wSums));
+}
+
+template <>
+inline double computeDistanceSquared<uint16_t>(const Point<uint16_t>& iPoint,
+                                               const Box<uint16_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Point<float>>(iPoint);
+  const auto wBox = static_cast<Box<float>>(iBox);
+  const auto wPoint = _mm_setr_ps(wQuery.mX, wQuery.mY, wQuery.mX, wQuery.mY);
+  const auto wBounds = _mm_setr_ps(wBox.mMinX, wBox.mMinY, wBox.mMaxX, wBox.mMaxY);
+  const auto wCmpMin = _mm_cmplt_ps(wPoint, wBounds);
+  const auto wCmpMax =
+      _mm_cmpgt_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  const auto wDistMin = _mm_sub_ps(wBounds, wPoint);
+  const auto wDistMax =
+      _mm_sub_ps(wPoint, _mm_shuffle_ps(wBounds, wBounds, _MM_SHUFFLE(3, 2, 3, 2)));
+  auto wDist = _mm_or_ps(_mm_and_ps(wCmpMin, wDistMin), _mm_and_ps(wCmpMax, wDistMax));
+  wDist = _mm_max_ps(wDist, _mm_setzero_ps());
+  wDist = _mm_mul_ps(wDist, wDist);
+  auto wShuf = _mm_shuffle_ps(wDist, wDist, _MM_SHUFFLE(2, 3, 0, 1));
+  auto wSums = _mm_add_ps(wDist, wShuf);
+  wShuf = _mm_movehl_ps(wShuf, wSums);
+  wSums = _mm_add_ss(wSums, wShuf);
+  return static_cast<double>(_mm_cvtss_f32(wSums));
+}
+
+template <>
+inline double computeDistanceSquared<int32_t>(const Point<int32_t>& iPoint,
+                                              const Box<int32_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Point<double>>(iPoint);
+  const auto wBox = static_cast<Box<double>>(iBox);
+  const auto wPoint = _mm_set_pd(wQuery.mY, wQuery.mX);
+  const auto wBoxMin = _mm_set_pd(wBox.mMinY, wBox.mMinX);
+  const auto wBoxMax = _mm_set_pd(wBox.mMaxY, wBox.mMaxX);
+  const auto wCmpMin = _mm_cmplt_pd(wPoint, wBoxMin);
+  const auto wCmpMax = _mm_cmpgt_pd(wPoint, wBoxMax);
+  const auto wDistMin = _mm_sub_pd(wBoxMin, wPoint);
+  const auto wDistMax = _mm_sub_pd(wPoint, wBoxMax);
+  auto wDist = _mm_or_pd(_mm_and_pd(wCmpMin, wDistMin), _mm_and_pd(wCmpMax, wDistMax));
+  wDist = _mm_max_pd(wDist, _mm_setzero_pd());
+  wDist = _mm_mul_pd(wDist, wDist);
+  const auto wShuf = _mm_shuffle_pd(wDist, wDist, 1);
+  const auto wSums = _mm_add_pd(wDist, wShuf);
+  return _mm_cvtsd_f64(wSums);
+}
+
+template <>
+inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint,
+                                               const Box<uint32_t>& iBox) noexcept {
+  const auto wQuery = static_cast<Point<double>>(iPoint);
+  const auto wBox = static_cast<Box<double>>(iBox);
+  const auto wPoint = _mm_set_pd(wQuery.mY, wQuery.mX);
+  const auto wBoxMin = _mm_set_pd(wBox.mMinY, wBox.mMinX);
+  const auto wBoxMax = _mm_set_pd(wBox.mMaxY, wBox.mMaxX);
+  const auto wCmpMin = _mm_cmplt_pd(wPoint, wBoxMin);
+  const auto wCmpMax = _mm_cmpgt_pd(wPoint, wBoxMax);
+  const auto wDistMin = _mm_sub_pd(wBoxMin, wPoint);
+  const auto wDistMax = _mm_sub_pd(wPoint, wBoxMax);
+  auto wDist = _mm_or_pd(_mm_and_pd(wCmpMin, wDistMin), _mm_and_pd(wCmpMax, wDistMax));
+  wDist = _mm_max_pd(wDist, _mm_setzero_pd());
+  wDist = _mm_mul_pd(wDist, wDist);
+  const auto wShuf = _mm_shuffle_pd(wDist, wDist, 1);
+  const auto wSums = _mm_add_pd(wDist, wShuf);
+  return _mm_cvtsd_f64(wSums);
+}
+#endif  // defined(FLATBUSH_USE_SSE2)
+
 }  // namespace detail
-
-template <typename ArrayType>
-struct Box {
-  ArrayType mMinX;
-  ArrayType mMinY;
-  ArrayType mMaxX;
-  ArrayType mMaxY;
-};
-
-template <typename ArrayType>
-struct Point {
-  ArrayType mX;
-  ArrayType mY;
-};
 
 template <class ArrayType>
 class Flatbush;
@@ -395,7 +914,7 @@ class Flatbush {
   static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
 
   static inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
-    return iValue < iMin ? iMin - iValue : std::max(iValue - iMax, 0.0);
+    return iValue < iMin ? iMin - iValue : std::max<double>(iValue - iMax, 0.0);
   }
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
@@ -546,10 +1065,7 @@ size_t Flatbush<ArrayType>::add(const Box<ArrayType>& iBox) noexcept {
   }
 
   mBoxes[mPosition] = iBox;
-  mBounds.mMinX = std::min(mBounds.mMinX, iBox.mMinX);
-  mBounds.mMinY = std::min(mBounds.mMinY, iBox.mMinY);
-  mBounds.mMaxX = std::max(mBounds.mMaxX, iBox.mMaxX);
-  mBounds.mMaxY = std::max(mBounds.mMaxY, iBox.mMaxY);
+  detail::updateBounds(mBounds, iBox);
   return mPosition++;
 }
 
@@ -591,10 +1107,7 @@ void Flatbush<ArrayType>::finish() noexcept {
 
       // calculate bbox for the new node
       for (size_t wCount = 0; wCount < wNodeSize && wPosition < wEnd; ++wCount, ++wPosition) {
-        wNodeBox.mMinX = std::min(wNodeBox.mMinX, mBoxes[wPosition].mMinX);
-        wNodeBox.mMinY = std::min(wNodeBox.mMinY, mBoxes[wPosition].mMinY);
-        wNodeBox.mMaxX = std::max(wNodeBox.mMaxX, mBoxes[wPosition].mMaxX);
-        wNodeBox.mMaxY = std::max(wNodeBox.mMaxY, mBoxes[wPosition].mMaxY);
+        detail::updateBounds(wNodeBox, mBoxes[wPosition]);
       }
 
       // add the new node to the tree data
@@ -725,10 +1238,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
     // search through child nodes
     for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       // check if node bbox intersects with query bbox
-      if (iBounds.mMaxX < mBoxes[wPosition].mMinX /* maxX < nodeMinX */ ||
-          iBounds.mMaxY < mBoxes[wPosition].mMinY /* maxY < nodeMinY */ ||
-          iBounds.mMinX > mBoxes[wPosition].mMaxX /* minX > nodeMaxX */ ||
-          iBounds.mMinY > mBoxes[wPosition].mMaxY /* minY > nodeMaxY */) {
+      if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
         continue;
       }
 
@@ -773,9 +1283,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
     // search through child nodes
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]);
-      const auto wDistX = axisDistance(iPoint.mX, mBoxes[wPosition].mMinX, mBoxes[wPosition].mMaxX);
-      const auto wDistY = axisDistance(iPoint.mY, mBoxes[wPosition].mMinY, mBoxes[wPosition].mMaxY);
-      const auto wDistance = wDistX * wDistX + wDistY * wDistY;
+      const auto wDistance = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
 
       if (wDistance > wMaxDistSquared) {
         continue;
