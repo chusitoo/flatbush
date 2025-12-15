@@ -39,11 +39,38 @@ SOFTWARE.
 #include <utility>      // for swap
 #include <vector>       // for vector
 
+#define FLATBUSH_USE_AVX512 6
+#define FLATBUSH_USE_AVX 5
+#define FLATBUSH_USE_SSE4 4
+#define FLATBUSH_USE_SSE3 3
+#define FLATBUSH_USE_SSE2 2
+
 // SIMD intrinsics support detection
-#if defined(__SSE2__) || \
+#if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512VL__)
+#define FLATBUSH_USE_SIMD FLATBUSH_USE_AVX512
+#include <immintrin.h>
+#pragma message "Detected AVX512 support"
+#elif defined(__AVX__)
+#define FLATBUSH_USE_SIMD FLATBUSH_USE_AVX
+#include <immintrin.h>
+#pragma message "Detected AVX support"
+#elif defined(__SSE4_1__) || (defined(_MSC_VER) && defined(__AVX__))
+#define FLATBUSH_USE_SIMD FLATBUSH_USE_SSE4
+#include <smmintrin.h>
+#pragma message "Detected SSE4 support"
+#elif defined(__SSE3__) || (defined(_MSC_VER) && defined(__AVX__))
+#define FLATBUSH_USE_SIMD FLATBUSH_USE_SSE3
+#include <pmmintrin.h>
+#pragma message "Detected SSE3 support"
+#elif defined(__SSE2__) || \
     (defined(_MSC_VER) && (defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)))
-#define FLATBUSH_USE_SSE2 1
+#define FLATBUSH_USE_SIMD FLATBUSH_USE_SSE2
 #include <emmintrin.h>
+#pragma message "Detected SSE2 support"
+#endif
+
+#if defined(FLATBUSH_USE_SIMD)
+#pragma message "Using SIMD intrinsics"
 #endif
 
 #ifndef FLATBUSH_SPAN
@@ -270,17 +297,54 @@ inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& i
            iQuery.mMinY > iBox.mMaxY);
 }
 
-#if defined(FLATBUSH_USE_SSE2)
+template <typename ArrayType>
+inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
+  ioSrc.mMinX = std::min(ioSrc.mMinX, iBox.mMinX);
+  ioSrc.mMinY = std::min(ioSrc.mMinY, iBox.mMinY);
+  ioSrc.mMaxX = std::max(ioSrc.mMaxX, iBox.mMaxX);
+  ioSrc.mMaxY = std::max(ioSrc.mMaxY, iBox.mMaxY);
+}
+
+template <typename ArrayType>
+inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
+  return iValue < iMin ? iMin - iValue : std::max<double>(iValue - iMax, 0.0);
+}
+
+template <typename ArrayType>
+inline double computeDistanceSquared(const Point<ArrayType>& iPoint,
+                                     const Box<ArrayType>& iBox) noexcept {
+  const auto wDistX = axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX);
+  const auto wDistY = axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
+  return wDistX * wDistX + wDistY * wDistY;
+}
+
+#if defined(FLATBUSH_USE_SIMD)
 template <>
 inline bool boxesIntersect<float>(const Box<float>& iQuery, const Box<float>& iBox) noexcept {
   const auto wMax = _mm_set_ps(iBox.mMaxY, iBox.mMaxX, iQuery.mMaxY, iQuery.mMaxX);
   const auto wMin = _mm_set_ps(iQuery.mMinY, iQuery.mMinX, iBox.mMinY, iBox.mMinX);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  return _mm_cmp_ps_mask(wMax, wMin, _CMP_LT_OQ) == 0;
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
   const auto wCmp = _mm_cmplt_ps(wMax, wMin);
-  return _mm_movemask_ps(wCmp) == 0;
+  return _mm_testz_ps(wCmp, wCmp);
+#else
+  return _mm_movemask_ps(_mm_cmplt_ps(wMax, wMin)) == 0;
+#endif
 }
 
 template <>
 inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>& iBox) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+  const auto wMax = _mm256_set_pd(iBox.mMaxY, iBox.mMaxX, iQuery.mMaxY, iQuery.mMaxX);
+  const auto wMin = _mm256_set_pd(iQuery.mMinY, iQuery.mMinX, iBox.mMinY, iBox.mMinX);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  return _mm256_cmp_pd_mask(wMax, wMin, _CMP_LT_OQ) == 0;
+#else
+  const auto wCmp = _mm256_cmp_pd(wMax, wMin, _CMP_LT_OQ);
+  return _mm256_testz_pd(wCmp, wCmp);
+#endif
+#else  // if FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX
   const auto wQueryMax = _mm_set_pd(iQuery.mMaxY, iQuery.mMaxX);
   const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
   const auto wCmp1 = _mm_cmplt_pd(wQueryMax, wBoxMin);
@@ -289,6 +353,7 @@ inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>&
   const auto wCmp2 = _mm_cmpgt_pd(wQueryMin, wBoxMax);
   const auto wCombined = _mm_or_pd(wCmp1, wCmp2);
   return _mm_movemask_pd(wCombined) == 0;
+#endif
 }
 
 template <>
@@ -298,7 +363,11 @@ inline bool boxesIntersect<int8_t>(const Box<int8_t>& iQuery, const Box<int8_t>&
   const auto wMin = _mm_setr_epi8(
       iBox.mMinX, iBox.mMinY, iQuery.mMinX, iQuery.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   const auto wCmp = _mm_cmplt_epi8(wMax, wMin);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  return _mm_testz_si128(wCmp, wCmp);
+#else
   return _mm_movemask_epi8(wCmp) == 0;
+#endif
 }
 
 template <>
@@ -311,7 +380,11 @@ inline bool boxesIntersect<uint8_t>(const Box<uint8_t>& iQuery, const Box<uint8_
   const auto wMin = _mm_setr_epi8(
       wBox2.mMinX, wBox2.mMinY, wBox1.mMinX, wBox1.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
   const auto wCmp = _mm_cmplt_epi8(_mm_add_epi8(wMax, wOffset), _mm_add_epi8(wMin, wOffset));
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  return _mm_testz_si128(wCmp, wCmp);
+#else
   return _mm_movemask_epi8(wCmp) == 0;
+#endif
 }
 
 template <>
@@ -319,7 +392,11 @@ inline bool boxesIntersect<int16_t>(const Box<int16_t>& iQuery, const Box<int16_
   const auto wMax = _mm_setr_epi16(iQuery.mMaxX, iQuery.mMaxY, iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0);
   const auto wMin = _mm_setr_epi16(iBox.mMinX, iBox.mMinY, iQuery.mMinX, iQuery.mMinY, 0, 0, 0, 0);
   const auto wCmp = _mm_cmplt_epi16(wMax, wMin);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  return _mm_testz_si128(wCmp, wCmp);
+#else
   return _mm_movemask_epi8(wCmp) == 0;
+#endif
 }
 
 template <>
@@ -331,7 +408,11 @@ inline bool boxesIntersect<uint16_t>(const Box<uint16_t>& iQuery,
   const auto wMax = _mm_setr_epi16(wBox1.mMaxX, wBox1.mMaxY, wBox2.mMaxX, wBox2.mMaxY, 0, 0, 0, 0);
   const auto wMin = _mm_setr_epi16(wBox2.mMinX, wBox2.mMinY, wBox1.mMinX, wBox1.mMinY, 0, 0, 0, 0);
   const auto wCmp = _mm_cmplt_epi16(_mm_add_epi16(wMax, wOffset), _mm_add_epi16(wMin, wOffset));
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  return _mm_testz_si128(wCmp, wCmp);
+#else
   return _mm_movemask_epi8(wCmp) == 0;
+#endif
 }
 
 template <>
@@ -339,7 +420,11 @@ inline bool boxesIntersect<int32_t>(const Box<int32_t>& iQuery, const Box<int32_
   const auto wMax = _mm_setr_epi32(iQuery.mMaxX, iQuery.mMaxY, iBox.mMaxX, iBox.mMaxY);
   const auto wMin = _mm_setr_epi32(iBox.mMinX, iBox.mMinY, iQuery.mMinX, iQuery.mMinY);
   const auto wCmp = _mm_cmplt_epi32(wMax, wMin);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  return _mm_testz_si128(wCmp, wCmp);
+#else
   return _mm_movemask_epi8(wCmp) == 0;
+#endif
 }
 
 template <>
@@ -351,37 +436,51 @@ inline bool boxesIntersect<uint32_t>(const Box<uint32_t>& iQuery,
   const auto wMax = _mm_setr_epi32(wBox1.mMaxX, wBox1.mMaxY, wBox2.mMaxX, wBox2.mMaxY);
   const auto wMin = _mm_setr_epi32(wBox2.mMinX, wBox2.mMinY, wBox1.mMinX, wBox1.mMinY);
   const auto wCmp = _mm_cmplt_epi32(_mm_add_epi32(wMax, wOffset), _mm_add_epi32(wMin, wOffset));
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  return _mm_testz_si128(wCmp, wCmp);
+#else
   return _mm_movemask_epi8(wCmp) == 0;
-}
-#endif  // defined(FLATBUSH_USE_SSE2)
-
-template <typename ArrayType>
-inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
-  ioSrc.mMinX = std::min(ioSrc.mMinX, iBox.mMinX);
-  ioSrc.mMinY = std::min(ioSrc.mMinY, iBox.mMinY);
-  ioSrc.mMaxX = std::max(ioSrc.mMaxX, iBox.mMaxX);
-  ioSrc.mMaxY = std::max(ioSrc.mMaxY, iBox.mMaxY);
+#endif
 }
 
-#if defined(FLATBUSH_USE_SSE2)
 template <>
 inline void updateBounds<float>(Box<float>& ioSrc, const Box<float>& iBox) noexcept {
   const auto wCur = _mm_setr_ps(ioSrc.mMinX, ioSrc.mMinY, ioSrc.mMaxX, ioSrc.mMaxY);
   const auto wNew = _mm_setr_ps(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY);
   const auto wMins = _mm_min_ps(wCur, wNew);
   const auto wMaxs = _mm_max_ps(wCur, wNew);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  const auto wResult = _mm_mask_blend_ps(0xC, wMins, wMaxs);
+  _mm_storeu_ps(&ioSrc.mMinX, wResult);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  const auto wResult = _mm_blend_ps(wMins, wMaxs, 0xC);
+  _mm_storeu_ps(&ioSrc.mMinX, wResult);
+#else
   _mm_storel_pi(detail::bit_cast<__m64*>(&ioSrc.mMinX), wMins);
   _mm_storeh_pi(detail::bit_cast<__m64*>(&ioSrc.mMaxX), wMaxs);
+#endif
 }
 
 template <>
 inline void updateBounds<double>(Box<double>& ioSrc, const Box<double>& iBox) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+  const auto wCur = _mm256_setr_pd(ioSrc.mMinX, ioSrc.mMinY, ioSrc.mMaxX, ioSrc.mMaxY);
+  const auto wNew = _mm256_setr_pd(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY);
+  const auto wMins = _mm256_min_pd(wCur, wNew);
+  const auto wMaxs = _mm256_max_pd(wCur, wNew);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  _mm256_storeu_pd(&ioSrc.mMinX, _mm256_mask_blend_pd(0xC, wMins, wMaxs));
+#else  // if FLATBUSH_USE_SIMD == FLATBUSH_USE_AVX
+  _mm256_storeu_pd(&ioSrc.mMinX, _mm256_blend_pd(wMins, wMaxs, 0xC));
+#endif
+#else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX
   const auto wCurMin = _mm_setr_pd(ioSrc.mMinX, ioSrc.mMinY);
   const auto wNewMin = _mm_setr_pd(iBox.mMinX, iBox.mMinY);
   _mm_storeu_pd(&ioSrc.mMinX, _mm_min_pd(wCurMin, wNewMin));
   const auto wCurMax = _mm_setr_pd(ioSrc.mMaxX, ioSrc.mMaxY);
   const auto wNewMax = _mm_setr_pd(iBox.mMaxX, iBox.mMaxY);
   _mm_storeu_pd(&ioSrc.mMaxX, _mm_max_pd(wCurMax, wNewMax));
+#endif
 }
 
 template <>
@@ -390,10 +489,15 @@ inline void updateBounds<int8_t>(Box<int8_t>& ioSrc, const Box<int8_t>& iBox) no
       ioSrc.mMinX, ioSrc.mMinY, 0, 0, 0, 0, 0, 0, ioSrc.mMaxX, ioSrc.mMaxY, 0, 0, 0, 0, 0, 0);
   const auto wNew = _mm_setr_epi8(
       iBox.mMinX, iBox.mMinY, 0, 0, 0, 0, 0, 0, iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0, 0, 0);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  const auto wMins = _mm_min_epi8(wCur, wNew);
+  const auto wMaxs = _mm_max_epi8(wCur, wNew);
+#else
   const auto wCmpMin = _mm_cmplt_epi8(wCur, wNew);
   const auto wCmpMax = _mm_cmpgt_epi8(wCur, wNew);
   const auto wMins = _mm_or_si128(_mm_and_si128(wCmpMin, wCur), _mm_andnot_si128(wCmpMin, wNew));
   const auto wMaxs = _mm_or_si128(_mm_and_si128(wCmpMax, wCur), _mm_andnot_si128(wCmpMax, wNew));
+#endif
   _mm_storeu_si16(&ioSrc.mMinX, wMins);
   _mm_storeu_si16(&ioSrc.mMaxX, _mm_unpackhi_epi8(wMaxs, wMaxs));
 }
@@ -426,13 +530,18 @@ template <>
 inline void updateBounds<uint16_t>(Box<uint16_t>& ioSrc, const Box<uint16_t>& iBox) noexcept {
   const auto wBox1 = static_cast<Box<int16_t>>(ioSrc);
   const auto wBox2 = static_cast<Box<int16_t>>(iBox);
-  const auto wOffset = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
   const auto wCur = _mm_setr_epi16(wBox1.mMinX, wBox1.mMinY, wBox1.mMaxX, wBox1.mMaxY, 0, 0, 0, 0);
   const auto wNew = _mm_setr_epi16(wBox2.mMinX, wBox2.mMinY, wBox2.mMaxX, wBox2.mMaxY, 0, 0, 0, 0);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  const auto wMins = _mm_min_epu16(wCur, wNew);
+  const auto wMaxs = _mm_max_epu16(wCur, wNew);
+#else
+  const auto wOffset = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
   const auto wMins = _mm_sub_epi16(
       _mm_min_epi16(_mm_add_epi16(wCur, wOffset), _mm_add_epi16(wNew, wOffset)), wOffset);
   const auto wMaxs = _mm_sub_epi16(
       _mm_max_epi16(_mm_add_epi16(wCur, wOffset), _mm_add_epi16(wNew, wOffset)), wOffset);
+#endif
   _mm_storeu_si32(&ioSrc.mMinX, wMins);
   _mm_storeu_si32(&ioSrc.mMaxX, wMaxs);
 }
@@ -441,12 +550,17 @@ template <>
 inline void updateBounds<int32_t>(Box<int32_t>& ioSrc, const Box<int32_t>& iBox) noexcept {
   const auto wCurrent = _mm_setr_epi32(ioSrc.mMinX, ioSrc.mMinY, ioSrc.mMaxX, ioSrc.mMaxY);
   const auto wNewVals = _mm_setr_epi32(iBox.mMinX, iBox.mMinY, iBox.mMaxX, iBox.mMaxY);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  const auto wMins = _mm_min_epi32(wCurrent, wNewVals);
+  const auto wMaxs = _mm_max_epi32(wCurrent, wNewVals);
+#else
   const auto wCmpMin = _mm_cmplt_epi32(wCurrent, wNewVals);
   const auto wCmpMax = _mm_cmpgt_epi32(wCurrent, wNewVals);
   const auto wMins =
       _mm_or_si128(_mm_and_si128(wCmpMin, wCurrent), _mm_andnot_si128(wCmpMin, wNewVals));
   const auto wMaxs =
       _mm_or_si128(_mm_and_si128(wCmpMax, wCurrent), _mm_andnot_si128(wCmpMax, wNewVals));
+#endif
   _mm_storeu_si64(&ioSrc.mMinX, wMins);
   _mm_storeu_si64(&ioSrc.mMaxX, wMaxs);
 }
@@ -455,48 +569,54 @@ template <>
 inline void updateBounds<uint32_t>(Box<uint32_t>& ioSrc, const Box<uint32_t>& iBox) noexcept {
   const auto wBox1 = static_cast<Box<int32_t>>(ioSrc);
   const auto wBox2 = static_cast<Box<int32_t>>(iBox);
+  const auto wCur = _mm_setr_epi32(wBox1.mMinX, wBox1.mMinY, wBox1.mMaxX, wBox1.mMaxY);
+  const auto wNew = _mm_setr_epi32(wBox2.mMinX, wBox2.mMinY, wBox2.mMaxX, wBox2.mMaxY);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  const auto wMins = _mm_min_epu32(wCur, wNew);
+  const auto wMaxs = _mm_max_epu32(wCur, wNew);
+#else
   const auto wOffset = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
-  const auto wCur =
-      _mm_add_epi32(_mm_setr_epi32(wBox1.mMinX, wBox1.mMinY, wBox1.mMaxX, wBox1.mMaxY), wOffset);
-  const auto wNew =
-      _mm_add_epi32(_mm_setr_epi32(wBox2.mMinX, wBox2.mMinY, wBox2.mMaxX, wBox2.mMaxY), wOffset);
-  const auto wCmpMin = _mm_cmplt_epi32(wCur, wNew);
-  const auto wCmpMax = _mm_cmpgt_epi32(wCur, wNew);
-  const auto wMins = _mm_or_si128(_mm_and_si128(wCmpMin, wCur), _mm_andnot_si128(wCmpMin, wNew));
-  const auto wMaxs = _mm_or_si128(_mm_and_si128(wCmpMax, wCur), _mm_andnot_si128(wCmpMax, wNew));
-  _mm_storeu_si64(&ioSrc.mMinX, _mm_sub_epi32(wMins, wOffset));
-  _mm_storeu_si64(&ioSrc.mMaxX, _mm_sub_epi32(wMaxs, wOffset));
-}
-#endif  // defined(FLATBUSH_USE_SSE2)
-
-template <typename ArrayType>
-inline double computeDistanceSquared(const Point<ArrayType>& iPoint,
-                                     const Box<ArrayType>& iBox) noexcept {
-  const auto wDistX = axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX);
-  const auto wDistY = axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
-  return wDistX * wDistX + wDistY * wDistY;
+  const auto wCurOff = _mm_add_epi32(wCur, wOffset);
+  const auto wNewOff = _mm_add_epi32(wNew, wOffset);
+  const auto wCmpMin = _mm_cmplt_epi32(wCurOff, wNewOff);
+  const auto wCmpMax = _mm_cmpgt_epi32(wCurOff, wNewOff);
+  const auto wMins = _mm_sub_epi32(
+      _mm_or_si128(_mm_and_si128(wCmpMin, wCurOff), _mm_andnot_si128(wCmpMin, wNewOff)), wOffset);
+  const auto wMaxs = _mm_sub_epi32(
+      _mm_or_si128(_mm_and_si128(wCmpMax, wCurOff), _mm_andnot_si128(wCmpMax, wNewOff)), wOffset);
+#endif
+  _mm_storeu_si64(&ioSrc.mMinX, wMins);
+  _mm_storeu_si64(&ioSrc.mMaxX, wMaxs);
 }
 
-#if defined(FLATBUSH_USE_SSE2)
 template <>
 inline double computeDistanceSquared<double>(const Point<double>& iPoint,
                                              const Box<double>& iBox) noexcept {
-  // For double precision
-  const auto wPoint = _mm_set_pd(iPoint.mX, iPoint.mY);
+  const auto wPoint = _mm_set_pd(iPoint.mY, iPoint.mX);
   const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
   const auto wBoxMax = _mm_set_pd(iBox.mMaxY, iBox.mMaxX);
   // Compute axis distances
-  const auto wCmpMin = _mm_cmplt_pd(wPoint, wBoxMin);
-  const auto wCmpMax = _mm_cmpgt_pd(wPoint, wBoxMax);
   const auto wDistMin = _mm_sub_pd(wBoxMin, wPoint);
   const auto wDistMax = _mm_sub_pd(wPoint, wBoxMax);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  const auto wMaskMin = _mm_cmp_pd_mask(wPoint, wBoxMin, _CMP_LT_OQ);
+  const auto wMaskMax = _mm_cmp_pd_mask(wPoint, wBoxMax, _CMP_GT_OQ);
+  const auto wZero = _mm_setzero_pd();
+  auto wDist = _mm_mask_blend_pd(wMaskMax, _mm_mask_blend_pd(wMaskMin, wZero, wDistMin), wDistMax);
+#else
+  const auto wCmpMin = _mm_cmplt_pd(wPoint, wBoxMin);
+  const auto wCmpMax = _mm_cmpgt_pd(wPoint, wBoxMax);
   auto wDist = _mm_or_pd(_mm_and_pd(wCmpMin, wDistMin), _mm_and_pd(wCmpMax, wDistMax));
   wDist = _mm_max_pd(wDist, _mm_setzero_pd());
+#endif
   // Square and sum
   wDist = _mm_mul_pd(wDist, wDist);
-  const auto wShuf = _mm_shuffle_pd(wDist, wDist, 1);
-  const auto wSums = _mm_add_pd(wDist, wShuf);
-  return _mm_cvtsd_f64(wSums);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE3
+  wDist = _mm_hadd_pd(wDist, wDist);
+#else
+  wDist = _mm_add_pd(wDist, _mm_shuffle_pd(wDist, wDist, 1));
+#endif
+  return _mm_cvtsd_f64(wDist);
 }
 
 template <>
@@ -540,7 +660,7 @@ inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint,
                                                const Box<uint32_t>& iBox) noexcept {
   return computeDistanceSquared(static_cast<Point<double>>(iPoint), static_cast<Box<double>>(iBox));
 }
-#endif  // defined(FLATBUSH_USE_SSE2)
+#endif  // defined(FLATBUSH_USE_SIMD)
 
 }  // namespace detail
 

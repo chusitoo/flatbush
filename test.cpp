@@ -533,16 +533,14 @@ void testOneMillionItems() {
 void quickSortImbalancedDataset() {
   std::cout << "quicksort should work with an imbalanced dataset" << std::endl;
 
-  static const auto linspace =
-      [](double wStart, double wStop, uint32_t wNum) {
-        const auto wDiv = wNum - 1;
-        const auto wStep = (wStop - wStart) / wDiv;
-        std::vector<double> wItems(wNum);
-        for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
-          wItems.at(wIndex) = wStart + wStep * static_cast<double>(wIndex);
-        }
-        return wItems;
-      };
+  static const auto linspace = [](double wStart, double wStop, uint32_t wNum) {
+    const auto wStep = (wStop - wStart) / (wNum - 1);
+    std::vector<double> wItems(wNum);
+    for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
+      wItems.at(wIndex) = wStart + wStep * static_cast<double>(wIndex);
+    }
+    return wItems;
+  };
 
   bool wIsThrown = false;
 
