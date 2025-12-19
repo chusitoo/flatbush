@@ -76,6 +76,9 @@ SOFTWARE.
 
 #if defined(FLATBUSH_USE_SIMD)
 #pragma message("Using SIMD intrinsics")
+#ifdef _MSC_VER
+#include <intrin.h>
+#endif
 #endif
 
 namespace flatbush {

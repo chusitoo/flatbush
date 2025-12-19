@@ -55,16 +55,16 @@ std::vector<size_t> calculateNumNodesPerLevel(uint32_t iNumItems, uint32_t iNode
 }
 
 template <typename ArrayType>
-int from(const uint8_t *iData, size_t iSize) {
+int from(const uint8_t* iData, size_t iSize) {
   if (iSize < flatbush::gHeaderByteSize) return 0;
   if (iData[0] != flatbush::gValidityFlag) return 0;
   if ((iData[1] >> 4) != flatbush::gVersion) return 0;
   if ((iData[1] & 0x0f) != flatbush::detail::arrayTypeIndex<ArrayType>()) return 0;
-  const auto wNodeSize = *flatbush::detail::bit_cast<uint16_t *>(&iData[2]);
+  const auto wNodeSize = *flatbush::detail::bit_cast<uint16_t*>(&iData[2]);
   if (wNodeSize < 2) return 0;
 
-  const auto wNumItems = *flatbush::detail::bit_cast<uint32_t *>(&iData[4]);
-  const auto &wLevelBounds = calculateNumNodesPerLevel(wNumItems, wNodeSize);
+  const auto wNumItems = *flatbush::detail::bit_cast<uint32_t*>(&iData[4]);
+  const auto& wLevelBounds = calculateNumNodesPerLevel(wNumItems, wNodeSize);
   const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
   const auto wIndicesByteSize =
       wNumNodes * ((wNumNodes > flatbush::gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
@@ -82,7 +82,7 @@ int from(const uint8_t *iData, size_t iSize) {
   return 0;
 }
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize) {
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* iData, size_t iSize) {
   from<int8_t>(iData, iSize);
   from<uint8_t>(iData, iSize);
   from<int16_t>(iData, iSize);
