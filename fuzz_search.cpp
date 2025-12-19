@@ -35,14 +35,14 @@ flatbush::Flatbush<double> createIndex() {
   return wIndex;
 }
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize) {
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* iData, size_t iSize) {
   static auto sIndex = createIndex();
 
   if (iSize == 32) {
-    const auto wMinX = *flatbush::detail::bit_cast<const double *>(&iData[0]);
-    const auto wMinY = *flatbush::detail::bit_cast<const double *>(&iData[8]);
-    const auto wMaxX = *flatbush::detail::bit_cast<const double *>(&iData[16]);
-    const auto wMaxY = *flatbush::detail::bit_cast<const double *>(&iData[24]);
+    const auto wMinX = *flatbush::detail::bit_cast<const double*>(&iData[0]);
+    const auto wMinY = *flatbush::detail::bit_cast<const double*>(&iData[8]);
+    const auto wMaxX = *flatbush::detail::bit_cast<const double*>(&iData[16]);
+    const auto wMaxY = *flatbush::detail::bit_cast<const double*>(&iData[24]);
 
     auto wResult = sIndex.search({wMinX, wMinY, wMaxX, wMaxY});
 

@@ -23,6 +23,7 @@ SOFTWARE.
 */
 
 #include <cassert>
+#include <iostream>
 
 #include "flatbush.h"
 
