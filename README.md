@@ -1,6 +1,7 @@
 # Flatbush for C++
 
 [![Ubuntu](https://github.com/chusitoo/flatbush/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/ubuntu.yml) [![Windows](https://github.com/chusitoo/flatbush/actions/workflows/windows.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/windows.yml) [![macOS](https://github.com/chusitoo/flatbush/actions/workflows/macos.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/macos.yml) [![CodeQL](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml)
+
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/chusitoo/flatbush)](https://github.com/chusitoo/flatbush/releases/latest) [![Conan Center](https://img.shields.io/conan/v/flatbush)](https://conan.io/center/recipes/flatbush) [![Vcpkg](https://img.shields.io/vcpkg/v/flatbush)](https://vcpkg.io/en/package/flatbush)
 
 A C++ adaptation of the great Flatbush JS library which implements a packed Hilbert R-tree algorithm.
@@ -85,6 +86,18 @@ auto other = FlatbushBuilder<double>::from(std::move(vector));
 This is a single header library with the aim to support C++11 and up.
 
 If the target compiler does not have support for C++20 features, namely the ```<span>``` header, a minimalistic implementation is available if **FLATBUSH_SPAN** flag is defined.
+
+### SIMD Optimizations
+The library automatically detects and uses SIMD instructions for improved performance. You can control the SIMD level with the following flags:
+
+| ISA Level | GCC/Clang | MSVC |
+|-----------|-----------|------|
+| **SSE2** (default on x64) | `-msse2` | `/arch:SSE2` |
+| **SSE3** | `-msse3` | N/A |
+| **SSE4** | `-msse4`  | N/A |
+| **AVX** | `-mavx` | `/arch:AVX` |
+| **AVX2** | `-mavx2` | `/arch:AVX2` |
+| **AVX512** | `-mavx512f -mavx512dq -mavx512vl` | `/arch:AVX512` |
 
 ### Unit tests
     

@@ -43,8 +43,9 @@ SOFTWARE.
 #define FLATBUSH_USE_AVX2 6
 #define FLATBUSH_USE_AVX 5
 #define FLATBUSH_USE_SSE4 4
-#define FLATBUSH_USE_SSE3 3
-#define FLATBUSH_USE_SSE2 2
+#define FLATBUSH_USE_SSSE3 3
+#define FLATBUSH_USE_SSE3 2
+#define FLATBUSH_USE_SSE2 1
 
 // SIMD intrinsics support detection
 #if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512VL__)
@@ -63,6 +64,10 @@ SOFTWARE.
 #define FLATBUSH_USE_SIMD FLATBUSH_USE_SSE4
 #include <smmintrin.h>
 #pragma message("Detected SSE4 support")
+#elif defined(__SSSE3__)
+#define FLATBUSH_USE_SIMD FLATBUSH_USE_SSSE3
+#include <tmmintrin.h>
+#pragma message("Detected SSSE3 support")
 #elif defined(__SSE3__)
 #define FLATBUSH_USE_SIMD FLATBUSH_USE_SSE3
 #include <pmmintrin.h>
@@ -85,9 +90,7 @@ namespace flatbush {
 
 #ifndef FLATBUSH_SPAN
 #include <span>
-namespace flatbush {
 using std::span;
-}
 #else
 template <typename Type>
 class span {
@@ -106,7 +109,6 @@ class span {
 };
 #endif  // FLATBUSH_SPAN
 
-constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = 1.34078e+154;  // std::sqrt(std::numeric_limits<double>::max())
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
@@ -157,31 +159,12 @@ To bit_cast(From const& from) {
   return to;
 }
 
-inline void Interleave(std::array<uint32_t, 2>& x) {
-#if defined(FLATBUSH_USE_SIMD) && FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
-  auto v = _mm_setr_epi32(static_cast<int32_t>(x[0]), static_cast<int32_t>(x[1]), 0, 0);
-
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 8));
-  v = _mm_and_si128(v, _mm_set1_epi32(0x00FF00FF));
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 4));
-  v = _mm_and_si128(v, _mm_set1_epi32(0x0F0F0F0F));
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 2));
-  v = _mm_and_si128(v, _mm_set1_epi32(0x33333333));
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 1));
-  v = _mm_and_si128(v, _mm_set1_epi32(0x55555555));
-
-  _mm_storeu_si64(&x[0], v);
-#else
-  x[0] = (x[0] | (x[0] << 8U)) & 0x00FF00FF;
-  x[0] = (x[0] | (x[0] << 4U)) & 0x0F0F0F0F;
-  x[0] = (x[0] | (x[0] << 2U)) & 0x33333333;
-  x[0] = (x[0] | (x[0] << 1U)) & 0x55555555;
-
-  x[1] = (x[1] | (x[1] << 8U)) & 0x00FF00FF;
-  x[1] = (x[1] | (x[1] << 4U)) & 0x0F0F0F0F;
-  x[1] = (x[1] | (x[1] << 2U)) & 0x33333333;
-  x[1] = (x[1] | (x[1] << 1U)) & 0x55555555;
-#endif
+inline uint32_t Interleave(uint32_t v) {
+  v = (v | (v << 8U)) & 0x00FF00FF;
+  v = (v | (v << 4U)) & 0x0F0F0F0F;
+  v = (v | (v << 2U)) & 0x33333333;
+  v = (v | (v << 1U)) & 0x55555555;
+  return v;
 }
 
 // From https://github.com/rawrunprotected/hilbert_curves (public domain)
@@ -227,11 +210,10 @@ inline uint32_t HilbertXYToIndex(uint32_t x, uint32_t y) {
   b = D ^ (D >> 1U);
 
   // Recover index bits
-  std::array<uint32_t, 2> i;
-  i[0] = x ^ y;
-  i[1] = b | (0xFFFF ^ (i[0] | a));
-  Interleave(i);
-  return (i[1] << 1U) | i[0];
+  const auto i0 = x ^ y;
+  const auto i1 = b | (0xFFFF ^ (i0 | a));
+
+  return (Interleave(i1) << 1U) | Interleave(i0);
 }
 
 // Template specialization for the supported array types
@@ -331,7 +313,9 @@ inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noex
 
 template <typename ArrayType>
 inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
-  return iValue < iMin ? iMin - iValue : std::max<double>(iValue - iMax, 0.0);
+  const double distMin = std::max(0.0, static_cast<double>(iMin - iValue));
+  const double distMax = std::max(0.0, static_cast<double>(iValue - iMax));
+  return distMin + distMax;
 }
 
 template <typename ArrayType>
@@ -343,10 +327,284 @@ inline double computeDistanceSquared(const Point<ArrayType>& iPoint,
 }
 
 #if defined(FLATBUSH_USE_SIMD)
+static const auto kZeroPd = _mm_setzero_pd();
+static const auto kZeroPs = _mm_setzero_ps();
+static const auto kOffset8 = _mm_set1_epi8(std::numeric_limits<int8_t>::min());
+static const auto kOffset16 = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
+static const auto kOffset32 = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
+static const auto kShuffleMin =
+    _mm_setr_epi8(0, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+static const auto kShuffleMax =
+    _mm_setr_epi8(2, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
+static const auto kMask128Interleave1 = _mm_set1_epi32(0x00FF00FF);
+static const auto kMask128Interleave2 = _mm_set1_epi32(0x0F0F0F0F);
+static const auto kMask128Interleave3 = _mm_set1_epi32(0x33333333);
+static const auto kMask128Interleave4 = _mm_set1_epi32(0x55555555);
+static const auto kMask128AllOnes = _mm_set1_epi32(0xFFFF);
+
+inline __m128i Interleave(__m128i v) {
+  v = _mm_or_si128(v, _mm_slli_epi32(v, 8));
+  v = _mm_and_si128(v, kMask128Interleave1);
+  v = _mm_or_si128(v, _mm_slli_epi32(v, 4));
+  v = _mm_and_si128(v, kMask128Interleave2);
+  v = _mm_or_si128(v, _mm_slli_epi32(v, 2));
+  v = _mm_and_si128(v, kMask128Interleave3);
+  v = _mm_or_si128(v, _mm_slli_epi32(v, 1));
+  v = _mm_and_si128(v, kMask128Interleave4);
+  return v;
+}
+
+inline __m128i HilbertXYToIndex(__m128i x, __m128i y) {
+  // Initial prefix scan round
+  auto a = _mm_xor_si128(x, y);
+  auto b = _mm_xor_si128(kMask128AllOnes, a);
+  auto c = _mm_xor_si128(kMask128AllOnes, _mm_or_si128(x, y));
+  auto d = _mm_and_si128(x, _mm_xor_si128(y, kMask128AllOnes));
+  auto A = _mm_or_si128(a, _mm_srli_epi32(b, 1));
+  auto B = _mm_xor_si128(_mm_srli_epi32(a, 1), a);
+  auto C =
+      _mm_xor_si128(_mm_xor_si128(_mm_srli_epi32(c, 1), _mm_and_si128(b, _mm_srli_epi32(d, 1))), c);
+  auto D =
+      _mm_xor_si128(_mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 1)), _mm_srli_epi32(d, 1)), d);
+
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  A = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(a, 2)), _mm_and_si128(b, _mm_srli_epi32(b, 2)));
+  B = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(b, 2)),
+                    _mm_and_si128(b, _mm_srli_epi32(_mm_xor_si128(a, b), 2)));
+  C = _mm_xor_si128(C,
+                    _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 2)),
+                                  _mm_and_si128(b, _mm_srli_epi32(d, 2))));
+  D = _mm_xor_si128(D,
+                    _mm_xor_si128(_mm_and_si128(b, _mm_srli_epi32(c, 2)),
+                                  _mm_and_si128(_mm_xor_si128(a, b), _mm_srli_epi32(d, 2))));
+
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  A = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(a, 4)), _mm_and_si128(b, _mm_srli_epi32(b, 4)));
+  B = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(b, 4)),
+                    _mm_and_si128(b, _mm_srli_epi32(_mm_xor_si128(a, b), 4)));
+  C = _mm_xor_si128(C,
+                    _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 4)),
+                                  _mm_and_si128(b, _mm_srli_epi32(d, 4))));
+  D = _mm_xor_si128(D,
+                    _mm_xor_si128(_mm_and_si128(b, _mm_srli_epi32(c, 4)),
+                                  _mm_and_si128(_mm_xor_si128(a, b), _mm_srli_epi32(d, 4))));
+
+  // Final round
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  C = _mm_xor_si128(C,
+                    _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 8)),
+                                  _mm_and_si128(b, _mm_srli_epi32(d, 8))));
+  D = _mm_xor_si128(D,
+                    _mm_xor_si128(_mm_and_si128(b, _mm_srli_epi32(c, 8)),
+                                  _mm_and_si128(_mm_xor_si128(a, b), _mm_srli_epi32(d, 8))));
+
+  // Undo transformation
+  a = _mm_xor_si128(C, _mm_srli_epi32(C, 1));
+  b = _mm_xor_si128(D, _mm_srli_epi32(D, 1));
+
+  // Recover index bits and interleave
+  const auto i0 = _mm_xor_si128(x, y);
+  const auto i1 = _mm_or_si128(b, _mm_xor_si128(kMask128AllOnes, _mm_or_si128(i0, a)));
+
+  return _mm_or_si128(_mm_slli_epi32(Interleave(i1), 1), Interleave(i0));
+}
+#endif
+
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+static const auto kMask256Interleave1 = _mm256_set1_epi32(0x00FF00FF);
+static const auto kMask256Interleave2 = _mm256_set1_epi32(0x0F0F0F0F);
+static const auto kMask256Interleave3 = _mm256_set1_epi32(0x33333333);
+static const auto kMask256Interleave4 = _mm256_set1_epi32(0x55555555);
+static const auto kMask256AllOnes = _mm256_set1_epi32(0xFFFF);
+
+inline __m256i Interleave(__m256i v) {
+  v = _mm256_or_si256(v, _mm256_slli_epi32(v, 8));
+  v = _mm256_and_si256(v, kMask256Interleave1);
+  v = _mm256_or_si256(v, _mm256_slli_epi32(v, 4));
+  v = _mm256_and_si256(v, kMask256Interleave2);
+  v = _mm256_or_si256(v, _mm256_slli_epi32(v, 2));
+  v = _mm256_and_si256(v, kMask256Interleave3);
+  v = _mm256_or_si256(v, _mm256_slli_epi32(v, 1));
+  v = _mm256_and_si256(v, kMask256Interleave4);
+  return v;
+}
+
+inline __m256i HilbertXYToIndex(__m256i x, __m256i y) {
+  // Initial prefix scan round
+  auto a = _mm256_xor_si256(x, y);
+  auto b = _mm256_xor_si256(kMask256AllOnes, a);
+  auto c = _mm256_xor_si256(kMask256AllOnes, _mm256_or_si256(x, y));
+  auto d = _mm256_and_si256(x, _mm256_xor_si256(y, kMask256AllOnes));
+  auto A = _mm256_or_si256(a, _mm256_srli_epi32(b, 1));
+  auto B = _mm256_xor_si256(_mm256_srli_epi32(a, 1), a);
+  auto C = _mm256_xor_si256(
+      _mm256_xor_si256(_mm256_srli_epi32(c, 1), _mm256_and_si256(b, _mm256_srli_epi32(d, 1))), c);
+  auto D = _mm256_xor_si256(
+      _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(c, 1)), _mm256_srli_epi32(d, 1)), d);
+
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  A = _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(a, 2)),
+                       _mm256_and_si256(b, _mm256_srli_epi32(b, 2)));
+  B = _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(b, 2)),
+                       _mm256_and_si256(b, _mm256_srli_epi32(_mm256_xor_si256(a, b), 2)));
+  C = _mm256_xor_si256(C,
+                       _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(c, 2)),
+                                        _mm256_and_si256(b, _mm256_srli_epi32(d, 2))));
+  D = _mm256_xor_si256(
+      D,
+      _mm256_xor_si256(_mm256_and_si256(b, _mm256_srli_epi32(c, 2)),
+                       _mm256_and_si256(_mm256_xor_si256(a, b), _mm256_srli_epi32(d, 2))));
+
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  A = _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(a, 4)),
+                       _mm256_and_si256(b, _mm256_srli_epi32(b, 4)));
+  B = _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(b, 4)),
+                       _mm256_and_si256(b, _mm256_srli_epi32(_mm256_xor_si256(a, b), 4)));
+  C = _mm256_xor_si256(C,
+                       _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(c, 4)),
+                                        _mm256_and_si256(b, _mm256_srli_epi32(d, 4))));
+  D = _mm256_xor_si256(
+      D,
+      _mm256_xor_si256(_mm256_and_si256(b, _mm256_srli_epi32(c, 4)),
+                       _mm256_and_si256(_mm256_xor_si256(a, b), _mm256_srli_epi32(d, 4))));
+
+  // Final round
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  C = _mm256_xor_si256(C,
+                       _mm256_xor_si256(_mm256_and_si256(a, _mm256_srli_epi32(c, 8)),
+                                        _mm256_and_si256(b, _mm256_srli_epi32(d, 8))));
+  D = _mm256_xor_si256(
+      D,
+      _mm256_xor_si256(_mm256_and_si256(b, _mm256_srli_epi32(c, 8)),
+                       _mm256_and_si256(_mm256_xor_si256(a, b), _mm256_srli_epi32(d, 8))));
+
+  // Undo transformation
+  a = _mm256_xor_si256(C, _mm256_srli_epi32(C, 1));
+  b = _mm256_xor_si256(D, _mm256_srli_epi32(D, 1));
+
+  // Recover index bits and interleave
+  const auto i0 = _mm256_xor_si256(x, y);
+  const auto i1 = _mm256_or_si256(b, _mm256_xor_si256(kMask256AllOnes, _mm256_or_si256(i0, a)));
+
+  return _mm256_or_si256(_mm256_slli_epi32(Interleave(i1), 1), Interleave(i0));
+}
+#endif
+
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+static const auto kMask512Interleave1 = _mm512_set1_epi32(0x00FF00FF);
+static const auto kMask512Interleave2 = _mm512_set1_epi32(0x0F0F0F0F);
+static const auto kMask512Interleave3 = _mm512_set1_epi32(0x33333333);
+static const auto kMask512Interleave4 = _mm512_set1_epi32(0x55555555);
+static const auto kMask512AllOnes = _mm512_set1_epi32(0xFFFF);
+
+inline __m512i Interleave(__m512i v) {
+  v = _mm512_or_si512(v, _mm512_slli_epi32(v, 8));
+  v = _mm512_and_si512(v, kMask512Interleave1);
+  v = _mm512_or_si512(v, _mm512_slli_epi32(v, 4));
+  v = _mm512_and_si512(v, kMask512Interleave2);
+  v = _mm512_or_si512(v, _mm512_slli_epi32(v, 2));
+  v = _mm512_and_si512(v, kMask512Interleave3);
+  v = _mm512_or_si512(v, _mm512_slli_epi32(v, 1));
+  v = _mm512_and_si512(v, kMask512Interleave4);
+  return v;
+}
+
+inline __m512i HilbertXYToIndex(__m512i x, __m512i y) {
+  // Initial prefix scan round
+  auto a = _mm512_xor_si512(x, y);
+  auto b = _mm512_xor_si512(kMask512AllOnes, a);
+  auto c = _mm512_xor_si512(kMask512AllOnes, _mm512_or_si512(x, y));
+  auto d = _mm512_and_si512(x, _mm512_xor_si512(y, kMask512AllOnes));
+  auto A = _mm512_or_si512(a, _mm512_srli_epi32(b, 1));
+  auto B = _mm512_xor_si512(_mm512_srli_epi32(a, 1), a);
+  auto C = _mm512_xor_si512(
+      _mm512_xor_si512(_mm512_srli_epi32(c, 1), _mm512_and_si512(b, _mm512_srli_epi32(d, 1))), c);
+  auto D = _mm512_xor_si512(
+      _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(c, 1)), _mm512_srli_epi32(d, 1)), d);
+
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  A = _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(a, 2)),
+                       _mm512_and_si512(b, _mm512_srli_epi32(b, 2)));
+  B = _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(b, 2)),
+                       _mm512_and_si512(b, _mm512_srli_epi32(_mm512_xor_si512(a, b), 2)));
+  C = _mm512_xor_si512(C,
+                       _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(c, 2)),
+                                        _mm512_and_si512(b, _mm512_srli_epi32(d, 2))));
+  D = _mm512_xor_si512(
+      D,
+      _mm512_xor_si512(_mm512_and_si512(b, _mm512_srli_epi32(c, 2)),
+                       _mm512_and_si512(_mm512_xor_si512(a, b), _mm512_srli_epi32(d, 2))));
+
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  A = _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(a, 4)),
+                       _mm512_and_si512(b, _mm512_srli_epi32(b, 4)));
+  B = _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(b, 4)),
+                       _mm512_and_si512(b, _mm512_srli_epi32(_mm512_xor_si512(a, b), 4)));
+  C = _mm512_xor_si512(C,
+                       _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(c, 4)),
+                                        _mm512_and_si512(b, _mm512_srli_epi32(d, 4))));
+  D = _mm512_xor_si512(
+      D,
+      _mm512_xor_si512(_mm512_and_si512(b, _mm512_srli_epi32(c, 4)),
+                       _mm512_and_si512(_mm512_xor_si512(a, b), _mm512_srli_epi32(d, 4))));
+
+  // Final round
+  a = A;
+  b = B;
+  c = C;
+  d = D;
+  C = _mm512_xor_si512(C,
+                       _mm512_xor_si512(_mm512_and_si512(a, _mm512_srli_epi32(c, 8)),
+                                        _mm512_and_si512(b, _mm512_srli_epi32(d, 8))));
+  D = _mm512_xor_si512(
+      D,
+      _mm512_xor_si512(_mm512_and_si512(b, _mm512_srli_epi32(c, 8)),
+                       _mm512_and_si512(_mm512_xor_si512(a, b), _mm512_srli_epi32(d, 8))));
+
+  // Undo transformation
+  a = _mm512_xor_si512(C, _mm512_srli_epi32(C, 1));
+  b = _mm512_xor_si512(D, _mm512_srli_epi32(D, 1));
+
+  // Recover index bits and interleave
+  const auto i0 = _mm512_xor_si512(x, y);
+  const auto i1 = _mm512_or_si512(b, _mm512_xor_si512(kMask512AllOnes, _mm512_or_si512(i0, a)));
+
+  return _mm512_or_si512(_mm512_slli_epi32(Interleave(i1), 1), Interleave(i0));
+}
+#endif
+
 template <>
 inline bool boxesIntersect<float>(const Box<float>& iQuery, const Box<float>& iBox) noexcept {
-  const auto wMax = _mm_set_ps(iBox.mMaxY, iBox.mMaxX, iQuery.mMaxY, iQuery.mMaxX);
-  const auto wMin = _mm_set_ps(iQuery.mMinY, iQuery.mMinX, iBox.mMinY, iBox.mMinX);
+  const auto wQuery = _mm_loadu_ps(&iQuery.mMinX);
+  const auto wBox = _mm_loadu_ps(&iBox.mMinX);
+  const auto wMin = _mm_unpacklo_ps(wQuery, wBox);
+  const auto wMax = _mm_unpackhi_ps(wBox, wQuery);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
   return _mm_cmp_ps_mask(wMax, wMin, _CMP_LT_OQ) == 0;
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
@@ -369,23 +627,31 @@ inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>&
   return _mm256_testz_pd(wCmp, wCmp);
 #endif
 #else  // if FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX
-  const auto wQueryMax = _mm_set_pd(iQuery.mMaxY, iQuery.mMaxX);
-  const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
+  const auto wQueryMax = _mm_loadu_pd(&iQuery.mMaxX);
+  const auto wBoxMin = _mm_loadu_pd(&iBox.mMinX);
   const auto wCmp1 = _mm_cmplt_pd(wQueryMax, wBoxMin);
-  const auto wQueryMin = _mm_set_pd(iQuery.mMinY, iQuery.mMinX);
-  const auto wBoxMax = _mm_set_pd(iBox.mMaxY, iBox.mMaxX);
+  const auto wQueryMin = _mm_loadu_pd(&iQuery.mMinX);
+  const auto wBoxMax = _mm_loadu_pd(&iBox.mMaxX);
   const auto wCmp2 = _mm_cmpgt_pd(wQueryMin, wBoxMax);
-  const auto wCombined = _mm_or_pd(wCmp1, wCmp2);
-  return _mm_movemask_pd(wCombined) == 0;
+  return _mm_movemask_pd(_mm_or_pd(wCmp1, wCmp2)) == 0;
 #endif
 }
 
 template <>
 inline bool boxesIntersect<int8_t>(const Box<int8_t>& iQuery, const Box<int8_t>& iBox) noexcept {
-  const auto wMax = _mm_setr_epi8(
-      iQuery.mMaxX, iQuery.mMaxY, iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-  const auto wMin = _mm_setr_epi8(
-      iBox.mMinX, iBox.mMinY, iQuery.mMinX, iQuery.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+  const auto wQuery = _mm_loadu_si32(&iQuery.mMinX);
+  const auto wBox = _mm_loadu_si32(&iBox.mMinX);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSSE3
+  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi8(wQuery, kShuffleMin),
+                                       _mm_shuffle_epi8(wBox, kShuffleMin));
+  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi8(wBox, kShuffleMax),
+                                       _mm_shuffle_epi8(wQuery, kShuffleMax));
+#else
+  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
+                                      _mm_shufflelo_epi16(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
+  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
+                                      _mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+#endif
   const auto wCmp = _mm_cmplt_epi8(wMax, wMin);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
@@ -396,14 +662,20 @@ inline bool boxesIntersect<int8_t>(const Box<int8_t>& iQuery, const Box<int8_t>&
 
 template <>
 inline bool boxesIntersect<uint8_t>(const Box<uint8_t>& iQuery, const Box<uint8_t>& iBox) noexcept {
-  const auto wBox1 = static_cast<Box<int8_t>>(iQuery);
-  const auto wBox2 = static_cast<Box<int8_t>>(iBox);
-  const auto wOffset = _mm_set1_epi8(std::numeric_limits<int8_t>::min());
-  const auto wMax = _mm_setr_epi8(
-      wBox1.mMaxX, wBox1.mMaxY, wBox2.mMaxX, wBox2.mMaxY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-  const auto wMin = _mm_setr_epi8(
-      wBox2.mMinX, wBox2.mMinY, wBox1.mMinX, wBox1.mMinY, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-  const auto wCmp = _mm_cmplt_epi8(_mm_add_epi8(wMax, wOffset), _mm_add_epi8(wMin, wOffset));
+  const auto wQuery = _mm_loadu_si32(&iQuery.mMinX);
+  const auto wBox = _mm_loadu_si32(&iBox.mMinX);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSSE3
+  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi8(wQuery, kShuffleMin),
+                                       _mm_shuffle_epi8(wBox, kShuffleMin));
+  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi8(wBox, kShuffleMax),
+                                       _mm_shuffle_epi8(wQuery, kShuffleMax));
+#else
+  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
+                                      _mm_shufflelo_epi16(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
+  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
+                                      _mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+#endif
+  const auto wCmp = _mm_cmplt_epi8(_mm_add_epi8(wMax, kOffset8), _mm_add_epi8(wMin, kOffset8));
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
 #else
@@ -413,8 +685,12 @@ inline bool boxesIntersect<uint8_t>(const Box<uint8_t>& iQuery, const Box<uint8_
 
 template <>
 inline bool boxesIntersect<int16_t>(const Box<int16_t>& iQuery, const Box<int16_t>& iBox) noexcept {
-  const auto wMax = _mm_setr_epi16(iQuery.mMaxX, iQuery.mMaxY, iBox.mMaxX, iBox.mMaxY, 0, 0, 0, 0);
-  const auto wMin = _mm_setr_epi16(iBox.mMinX, iBox.mMinY, iQuery.mMinX, iQuery.mMinY, 0, 0, 0, 0);
+  const auto wQuery = _mm_loadu_si64(&iQuery.mMinX);
+  const auto wBox = _mm_loadu_si64(&iBox.mMinX);
+  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
+                                       _mm_shuffle_epi32(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
+  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
+                                       _mm_shuffle_epi32(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
   const auto wCmp = _mm_cmplt_epi16(wMax, wMin);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
@@ -426,12 +702,13 @@ inline bool boxesIntersect<int16_t>(const Box<int16_t>& iQuery, const Box<int16_
 template <>
 inline bool boxesIntersect<uint16_t>(const Box<uint16_t>& iQuery,
                                      const Box<uint16_t>& iBox) noexcept {
-  const auto wBox1 = static_cast<Box<int16_t>>(iQuery);
-  const auto wBox2 = static_cast<Box<int16_t>>(iBox);
-  const auto wOffset = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
-  const auto wMax = _mm_setr_epi16(wBox1.mMaxX, wBox1.mMaxY, wBox2.mMaxX, wBox2.mMaxY, 0, 0, 0, 0);
-  const auto wMin = _mm_setr_epi16(wBox2.mMinX, wBox2.mMinY, wBox1.mMinX, wBox1.mMinY, 0, 0, 0, 0);
-  const auto wCmp = _mm_cmplt_epi16(_mm_add_epi16(wMax, wOffset), _mm_add_epi16(wMin, wOffset));
+  const auto wQuery = _mm_loadu_si64(&iQuery.mMinX);
+  const auto wBox = _mm_loadu_si64(&iBox.mMinX);
+  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
+                                       _mm_shuffle_epi32(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
+  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
+                                       _mm_shuffle_epi32(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+  const auto wCmp = _mm_cmplt_epi16(_mm_add_epi16(wMax, kOffset16), _mm_add_epi16(wMin, kOffset16));
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
 #else
@@ -441,8 +718,10 @@ inline bool boxesIntersect<uint16_t>(const Box<uint16_t>& iQuery,
 
 template <>
 inline bool boxesIntersect<int32_t>(const Box<int32_t>& iQuery, const Box<int32_t>& iBox) noexcept {
-  const auto wMax = _mm_setr_epi32(iQuery.mMaxX, iQuery.mMaxY, iBox.mMaxX, iBox.mMaxY);
-  const auto wMin = _mm_setr_epi32(iBox.mMinX, iBox.mMinY, iQuery.mMinX, iQuery.mMinY);
+  const auto wQuery = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iQuery.mMinX));
+  const auto wBox = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iBox.mMinX));
+  const auto wMin = _mm_unpacklo_epi32(wQuery, wBox);
+  const auto wMax = _mm_unpackhi_epi32(wBox, wQuery);
   const auto wCmp = _mm_cmplt_epi32(wMax, wMin);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
@@ -454,12 +733,11 @@ inline bool boxesIntersect<int32_t>(const Box<int32_t>& iQuery, const Box<int32_
 template <>
 inline bool boxesIntersect<uint32_t>(const Box<uint32_t>& iQuery,
                                      const Box<uint32_t>& iBox) noexcept {
-  const auto wBox1 = static_cast<Box<int32_t>>(iQuery);
-  const auto wBox2 = static_cast<Box<int32_t>>(iBox);
-  const auto wOffset = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
-  const auto wMax = _mm_setr_epi32(wBox1.mMaxX, wBox1.mMaxY, wBox2.mMaxX, wBox2.mMaxY);
-  const auto wMin = _mm_setr_epi32(wBox2.mMinX, wBox2.mMinY, wBox1.mMinX, wBox1.mMinY);
-  const auto wCmp = _mm_cmplt_epi32(_mm_add_epi32(wMax, wOffset), _mm_add_epi32(wMin, wOffset));
+  const auto wQuery = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iQuery.mMinX));
+  const auto wBox = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iBox.mMinX));
+  const auto wMin = _mm_unpacklo_epi32(wQuery, wBox);
+  const auto wMax = _mm_unpackhi_epi32(wBox, wQuery);
+  const auto wCmp = _mm_cmplt_epi32(_mm_add_epi32(wMax, kOffset32), _mm_add_epi32(wMin, kOffset32));
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
 #else
@@ -473,9 +751,7 @@ inline void updateBounds<float>(Box<float>& ioSrc, const Box<float>& iBox) noexc
   const auto wNew = _mm_loadu_ps(&iBox.mMinX);
   const auto wMins = _mm_min_ps(wCur, wNew);
   const auto wMaxs = _mm_max_ps(wCur, wNew);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  _mm_storeu_ps(&ioSrc.mMinX, _mm_mask_blend_ps(0xC, wMins, wMaxs));
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   _mm_storeu_ps(&ioSrc.mMinX, _mm_blend_ps(wMins, wMaxs, 0xC));
 #else
   _mm_storeu_ps(&ioSrc.mMinX, _mm_shuffle_ps(wMins, wMaxs, _MM_SHUFFLE(1, 0, 1, 0)));
@@ -489,18 +765,10 @@ inline void updateBounds<double>(Box<double>& ioSrc, const Box<double>& iBox) no
   const auto wNew = _mm256_loadu_pd(&iBox.mMinX);
   const auto wMins = _mm256_min_pd(wCur, wNew);
   const auto wMaxs = _mm256_max_pd(wCur, wNew);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  _mm256_storeu_pd(&ioSrc.mMinX, _mm256_mask_blend_pd(0xC, wMins, wMaxs));
-#else  // if FLATBUSH_USE_SIMD == FLATBUSH_USE_AVX
   _mm256_storeu_pd(&ioSrc.mMinX, _mm256_blend_pd(wMins, wMaxs, 0xC));
-#endif
-#else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX
-  const auto wCurMin = _mm_loadu_pd(&ioSrc.mMinX);
-  const auto wNewMin = _mm_loadu_pd(&iBox.mMinX);
-  _mm_storeu_pd(&ioSrc.mMinX, _mm_min_pd(wCurMin, wNewMin));
-  const auto wCurMax = _mm_loadu_pd(&ioSrc.mMaxX);
-  const auto wNewMax = _mm_loadu_pd(&iBox.mMaxX);
-  _mm_storeu_pd(&ioSrc.mMaxX, _mm_max_pd(wCurMax, wNewMax));
+#else
+  _mm_storeu_pd(&ioSrc.mMinX, _mm_min_pd(_mm_loadu_pd(&ioSrc.mMinX), _mm_loadu_pd(&iBox.mMinX)));
+  _mm_storeu_pd(&ioSrc.mMaxX, _mm_max_pd(_mm_loadu_pd(&ioSrc.mMaxX), _mm_loadu_pd(&iBox.mMaxX)));
 #endif
 }
 
@@ -546,11 +814,10 @@ inline void updateBounds<uint16_t>(Box<uint16_t>& ioSrc, const Box<uint16_t>& iB
   const auto wMins = _mm_min_epu16(wCur, wNew);
   const auto wMaxs = _mm_max_epu16(wCur, wNew);
 #else
-  const auto wOffset = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
-  const auto wMins = _mm_sub_epi16(
-      _mm_min_epi16(_mm_add_epi16(wCur, wOffset), _mm_add_epi16(wNew, wOffset)), wOffset);
-  const auto wMaxs = _mm_sub_epi16(
-      _mm_max_epi16(_mm_add_epi16(wCur, wOffset), _mm_add_epi16(wNew, wOffset)), wOffset);
+  const auto wCurOff = _mm_add_epi16(wCur, kOffset16);
+  const auto wNewOff = _mm_add_epi16(wNew, kOffset16);
+  const auto wMins = _mm_sub_epi16(_mm_min_epi16(wCurOff, wNewOff), kOffset16);
+  const auto wMaxs = _mm_sub_epi16(_mm_max_epi16(wCurOff, wNewOff), kOffset16);
 #endif
   _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, wMaxs));
 }
@@ -581,15 +848,14 @@ inline void updateBounds<uint32_t>(Box<uint32_t>& ioSrc, const Box<uint32_t>& iB
   const auto wMins = _mm_min_epu32(wCur, wNew);
   const auto wMaxs = _mm_max_epu32(wCur, wNew);
 #else
-  const auto wOffset = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
-  const auto wCurOff = _mm_add_epi32(wCur, wOffset);
-  const auto wNewOff = _mm_add_epi32(wNew, wOffset);
+  const auto wCurOff = _mm_add_epi32(wCur, kOffset32);
+  const auto wNewOff = _mm_add_epi32(wNew, kOffset32);
   const auto wCmpMin = _mm_cmplt_epi32(wCurOff, wNewOff);
   const auto wCmpMax = _mm_cmpgt_epi32(wCurOff, wNewOff);
   const auto wMins = _mm_sub_epi32(
-      _mm_or_si128(_mm_and_si128(wCmpMin, wCurOff), _mm_andnot_si128(wCmpMin, wNewOff)), wOffset);
+      _mm_or_si128(_mm_and_si128(wCmpMin, wCurOff), _mm_andnot_si128(wCmpMin, wNewOff)), kOffset32);
   const auto wMaxs = _mm_sub_epi32(
-      _mm_or_si128(_mm_and_si128(wCmpMax, wCurOff), _mm_andnot_si128(wCmpMax, wNewOff)), wOffset);
+      _mm_or_si128(_mm_and_si128(wCmpMax, wCurOff), _mm_andnot_si128(wCmpMax, wNewOff)), kOffset32);
 #endif
   _mm_storeu_si128(detail::bit_cast<__m128i*>(&ioSrc.mMinX), _mm_unpacklo_epi64(wMins, wMaxs));
 }
@@ -597,22 +863,25 @@ inline void updateBounds<uint32_t>(Box<uint32_t>& ioSrc, const Box<uint32_t>& iB
 template <>
 inline double computeDistanceSquared<double>(const Point<double>& iPoint,
                                              const Box<double>& iBox) noexcept {
-  const auto wPoint = _mm_set_pd(iPoint.mY, iPoint.mX);
-  const auto wBoxMin = _mm_set_pd(iBox.mMinY, iBox.mMinX);
-  const auto wBoxMax = _mm_set_pd(iBox.mMaxY, iBox.mMaxX);
-  // Compute axis distances - using max to clamp is more efficient than conditional blending
-  const auto wDistMin = _mm_max_pd(_mm_sub_pd(wBoxMin, wPoint), _mm_setzero_pd());
-  const auto wDistMax = _mm_max_pd(_mm_sub_pd(wPoint, wBoxMax), _mm_setzero_pd());
+  const auto wPoint = _mm_loadu_pd(&iPoint.mX);
+  const auto wBoxMin = _mm_loadu_pd(&iBox.mMinX);
+  const auto wBoxMax = _mm_loadu_pd(&iBox.mMaxX);
+  // Compute axis distances - using max to clamp
+  const auto wDistMin = _mm_max_pd(kZeroPd, _mm_sub_pd(wBoxMin, wPoint));
+  const auto wDistMax = _mm_max_pd(kZeroPd, _mm_sub_pd(wPoint, wBoxMax));
   // Combine distances (only one will be non-zero per axis)
   const auto wDist = _mm_add_pd(wDistMin, wDistMax);
   // Square and sum
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+  const auto wResult = _mm_dp_pd(wDist, wDist, 0x31);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE3
   const auto wDistSq = _mm_mul_pd(wDist, wDist);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE3
-  const auto wSum = _mm_hadd_pd(wDistSq, wDistSq);
+  const auto wResult = _mm_hadd_pd(wDistSq, wDistSq);
 #else
-  const auto wSum = _mm_add_pd(wDistSq, _mm_unpackhi_pd(wDistSq, wDistSq));
+  const auto wDistSq = _mm_mul_pd(wDist, wDist);
+  const auto wResult = _mm_add_pd(wDistSq, _mm_unpackhi_pd(wDistSq, wDistSq));
 #endif
-  return _mm_cvtsd_f64(wSum);
+  return _mm_cvtsd_f64(wResult);
 }
 
 template <>
@@ -661,218 +930,113 @@ inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint,
 template <class ArrayType>
 std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
                                            const Box<ArrayType>& iBounds,
-                                           const Box<ArrayType>* const iBoxes) {
-  static constexpr auto wHalfScale = 0.5f;
-  const auto wMinX = static_cast<float>(iBounds.mMinX);
-  const auto wMinY = static_cast<float>(iBounds.mMinY);
-  const auto wHilbertWidth = static_cast<float>(gMaxHilbert / (iBounds.mMaxX - iBounds.mMinX));
-  const auto wHilbertHeight = static_cast<float>(gMaxHilbert / (iBounds.mMaxY - iBounds.mMinY));
+                                           span<Box<ArrayType>> iBoxes) {
+  static constexpr auto gMaxHilbertRatio = 0.5f * std::numeric_limits<uint16_t>::max();
+  const auto wHilbertWidth = gMaxHilbertRatio / static_cast<float>(iBounds.mMaxX - iBounds.mMinX);
+  const auto wHilbertHeight = gMaxHilbertRatio / static_cast<float>(iBounds.mMaxY - iBounds.mMinY);
+  const auto wDoubleMinX = static_cast<float>(iBounds.mMinX + iBounds.mMinX);
+  const auto wDoubleMinY = static_cast<float>(iBounds.mMinY + iBounds.mMinY);
 
-  auto wIdx = 0UL;
+  auto wStride = 0UL;
   auto wHilbertValues = std::vector<uint32_t>(iNumItems);
 
 #if defined(FLATBUSH_USE_SIMD)
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  const auto wBoundsMin512 = _mm512_setr_ps(wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY,
-                                            wMinX,
-                                            wMinY);
-  const auto wScale512 = _mm512_setr_ps(wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight);
-  const auto wHalf512 = _mm512_set1_ps(wHalfScale);
+  alignas(64) std::array<float, 16> wMinXs512, wMinYs512, wMaxXs512, wMaxYs512;
+  const auto wDoubleMinX512 = _mm512_set1_ps(wDoubleMinX);
+  const auto wDoubleMinY512 = _mm512_set1_ps(wDoubleMinY);
+  const auto wHilbertWidth512 = _mm512_set1_ps(wHilbertWidth);
+  const auto wHilbertHeight512 = _mm512_set1_ps(wHilbertHeight);
 
-  for (auto wIdx1 = wIdx + 1,
-            wIdx2 = wIdx + 2,
-            wIdx3 = wIdx + 3,
-            wIdx4 = wIdx + 4,
-            wIdx5 = wIdx + 5,
-            wIdx6 = wIdx + 6,
-            wIdx7 = wIdx + 7;
-       wIdx7 < iNumItems;
-       wIdx += 8,
-            wIdx1 += 8,
-            wIdx2 += 8,
-            wIdx3 += 8,
-            wIdx4 += 8,
-            wIdx5 += 8,
-            wIdx6 += 8,
-            wIdx7 += 8) {
-    const auto wBox0 = static_cast<Box<float>>(iBoxes[wIdx]);
-    const auto wBox1 = static_cast<Box<float>>(iBoxes[wIdx1]);
-    const auto wBox2 = static_cast<Box<float>>(iBoxes[wIdx2]);
-    const auto wBox3 = static_cast<Box<float>>(iBoxes[wIdx3]);
-    const auto wBox4 = static_cast<Box<float>>(iBoxes[wIdx4]);
-    const auto wBox5 = static_cast<Box<float>>(iBoxes[wIdx5]);
-    const auto wBox6 = static_cast<Box<float>>(iBoxes[wIdx6]);
-    const auto wBox7 = static_cast<Box<float>>(iBoxes[wIdx7]);
+  for (; wStride + 15 < iNumItems; wStride += 16) {
+    for (auto wStep = 0UL; wStep < 16UL; ++wStep) {
+      wMinXs512[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMinX);
+      wMinYs512[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMinY);
+      wMaxXs512[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMaxX);
+      wMaxYs512[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMaxY);
+    }
 
-    const auto wBoxMin = _mm512_setr_ps(wBox0.mMinX,
-                                        wBox0.mMinY,
-                                        wBox1.mMinX,
-                                        wBox1.mMinY,
-                                        wBox2.mMinX,
-                                        wBox2.mMinY,
-                                        wBox3.mMinX,
-                                        wBox3.mMinY,
-                                        wBox4.mMinX,
-                                        wBox4.mMinY,
-                                        wBox5.mMinX,
-                                        wBox5.mMinY,
-                                        wBox6.mMinX,
-                                        wBox6.mMinY,
-                                        wBox7.mMinX,
-                                        wBox7.mMinY);
-    const auto wBoxMax = _mm512_setr_ps(wBox0.mMaxX,
-                                        wBox0.mMaxY,
-                                        wBox1.mMaxX,
-                                        wBox1.mMaxY,
-                                        wBox2.mMaxX,
-                                        wBox2.mMaxY,
-                                        wBox3.mMaxX,
-                                        wBox3.mMaxY,
-                                        wBox4.mMaxX,
-                                        wBox4.mMaxY,
-                                        wBox5.mMaxX,
-                                        wBox5.mMaxY,
-                                        wBox6.mMaxX,
-                                        wBox6.mMaxY,
-                                        wBox7.mMaxX,
-                                        wBox7.mMaxY);
+    const auto wMinX = _mm512_load_ps(wMinXs512.data());
+    const auto wMinY = _mm512_load_ps(wMinYs512.data());
+    const auto wMaxX = _mm512_load_ps(wMaxXs512.data());
+    const auto wMaxY = _mm512_load_ps(wMaxYs512.data());
+    const auto wSumX = _mm512_add_ps(wMinX, wMaxX);
+    const auto wSumY = _mm512_add_ps(wMinY, wMaxY);
+    const auto wResultX = _mm512_mul_ps(wHilbertWidth512, _mm512_sub_ps(wSumX, wDoubleMinX512));
+    const auto wResultY = _mm512_mul_ps(wHilbertHeight512, _mm512_sub_ps(wSumY, wDoubleMinY512));
 
-    const auto wSum = _mm512_add_ps(wBoxMin, wBoxMax);
-    const auto wCenter = _mm512_mul_ps(wSum, wHalf512);
-    const auto wOffset = _mm512_sub_ps(wCenter, wBoundsMin512);
-    const auto wResult = _mm512_mul_ps(wOffset, wScale512);
-
-    std::array<uint32_t, 16> wResInt;
-    _mm512_store_si512(detail::bit_cast<__m512i*>(wResInt.data()), _mm512_cvtps_epi32(wResult));
-    wHilbertValues.at(wIdx) = detail::HilbertXYToIndex(wResInt[0], wResInt[1]);
-    wHilbertValues.at(wIdx1) = detail::HilbertXYToIndex(wResInt[2], wResInt[3]);
-    wHilbertValues.at(wIdx2) = detail::HilbertXYToIndex(wResInt[4], wResInt[5]);
-    wHilbertValues.at(wIdx3) = detail::HilbertXYToIndex(wResInt[6], wResInt[7]);
-    wHilbertValues.at(wIdx4) = detail::HilbertXYToIndex(wResInt[8], wResInt[9]);
-    wHilbertValues.at(wIdx5) = detail::HilbertXYToIndex(wResInt[10], wResInt[11]);
-    wHilbertValues.at(wIdx6) = detail::HilbertXYToIndex(wResInt[12], wResInt[13]);
-    wHilbertValues.at(wIdx7) = detail::HilbertXYToIndex(wResInt[14], wResInt[15]);
+    const auto wResult =
+        HilbertXYToIndex(_mm512_cvtps_epi32(wResultX), _mm512_cvtps_epi32(wResultY));
+    _mm512_storeu_si512(detail::bit_cast<__m512i*>(&wHilbertValues[wStride]), wResult);
   }
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wBoundsMin256 = _mm256_setr_ps(wMinX, wMinY, wMinX, wMinY, wMinX, wMinY, wMinX, wMinY);
-  const auto wScale256 = _mm256_setr_ps(wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight,
-                                        wHilbertWidth,
-                                        wHilbertHeight);
-  const auto wHalf256 = _mm256_set1_ps(wHalfScale);
-
-  for (auto wIdx1 = wIdx + 1, wIdx2 = wIdx + 2, wIdx3 = wIdx + 3; wIdx3 < iNumItems;
-       wIdx += 4, wIdx1 += 4, wIdx2 += 4, wIdx3 += 4) {
-    const auto wBox0 = static_cast<Box<float>>(iBoxes[wIdx]);
-    const auto wBox1 = static_cast<Box<float>>(iBoxes[wIdx1]);
-    const auto wBox2 = static_cast<Box<float>>(iBoxes[wIdx2]);
-    const auto wBox3 = static_cast<Box<float>>(iBoxes[wIdx3]);
-
-    const auto wBoxMin = _mm256_setr_ps(wBox0.mMinX,
-                                        wBox0.mMinY,
-                                        wBox1.mMinX,
-                                        wBox1.mMinY,
-                                        wBox2.mMinX,
-                                        wBox2.mMinY,
-                                        wBox3.mMinX,
-                                        wBox3.mMinY);
-    const auto wBoxMax = _mm256_setr_ps(wBox0.mMaxX,
-                                        wBox0.mMaxY,
-                                        wBox1.mMaxX,
-                                        wBox1.mMaxY,
-                                        wBox2.mMaxX,
-                                        wBox2.mMaxY,
-                                        wBox3.mMaxX,
-                                        wBox3.mMaxY);
-
-    const auto wSum = _mm256_add_ps(wBoxMin, wBoxMax);
-    const auto wCenter = _mm256_mul_ps(wSum, wHalf256);
-    const auto wOffset = _mm256_sub_ps(wCenter, wBoundsMin256);
-    const auto wResult = _mm256_mul_ps(wOffset, wScale256);
+#endif
 
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-    std::array<uint32_t, 8> wResInt;
-    _mm256_store_si256(detail::bit_cast<__m256i*>(wResInt.data()), _mm256_cvtps_epi32(wResult));
-    wHilbertValues.at(wIdx) = detail::HilbertXYToIndex(wResInt[0], wResInt[1]);
-    wHilbertValues.at(wIdx1) = detail::HilbertXYToIndex(wResInt[2], wResInt[3]);
-    wHilbertValues.at(wIdx2) = detail::HilbertXYToIndex(wResInt[4], wResInt[5]);
-    wHilbertValues.at(wIdx3) = detail::HilbertXYToIndex(wResInt[6], wResInt[7]);
-#else
-    std::array<float, 8> wRes;
-    _mm256_store_ps(wRes.data(), wResult);
-    wHilbertValues.at(wIdx) =
-        detail::HilbertXYToIndex(static_cast<uint32_t>(wRes[0]), static_cast<uint32_t>(wRes[1]));
-    wHilbertValues.at(wIdx1) =
-        detail::HilbertXYToIndex(static_cast<uint32_t>(wRes[2]), static_cast<uint32_t>(wRes[3]));
-    wHilbertValues.at(wIdx2) =
-        detail::HilbertXYToIndex(static_cast<uint32_t>(wRes[4]), static_cast<uint32_t>(wRes[5]));
-    wHilbertValues.at(wIdx3) =
-        detail::HilbertXYToIndex(static_cast<uint32_t>(wRes[6]), static_cast<uint32_t>(wRes[7]));
-#endif
+  alignas(32) std::array<float, 8> wMinXs256, wMinYs256, wMaxXs256, wMaxYs256;
+  const auto wDoubleMinX256 = _mm256_set1_ps(wDoubleMinX);
+  const auto wDoubleMinY256 = _mm256_set1_ps(wDoubleMinY);
+  const auto wHilbertWidth256 = _mm256_set1_ps(wHilbertWidth);
+  const auto wHilbertHeight256 = _mm256_set1_ps(wHilbertHeight);
+
+  for (; wStride + 7 < iNumItems; wStride += 8) {
+    for (auto wStep = 0UL; wStep < 8UL; ++wStep) {
+      wMinXs256[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMinX);
+      wMinYs256[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMinY);
+      wMaxXs256[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMaxX);
+      wMaxYs256[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMaxY);
+    }
+    const auto wMinX = _mm256_load_ps(wMinXs256.data());
+    const auto wMinY = _mm256_load_ps(wMinYs256.data());
+    const auto wMaxX = _mm256_load_ps(wMaxXs256.data());
+    const auto wMaxY = _mm256_load_ps(wMaxYs256.data());
+    const auto wSumX = _mm256_add_ps(wMinX, wMaxX);
+    const auto wSumY = _mm256_add_ps(wMinY, wMaxY);
+    const auto wResultX = _mm256_mul_ps(wHilbertWidth256, _mm256_sub_ps(wSumX, wDoubleMinX256));
+    const auto wResultY = _mm256_mul_ps(wHilbertHeight256, _mm256_sub_ps(wSumY, wDoubleMinY256));
+
+    const auto wResult =
+        HilbertXYToIndex(_mm256_cvtps_epi32(wResultX), _mm256_cvtps_epi32(wResultY));
+    _mm256_storeu_si256(detail::bit_cast<__m256i*>(&wHilbertValues[wStride]), wResult);
   }
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
-  const auto wBoundsMin = _mm_setr_ps(wMinX, wMinY, wMinX, wMinY);
-  const auto wScale = _mm_setr_ps(wHilbertWidth, wHilbertHeight, wHilbertWidth, wHilbertHeight);
-  const auto wHalf = _mm_set1_ps(wHalfScale);
+#endif
 
-  for (auto wIdx1 = wIdx + 1; wIdx1 < iNumItems; wIdx += 2, wIdx1 += 2) {
-    const auto wBox1 = static_cast<Box<float>>(iBoxes[wIdx]);
-    const auto wBox2 = static_cast<Box<float>>(iBoxes[wIdx1]);
-    const auto wBoxMin = _mm_setr_ps(wBox1.mMinX, wBox1.mMinY, wBox2.mMinX, wBox2.mMinY);
-    const auto wBoxMax = _mm_setr_ps(wBox1.mMaxX, wBox1.mMaxY, wBox2.mMaxX, wBox2.mMaxY);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
+  alignas(16) std::array<float, 4> wMinXs128, wMinYs128, wMaxXs128, wMaxYs128;
+  const auto wDoubleMinX128 = _mm_set1_ps(wDoubleMinX);
+  const auto wDoubleMinY128 = _mm_set1_ps(wDoubleMinY);
+  const auto wHilbertWidth128 = _mm_set1_ps(wHilbertWidth);
+  const auto wHilbertHeight128 = _mm_set1_ps(wHilbertHeight);
 
-    const auto wSum = _mm_add_ps(wBoxMin, wBoxMax);
-    const auto wCenter = _mm_mul_ps(wSum, wHalf);
-    const auto wOffset = _mm_sub_ps(wCenter, wBoundsMin);
-    const auto wResult = _mm_mul_ps(wOffset, wScale);
+  for (; wStride + 3 < iNumItems; wStride += 4) {
+    for (auto wStep = 0UL; wStep < 4UL; ++wStep) {
+      wMinXs128[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMinX);
+      wMinYs128[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMinY);
+      wMaxXs128[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMaxX);
+      wMaxYs128[wStep] = static_cast<float>(iBoxes[wStride + wStep].mMaxY);
+    }
+    const auto wMinX = _mm_load_ps(wMinXs128.data());
+    const auto wMinY = _mm_load_ps(wMinYs128.data());
+    const auto wMaxX = _mm_load_ps(wMaxXs128.data());
+    const auto wMaxY = _mm_load_ps(wMaxYs128.data());
+    const auto wSumX = _mm_add_ps(wMinX, wMaxX);
+    const auto wSumY = _mm_add_ps(wMinY, wMaxY);
+    const auto wResultX = _mm_mul_ps(wHilbertWidth128, _mm_sub_ps(wSumX, wDoubleMinX128));
+    const auto wResultY = _mm_mul_ps(wHilbertHeight128, _mm_sub_ps(wSumY, wDoubleMinY128));
 
-    std::array<float, 4> wRes;
-    _mm_store_ps(wRes.data(), wResult);
-    wHilbertValues.at(wIdx) =
-        detail::HilbertXYToIndex(static_cast<uint32_t>(wRes[0]), static_cast<uint32_t>(wRes[1]));
-    wHilbertValues.at(wIdx1) =
-        detail::HilbertXYToIndex(static_cast<uint32_t>(wRes[2]), static_cast<uint32_t>(wRes[3]));
+    const auto wResult = HilbertXYToIndex(_mm_cvtps_epi32(wResultX), _mm_cvtps_epi32(wResultY));
+    _mm_storeu_si128(detail::bit_cast<__m128i*>(&wHilbertValues[wStride]), wResult);
   }
 #endif  // FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
 #endif  // defined(FLATBUSH_USE_SIMD)
 
-  for (; wIdx < iNumItems; ++wIdx) {
-    const auto& wBox = static_cast<Box<float>>(iBoxes[wIdx]);
-    wHilbertValues.at(wIdx) = detail::HilbertXYToIndex(
-        uint32_t(wHilbertWidth * ((wBox.mMinX + wBox.mMaxX) * wHalfScale - wMinX)),
-        uint32_t(wHilbertHeight * ((wBox.mMinY + wBox.mMaxY) * wHalfScale - wMinY)));
+  for (; wStride < iNumItems; ++wStride) {
+    const auto wMinX = static_cast<float>(iBoxes[wStride].mMinX);
+    const auto wMinY = static_cast<float>(iBoxes[wStride].mMinY);
+    const auto wMaxX = static_cast<float>(iBoxes[wStride].mMaxX);
+    const auto wMaxY = static_cast<float>(iBoxes[wStride].mMaxY);
+    wHilbertValues.at(wStride) =
+        detail::HilbertXYToIndex(uint32_t(wHilbertWidth * (wMinX + wMaxX - wDoubleMinX)),
+                                 uint32_t(wHilbertHeight * (wMinY + wMaxY - wDoubleMinY)));
   }
 
   return wHilbertValues;
@@ -901,7 +1065,12 @@ class FlatbushBuilder {
     return mItems.size() - 1UL;
   }
 
-  Flatbush<ArrayType> finish() const;
+  inline size_t add(Box<ArrayType>&& iBox) noexcept {
+    mItems.push_back(std::move(iBox));
+    return mItems.size() - 1UL;
+  }
+
+  Flatbush<ArrayType> finish();
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
   static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
 
@@ -912,16 +1081,13 @@ class FlatbushBuilder {
 };
 
 template <typename ArrayType>
-Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() const {
+Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() {
   if (mItems.empty()) {
     throw std::invalid_argument("No items have been added. Nothing to build.");
   }
 
   Flatbush<ArrayType> wIndex(uint32_t(mItems.size()), mNodeSize);
-  for (const auto& wItem : mItems) {
-    wIndex.add(wItem);
-  }
-  wIndex.finish();
+  wIndex.create(std::move(mItems));
 
   return wIndex;
 }
@@ -932,6 +1098,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_
 
   auto wInstance = Flatbush<ArrayType>(iData, iSize);
   const auto wSize = wInstance.data().size();
+
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
                                 ", but got buffer size " + std::to_string(iSize) + ".");
@@ -947,6 +1114,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(std::vector<uint8_t>&& iDat
   const auto wDataSize = iData.size();
   auto wInstance = Flatbush<ArrayType>(std::move(iData));
   const auto wSize = wInstance.data().size();
+
   if (wSize != wDataSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
                                 ", but got buffer size " + std::to_string(wDataSize) + ".");
@@ -1061,20 +1229,17 @@ class Flatbush {
     const auto wIsNanPoint = (std::isnan(iPoint.mX) || std::isnan(iPoint.mY));
 #endif
 
-    const auto wDistX = axisDistance(iPoint.mX, mBounds.mMinX, mBounds.mMaxX);
-    const auto wDistY = axisDistance(iPoint.mY, mBounds.mMinY, mBounds.mMaxY);
-    const auto wDistance = wDistX * wDistX + wDistY * wDistY;
+    const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBounds);
 
-    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistance) &&
-           std::isnormal(iMaxDistSquared) && wDistance <= iMaxDistSquared;
+    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistSquared) &&
+           std::isnormal(iMaxDistSquared) && wDistSquared <= iMaxDistSquared;
   }
 
   Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
   Flatbush(const uint8_t* iData, size_t iSize) noexcept;
   explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
 
-  size_t add(const Box<ArrayType>& iBox) noexcept;
-  void finish() noexcept;
+  void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues,
                          size_t iLeft,
@@ -1173,20 +1338,19 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept 
 }
 
 template <typename ArrayType>
-size_t Flatbush<ArrayType>::add(const Box<ArrayType>& iBox) noexcept {
-  if (mIsWideIndex) {
-    mIndicesUint32[mPosition] = uint32_t(mPosition);
-  } else {
-    mIndicesUint16[mPosition] = uint16_t(mPosition);
+void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept {
+  for (auto&& wBox : iItems) {
+    if (mIsWideIndex) {
+      mIndicesUint32[mPosition] = uint32_t(mPosition);
+    } else {
+      mIndicesUint16[mPosition] = uint16_t(mPosition);
+    }
+
+    mBoxes[mPosition] = std::move(wBox);
+    detail::updateBounds(mBounds, mBoxes[mPosition]);
+    ++mPosition;
   }
 
-  mBoxes[mPosition] = iBox;
-  detail::updateBounds(mBounds, iBox);
-  return mPosition++;
-}
-
-template <typename ArrayType>
-void Flatbush<ArrayType>::finish() noexcept {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
 
@@ -1196,7 +1360,7 @@ void Flatbush<ArrayType>::finish() noexcept {
   }
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
-  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes.data());
+  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
   // sort items by their Hilbert value (for packing later)
   sort(wHilbertValues, 0U, wNumItems - 1U);
 
@@ -1386,15 +1550,15 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
     // search through child nodes
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       const size_t wIndex = (mIsWideIndex ? mIndicesUint32[wPosition] : mIndicesUint16[wPosition]);
-      const auto wDistance = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
+      const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
 
-      if (wDistance > wMaxDistSquared) {
+      if (wDistSquared > wMaxDistSquared) {
         continue;
       } else if (wNodeIndex >= wNumItems) {
-        wQueue.emplace(wIndex << 1U, wDistance);
+        wQueue.emplace(wIndex << 1U, wDistSquared);
       } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         // put an odd index if it's an item rather than a node, to recognize later
-        wQueue.emplace((wIndex << 1U) + 1U, wDistance);  // leaf node
+        wQueue.emplace((wIndex << 1U) + 1U, wDistSquared);  // leaf node
       }
     }
 
