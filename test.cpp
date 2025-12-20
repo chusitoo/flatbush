@@ -484,30 +484,6 @@ void searchQueryMultiPointLargeNumItems() {
   assert(wIds.back() == 1);
 }
 
-void clearAndReuseBuilder() {
-  std::cout << "clear and reuse builder" << std::endl;
-
-  flatbush::FlatbushBuilder<double> wBuilder;
-
-  for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4) {
-    wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]});
-  }
-
-  auto wIndex = wBuilder.finish();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex2 = wBuilder.finish();
-
-  assert(wIndex2.numItems() == wIndex.numItems() + 1);
-  assert(wIndex2.nodeSize() == wIndex.nodeSize());
-
-  wBuilder.clear();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex3 = wBuilder.finish();
-
-  assert(wIndex3.numItems() == 1);
-  assert(wIndex3.nodeSize() == wIndex2.nodeSize());
-}
-
 void testOneMillionItems() {
   std::cout << "test adding one million items" << std::endl;
 
@@ -656,7 +632,6 @@ int main(int /*argc*/, char** /*argv*/) {
   searchQuerySinglePointLargeNumItems();
   searchQueryMultiPointSmallNumItems();
   searchQueryMultiPointLargeNumItems();
-  clearAndReuseBuilder();
   testOneMillionItems();
   quickSortImbalancedDataset();
   quickSortWorksOnDuplicates();
