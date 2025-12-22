@@ -474,7 +474,6 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
   init(iNumItems, iNodeSize);
-
   mData.resize(mData.capacity(), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
@@ -486,10 +485,10 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(const uint8_t* iData, size_t iSize) noexcept {
   const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
   const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
-  init(wNumItems, wNodeSize);
-
   mData.insert(mData.begin(), iData, iData + iSize);
+  init(wNumItems, wNodeSize);
   mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
+
   if (mPosition > 0UL) {
     mBounds = mBoxes[mPosition - 1UL];
   }
@@ -499,10 +498,10 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
   const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData.at(2));
   const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData.at(4));
-  init(wNumItems, wNodeSize);
-
   mData = std::move(iData);
+  init(wNumItems, wNodeSize);
   mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
+
   if (mPosition > 0UL) {
     mBounds = mBoxes[mPosition - 1UL];
   }
