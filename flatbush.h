@@ -69,7 +69,7 @@ class span {
 namespace flatbush {
 
 constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
-constexpr auto gMaxDistance = std::numeric_limits<double>::max();
+constexpr auto gMaxDistance = 1.34078e+154;  // std::sqrt(std::numeric_limits<double>::max())
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
 constexpr uint16_t gMinNodeSize = 2;
@@ -416,6 +416,7 @@ class Flatbush {
 
   inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
                              size_t iMaxResults,
+                             double iMaxDistance,
                              double iMaxDistSquared) const {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
@@ -429,8 +430,8 @@ class Flatbush {
     const auto wDistY = axisDistance(iPoint.mY, mBounds.mMinY, mBounds.mMaxY);
     const auto wDistance = wDistX * wDistX + wDistY * wDistY;
 
-    return !wIsNanPoint && iMaxResults != 0UL && !std::isnan(iMaxDistSquared) &&
-           iMaxDistSquared >= 0.0 && wDistance < iMaxDistSquared;
+    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistance) &&
+           std::isnormal(iMaxDistSquared) && wDistance <= iMaxDistSquared;
   }
 
   Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
@@ -758,7 +759,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    double iMaxDistance,
                                                    const FilterCb& iFilterFn) const noexcept {
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
-  const auto wCanLoop = canDoNeighbors(iPoint, iMaxResults, wMaxDistSquared);
+  const auto wCanLoop = canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wMaxDistSquared);
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;

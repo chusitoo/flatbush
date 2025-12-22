@@ -534,9 +534,8 @@ void quickSortImbalancedDataset() {
   std::cout << "quicksort should work with an imbalanced dataset" << std::endl;
 
   static const auto linspace =
-      [](double wStart, double wStop, uint32_t wNum, bool wEndpoint = true) {
-        const auto wDiv = wEndpoint ? (wNum - 1) : wNum;
-        const auto wStep = (wStop - wStart) / wDiv;
+      [](double wStart, double wStop, uint32_t wNum) {
+        const auto wStep = (wStop - wStart) / (wNum - 1);
         std::vector<double> wItems(wNum);
         for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
           wItems.at(wIndex) = wStart + wStep * static_cast<double>(wIndex);

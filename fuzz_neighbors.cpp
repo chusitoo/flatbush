@@ -35,22 +35,22 @@ flatbush::Flatbush<double> createIndex() {
   return wIndex;
 }
 
-extern "C" int LLVMFuzzerTestOneInput(const uint8_t *iData, size_t iSize) {
+extern "C" int LLVMFuzzerTestOneInput(const uint8_t* iData, size_t iSize) {
   static auto sIndex = createIndex();
 
   if (iSize == 32) {
-    const auto wX = *flatbush::detail::bit_cast<const double *>(&iData[0]);
-    const auto wY = *flatbush::detail::bit_cast<const double *>(&iData[8]);
+    const auto wX = *flatbush::detail::bit_cast<const double*>(&iData[0]);
+    const auto wY = *flatbush::detail::bit_cast<const double*>(&iData[8]);
+    const auto wMaxResults = *flatbush::detail::bit_cast<const size_t*>(&iData[16]);
+    const auto wMaxDistance = *flatbush::detail::bit_cast<const double*>(&iData[24]);
+    const auto wMaxDistSquared = wMaxDistance * wMaxDistance;
+
     const flatbush::Point<double> wPoint{wX, wY};
-
-    const auto wMaxResults = *flatbush::detail::bit_cast<const size_t *>(&iData[16]);
-    const auto wMaxDistance = *flatbush::detail::bit_cast<const double *>(&iData[24]);
-
-    auto wResult = sIndex.neighbors(wPoint, wMaxResults, wMaxDistance);
-
+    const auto wResult = sIndex.neighbors(wPoint, wMaxResults, wMaxDistance);
     const auto wDistance = std::pow(wX - 42, 2.0) + std::pow(wY, 2.0);
 
-    if (wMaxResults > 0 && wMaxDistance >= 0 && wDistance <= std::pow(wMaxDistance, 2.0)) {
+    if (wMaxResults > 0 && wMaxDistance >= 0 && std::isnormal(wMaxDistSquared) &&
+        wDistance <= wMaxDistSquared) {
       assert(wResult.size() == 1);
     } else {
       assert(wResult.size() == 0);
