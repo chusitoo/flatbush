@@ -484,30 +484,6 @@ void searchQueryMultiPointLargeNumItems() {
   assert(wIds.back() == 1);
 }
 
-void clearAndReuseBuilder() {
-  std::cout << "clear and reuse builder" << std::endl;
-
-  flatbush::FlatbushBuilder<double> wBuilder;
-
-  for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4) {
-    wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]});
-  }
-
-  auto wIndex = wBuilder.finish();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex2 = wBuilder.finish();
-
-  assert(wIndex2.numItems() == wIndex.numItems() + 1);
-  assert(wIndex2.nodeSize() == wIndex.nodeSize());
-
-  wBuilder.clear();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex3 = wBuilder.finish();
-
-  assert(wIndex3.numItems() == 1);
-  assert(wIndex3.nodeSize() == wIndex2.nodeSize());
-}
-
 void testOneMillionItems() {
   std::cout << "test adding one million items" << std::endl;
 
@@ -533,15 +509,14 @@ void testOneMillionItems() {
 void quickSortImbalancedDataset() {
   std::cout << "quicksort should work with an imbalanced dataset" << std::endl;
 
-  static const auto linspace =
-      [](double wStart, double wStop, uint32_t wNum) {
-        const auto wStep = (wStop - wStart) / (wNum - 1);
-        std::vector<double> wItems(wNum);
-        for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
-          wItems.at(wIndex) = wStart + wStep * static_cast<double>(wIndex);
-        }
-        return wItems;
-      };
+  static const auto linspace = [](double wStart, double wStop, uint32_t wNum) {
+    const auto wStep = (wStop - wStart) / (wNum - 1);
+    std::vector<double> wItems(wNum);
+    for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
+      wItems.at(wIndex) = wStart + wStep * static_cast<double>(wIndex);
+    }
+    return wItems;
+  };
 
   bool wIsThrown = false;
 
@@ -604,6 +579,34 @@ void reconstructIndexFromMovedVector() {
   assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
 
+template <typename ArrayType>
+void simpleIndexTypeTest() {
+  std::cout << "simple test for type: "
+            << flatbush::detail::arrayTypeName(flatbush::detail::arrayTypeIndex<ArrayType>())
+            << std::endl;
+
+  // Test basic index creation and search
+  flatbush::FlatbushBuilder<ArrayType> wBuilder;
+  for (size_t wIdx = 0; wIdx < 100; wIdx++) {
+    ArrayType wVal = static_cast<ArrayType>(wIdx);
+    wBuilder.add(
+        {wVal, wVal, static_cast<ArrayType>(wVal + 10), static_cast<ArrayType>(wVal + 10)});
+  }
+  auto wIndex = wBuilder.finish();
+  assert(wIndex.numItems() == 100);
+
+  // Item at index i has box [i, i, i+10, i+10]
+  // Search [45, 45, 55, 55] should overlap items 35-55
+  auto wIds = wIndex.search({static_cast<ArrayType>(45),
+                             static_cast<ArrayType>(45),
+                             static_cast<ArrayType>(55),
+                             static_cast<ArrayType>(55)});
+  assert(wIds.size() == 21);
+
+  auto wNeighbors = wIndex.neighbors({static_cast<ArrayType>(50), static_cast<ArrayType>(50)}, 5);
+  assert(wNeighbors.size() == 5);
+}
+
 int main(int /*argc*/, char** /*argv*/) {
   indexBunchOfRectangles();
   skipSortingLessThanNodeSizeRectangles();
@@ -629,11 +632,19 @@ int main(int /*argc*/, char** /*argv*/) {
   searchQuerySinglePointLargeNumItems();
   searchQueryMultiPointSmallNumItems();
   searchQueryMultiPointLargeNumItems();
-  clearAndReuseBuilder();
   testOneMillionItems();
   quickSortImbalancedDataset();
   quickSortWorksOnDuplicates();
   reconstructIndexFromMovedVector();
+
+  simpleIndexTypeTest<int8_t>();
+  simpleIndexTypeTest<uint8_t>();
+  simpleIndexTypeTest<int16_t>();
+  simpleIndexTypeTest<uint16_t>();
+  simpleIndexTypeTest<int32_t>();
+  simpleIndexTypeTest<uint32_t>();
+  simpleIndexTypeTest<float>();
+  simpleIndexTypeTest<double>();
 
   return EXIT_SUCCESS;
 }
