@@ -1,6 +1,12 @@
 # Flatbush for C++
 
-[![Ubuntu](https://github.com/chusitoo/flatbush/actions/workflows/ubuntu.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/ubuntu.yml) [![Windows](https://github.com/chusitoo/flatbush/actions/workflows/windows.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/windows.yml) [![macOS](https://github.com/chusitoo/flatbush/actions/workflows/macos.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/macos.yml) [![CodeQL](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml)
+[![Code format](https://github.com/chusitoo/flatbush/actions/workflows/format.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/format.yml)
+[![Static code analysis](https://github.com/chusitoo/flatbush/actions/workflows/cppcheck.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cppcheck.yml)
+[![CodeQL](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml)
+[![Unit Tests](https://github.com/chusitoo/flatbush/actions/workflows/test.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/test.yml)
+[![Fuzz tests](https://github.com/chusitoo/flatbush/actions/workflows/fuzz.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/fuzz.yml)
+[![Benchmarks](https://github.com/chusitoo/flatbush/actions/workflows/bench.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/bench.yml)
+
 [![GitHub release (latest by date)](https://img.shields.io/github/v/release/chusitoo/flatbush)](https://github.com/chusitoo/flatbush/releases/latest) [![Conan Center](https://img.shields.io/conan/v/flatbush)](https://conan.io/center/recipes/flatbush) [![Vcpkg](https://img.shields.io/vcpkg/v/flatbush)](https://vcpkg.io/en/package/flatbush)
 
 A C++ adaptation of the great Flatbush JS library which implements a packed Hilbert R-tree algorithm.
@@ -88,25 +94,20 @@ If the target compiler does not have support for C++20 features, namely the ```<
 
 ### Unit tests
     
-#### CMake
 ```shell
-mkdir build && cd build
-cmake ..
-make
-ctest -C Release
-``` 
-
-#### Standalone
-```shell
-gcc test.cpp -lstdc++ -Wall -O2 -DFLATBUSH_SPAN -o test && ./test
+(cmake -B build/tests -DWITH_TESTS=ON && cmake --build build/tests -j $(nproc) && ./build/tests/unit_test)
 ```
 
-```shell
-clang++ -Wall -O2 -DFLATBUSH_SPAN -o test test.cpp && ./test
-```
+### Bench tests
 
 ```shell
-cl /EHsc /O2 /DFLATBUSH_SPAN test.cpp && .\test.exe
+(cmake -B build/bench -DWITH_BENCHMARKS=ON && cmake --build build/bench -j $(nproc) && ./build/bench/bench)
+```
+
+### Fuzz tests
+
+```shell
+(cmake -B build/fuzz -DWITH_FUZZING=ON -DFUZZTEST_FUZZING_MODE=ON && cmake --build build/fuzz -j $(nproc) && ./build/fuzz/fuzz)
 ```
 
 ## Performance
