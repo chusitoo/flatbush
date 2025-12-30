@@ -1,4 +1,4 @@
-name: Ubuntu
+name: "Benchmarks"
 
 on:
   push:
@@ -6,35 +6,42 @@ on:
   pull_request:
     branches: [ master ]
 
+permissions:
+  deployments: write
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
     strategy:
+      matrix:
+        compiler: ['g++', 'clang++']
 
     steps:
     - uses: actions/checkout@v3
 
     - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -WITH_BENCHMARKS=ON \
-                                                -DCMAKE_C_COMPILER=clang \
-                                                -DCMAKE_CXX_COMPILER=clang++
+      run: cmake -B ${{github.workspace}}/build -DWITH_BENCHMARKS=ON -DCMAKE_CXX_COMPILER=${{matrix.compiler}} -DCMAKE_CXX_FLAGS="-O3"
 
     - name: Build
-      run: cmake --build ${{github.workspace}}/build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . -j $(nproc)
 
     - name: Bench
       working-directory: ${{github.workspace}}/build
-      run: ./bench
+      run: ./bench --benchmark_format=json | tee benchmark_results_${{matrix.compiler}}.txt
 
     - name: Store benchmark result
-        uses: benchmark-action/github-action-benchmark@v1
-        with:
-          name:  Benchmark
-          tool: 'googlecpp'
-          output-file-path: benchmarks/benchmark_result.json
-          comment-on-alert: true
-          output-file-path: benchmark_results.json
-          fail-on-benchmark-diff: true
-          alert-threshold: 150%
-          gh-pages-branch: gh-pages
-          benchmark-data-dir-path: 'benchmarks'
+      uses: benchmark-action/github-action-benchmark@v1
+      with:
+        name:  Benchmark
+        tool: 'googlecpp'
+        summary-always: true
+        output-file-path: ${{github.workspace}}/build/benchmark_results_${{matrix.compiler}}.txt
+        fail-on-alert: true
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        comment-on-alert: true
+        alert-threshold: 150%
+        gh-pages-branch: gh-pages
+        benchmark-data-dir-path: 'benchmarks'
+        auto-push: true

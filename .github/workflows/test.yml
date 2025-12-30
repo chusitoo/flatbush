@@ -1,4 +1,4 @@
-name: Ubuntu
+name: "Unit Tests"
 
 on:
   push:
@@ -7,51 +7,28 @@ on:
     branches: [ master ]
 
 jobs:
-  gcc:
+  ubuntu:
     runs-on: ubuntu-latest
     strategy:
       matrix:
         standard: [11, 14, 17, 20, 23]
+        compiler: ['g++', 'clang++']
 
     steps:
     - uses: actions/checkout@v3
 
     - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON \
-                                                -DCMAKE_CXX_STANDARD=${{matrix.standard}} \
-                                                -DCMAKE_C_COMPILER=gcc \
-                                                -DCMAKE_CXX_COMPILER=g++
+      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON -DCMAKE_CXX_STANDARD=${{matrix.standard}} -DCMAKE_CXX_COMPILER=${{matrix.compiler}}
 
     - name: Build
-      run: cmake --build ${{github.workspace}}/build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . -j $(nproc)
 
     - name: Test
       working-directory: ${{github.workspace}}/build
-      run: ctest
+      run: ctest --rerun-failed --output-on-failure
 
-  clang:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        standard: [11, 14, 17, 20, 23]
-
-    steps:
-    - uses: actions/checkout@v3
-
-    - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON \
-                                                -DCMAKE_CXX_STANDARD=${{matrix.standard}} \
-                                                -DCMAKE_C_COMPILER=clang \
-                                                -DCMAKE_CXX_COMPILER=clang++
-
-    - name: Build
-      run: cmake --build ${{github.workspace}}/build
-
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      run: ctest
-
-  msvc:
+  windows:
     runs-on: windows-latest
     strategy:
       matrix:
@@ -61,17 +38,17 @@ jobs:
     - uses: actions/checkout@v3
 
     - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON \
-                                                -DCMAKE_CXX_STANDARD=${{matrix.standard}}
+      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON -DCMAKE_CXX_STANDARD=${{matrix.standard}}
 
     - name: Build
-      run: cmake --build ${{github.workspace}}/build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . -j "$env:NUMBER_OF_PROCESSORS"
 
     - name: Test
       working-directory: ${{github.workspace}}/build
-      run: ctest
+      run: ctest --rerun-failed --output-on-failure
 
-  build:
+  macos:
     runs-on: macos-latest
     strategy:
       matrix:
@@ -81,12 +58,12 @@ jobs:
     - uses: actions/checkout@v3
 
     - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON \
-                                                -DCMAKE_CXX_STANDARD=${{matrix.standard}}
+      run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON -DCMAKE_CXX_STANDARD=${{matrix.standard}}
 
     - name: Build
-      run: cmake --build ${{github.workspace}}/build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . -j $(nproc)
 
     - name: Test
       working-directory: ${{github.workspace}}/build
-      run: ctest
+      run: ctest --rerun-failed --output-on-failure

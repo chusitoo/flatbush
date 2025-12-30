@@ -22,8 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#ifndef FLATBUSH_H_
-#define FLATBUSH_H_
+#ifndef FLATBUSH_FLATBUSH_H
+#define FLATBUSH_FLATBUSH_H
 
 #include <algorithm>    // for max, min, upper_bound
 #include <array>        // for array
@@ -39,14 +39,11 @@ SOFTWARE.
 #include <utility>      // for swap
 #include <vector>       // for vector
 
+namespace flatbush {
 #ifndef FLATBUSH_SPAN
 #include <span>
-namespace flatbush {
 using std::span;
-}
 #else
-namespace flatbush {
-
 template <typename Type>
 class span {
   Type* mPtr = nullptr;
@@ -62,11 +59,7 @@ class span {
   Type* begin() noexcept { return mPtr; }
   Type* end() noexcept { return mPtr + mLen; }
 };
-
-}  // namespace flatbush
 #endif  // FLATBUSH_SPAN
-
-namespace flatbush {
 
 constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = 1.34078e+154;  // std::sqrt(std::numeric_limits<double>::max())
@@ -505,7 +498,6 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
   init(iNumItems, iNodeSize);
-  mData.resize(mData.capacity(), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -560,7 +552,7 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept 
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
   const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   // Views
-  mData.reserve(wDataSize);
+  mData.resize(wDataSize, 0U);
   mBoxes = {detail::bit_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes};
   mIndicesUint16 = {detail::bit_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]),
                     wNumNodes};
@@ -829,4 +821,4 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 }
 }  // namespace flatbush
 
-#endif  // FLATBUSH_H_
+#endif  // FLATBUSH_FLATBUSH_H

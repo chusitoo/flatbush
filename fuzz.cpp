@@ -83,7 +83,7 @@ flatbush::Flatbush<ArrayType> createSearchIndex() {
 
 template <typename ArrayType>
 void FuzzFromTemplate(const std::string& data) {
-  const uint8_t* iData = reinterpret_cast<const uint8_t*>(data.data());
+  const uint8_t* iData = flatbush::detail::bit_cast<const uint8_t*>(data.data());
   size_t iSize = data.size();
 
   if (iSize < flatbush::gHeaderByteSize) return;

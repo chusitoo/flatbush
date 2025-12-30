@@ -1,0 +1,24 @@
+name: "Code format"
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install clang-format
+      run: |
+        sudo apt update -y
+        sudo apt install -y clang-format
+
+    - name: Check format
+      run: |
+        readarray -t files < <(find . -maxdepth 1 -type f \( -name "*.h" -o -name "*.cpp" \))
+        clang-format --verbose --Werror --dry-run "${files[@]}"

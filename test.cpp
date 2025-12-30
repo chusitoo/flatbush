@@ -114,7 +114,7 @@ TEST(FlatbushTest, IndexBunchOfRectangles) {
   EXPECT_EQ(wBoxes[wBoxLen - 1], 95);
 
   auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
-  EXPECT_EQ(wIndices[wBoxLen / 4 - 1], 400);
+  EXPECT_EQ(wIndices[wIndex.indexSize() - 1], 400);
 }
 
 TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
