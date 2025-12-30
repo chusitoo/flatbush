@@ -22,8 +22,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#ifndef FLATBUSH_H_
-#define FLATBUSH_H_
+#ifndef FLATBUSH_FLATBUSH_H
+#define FLATBUSH_FLATBUSH_H
 
 #include <algorithm>    // for max, min, upper_bound
 #include <array>        // for array
@@ -87,7 +87,6 @@ SOFTWARE.
 #endif
 
 namespace flatbush {
-
 #ifndef FLATBUSH_SPAN
 #include <span>
 using std::span;
@@ -109,6 +108,7 @@ class span {
 };
 #endif  // FLATBUSH_SPAN
 
+constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = 1.34078e+154;  // std::sqrt(std::numeric_limits<double>::max())
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
@@ -146,7 +146,6 @@ struct Point {
     return Point<OtherType>{static_cast<OtherType>(mX), static_cast<OtherType>(mY)};
   }
 };
-
 namespace detail {
 
 // From https://www.boost.org/doc/libs/1_81_0/boost/core/bit.hpp (modified)
@@ -295,6 +294,29 @@ inline const char* arrayTypeName(size_t iIndex) {
                                                                      "float",
                                                                      "double"};
   return iIndex < kArrayTypeNames.size() ? kArrayTypeNames.at(iIndex) : kUnknownType;
+}
+
+template <typename ArrayType>
+inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
+                                     const Box<ArrayType>& iBoxSearch,
+                                     const size_t iNumItems) {
+  const auto wBoundsIndex = static_cast<const Box<double>>(iBoxIndex);
+  const auto wBoundsSearch = static_cast<const Box<double>>(iBoxSearch);
+
+  // Calculate intersection area
+  const auto wWidth = std::min(wBoundsIndex.mMaxX, wBoundsSearch.mMaxX) -
+                      std::max(wBoundsIndex.mMinX, wBoundsSearch.mMinX);
+  const auto wHeight = std::min(wBoundsIndex.mMaxY, wBoundsSearch.mMaxY) -
+                       std::max(wBoundsIndex.mMinY, wBoundsSearch.mMinY);
+
+  // Approximate results vector size based on intersection area, assuming uniform distribution
+  const auto wSearchArea =
+      (wBoundsSearch.mMaxX - wBoundsSearch.mMinX) * (wBoundsSearch.mMaxY - wBoundsSearch.mMinY);
+
+  return (wWidth > 0 && wHeight > 0 && wSearchArea > 0)
+             ? static_cast<size_t>(wSearchArea / (wWidth * wHeight) *
+                                   static_cast<double>(iNumItems))
+             : 0UL;
 }
 
 template <typename ArrayType>
@@ -1041,7 +1063,6 @@ std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
 
   return wHilbertValues;
 }
-
 }  // namespace detail
 
 template <class ArrayType>
@@ -1274,7 +1295,6 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
   init(iNumItems, iNodeSize);
-  mData.resize(mData.capacity(), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -1329,7 +1349,7 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept 
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
   const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   // Views
-  mData.reserve(wDataSize);
+  mData.resize(wDataSize, 0U);
   mBoxes = {detail::bit_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes};
   mIndicesUint16 = {detail::bit_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]),
                     wNumNodes};
@@ -1486,17 +1506,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
-  // Calculate intersection area
-  const auto wWidth =
-      std::min(mBounds.mMaxX, iBounds.mMaxX) - std::max(mBounds.mMinX, iBounds.mMinX);
-  const auto wHeight =
-      std::min(mBounds.mMaxY, iBounds.mMaxY) - std::max(mBounds.mMinY, iBounds.mMinY);
-  // Approximate results vector size based on intersection area, assuming uniform distribution
-  const auto wSearchArea = (iBounds.mMaxX - iBounds.mMinX) * (iBounds.mMaxY - iBounds.mMinY);
-  wResults.reserve(
-      (wWidth > ArrayType{0} && wHeight > ArrayType{0} && wSearchArea > ArrayType{0})
-          ? static_cast<size_t>(static_cast<double>(wNumItems) * wSearchArea / (wWidth * wHeight))
-          : 0UL);
+  wResults.reserve(detail::approximateResultsSize(mBounds, iBounds, wNumItems));
 
   while (wCanLoop) {
     // find the end index of the node
@@ -1583,4 +1593,4 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 }
 }  // namespace flatbush
 
-#endif  // FLATBUSH_H_
+#endif  // FLATBUSH_FLATBUSH_H

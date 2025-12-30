@@ -1,7 +1,7 @@
 /*
 MIT License
 
-Copyright (c) 2021 Alex Emirov
+Copyright (c) 2025 Alex Emirov
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,11 +22,14 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-#include <cassert>
-#include <iostream>
+#include <gtest/gtest.h>
+
 #include <vector>
 
 #include "flatbush.h"
+
+using ::testing::Test;
+using ::testing::Types;
 
 static constexpr std::array<double, 400> gData{
     8,  62, 11, 66, 57, 17, 57, 19, 76, 26, 79, 29, 36, 56, 38, 56, 92, 77, 96, 80, 87, 70, 90, 74,
@@ -80,8 +83,8 @@ flatbush::Flatbush<double> createIndex() {
   }
   auto wIndex = wBuilder.finish();
 
-  assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
+  EXPECT_EQ(wIndex.numItems(), wNumItems);
+  EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   return wIndex;
 }
@@ -95,31 +98,29 @@ flatbush::Flatbush<double> createSmallIndex(uint32_t iNumItems, uint16_t iNodeSi
   }
   auto wIndex = wBuilder.finish();
 
-  assert(wIndex.numItems() == iNumItems);
-  assert(wIndex.nodeSize() == iNodeSize);
+  EXPECT_EQ(wIndex.numItems(), iNumItems);
+  EXPECT_EQ(wIndex.nodeSize(), iNodeSize);
 
   return wIndex;
 }
 
-void indexBunchOfRectangles() {
-  std::cout << "indexes a bunch of rectangles" << std::endl;
+TEST(FlatbushTest, IndexBunchOfRectangles) {
   auto wIndex = createIndex();
-  assert(wIndex.indexSize() * 4 + wIndex.indexSize() == 540);
+  EXPECT_EQ(wIndex.indexSize() * 4 + wIndex.indexSize(), 540);
 
   auto wData = wIndex.data();
   auto wBoxes = flatbush::detail::bit_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
   size_t wBoxLen = wIndex.indexSize() * 4;
-  assert(wBoxes[wBoxLen - 4] == 0);
-  assert(wBoxes[wBoxLen - 3] == 1);
-  assert(wBoxes[wBoxLen - 2] == 96);
-  assert(wBoxes[wBoxLen - 1] == 95);
+  EXPECT_EQ(wBoxes[wBoxLen - 4], 0);
+  EXPECT_EQ(wBoxes[wBoxLen - 3], 1);
+  EXPECT_EQ(wBoxes[wBoxLen - 2], 96);
+  EXPECT_EQ(wBoxes[wBoxLen - 1], 95);
 
   auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
-  assert(wIndices[wBoxLen / 4 - 1] == 400);
+  EXPECT_EQ(wIndices[wIndex.indexSize() - 1], 400);
 }
 
-void skipSortingLessThanNodeSizeRectangles() {
-  std::cout << "skips sorting less than nodeSize number of rectangles" << std::endl;
+TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
   uint32_t wNumItems = 14;
   uint16_t wNodeSize = 16;
   auto wIndex = createSmallIndex(wNumItems, wNodeSize);
@@ -145,19 +146,18 @@ void skipSortingLessThanNodeSizeRectangles() {
   auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
   // sort should be skipped, ordered progressing indices expected
   for (size_t wIdx = 0; wIdx < wSize; ++wIdx) {
-    assert(wIndices[wIdx] == wIdx);
+    EXPECT_EQ(wIndices[wIdx], wIdx);
   }
-  assert(wIndices[wSize] == 0);
+  EXPECT_EQ(wIndices[wSize], 0);
 
-  assert(wBoxLen == (wSize + 1) * 4);
-  assert(wBoxes[wBoxLen - 4] == wRootMinX);
-  assert(wBoxes[wBoxLen - 3] == wRootMinY);
-  assert(wBoxes[wBoxLen - 2] == wRootMaxX);
-  assert(wBoxes[wBoxLen - 1] == wRootMaxY);
+  EXPECT_EQ(wBoxLen, (wSize + 1) * 4);
+  EXPECT_EQ(wBoxes[wBoxLen - 4], wRootMinX);
+  EXPECT_EQ(wBoxes[wBoxLen - 3], wRootMinY);
+  EXPECT_EQ(wBoxes[wBoxLen - 2], wRootMaxX);
+  EXPECT_EQ(wBoxes[wBoxLen - 1], wRootMaxY);
 }
 
-void performBoxSearch() {
-  std::cout << "performs bbox search" << std::endl;
+TEST(FlatbushTest, PerformBoxSearch) {
   auto wIndex = createIndex();
   flatbush::Box<double> box{40, 40, 60, 60};
   auto wIds = wIndex.search(box);
@@ -171,75 +171,65 @@ void performBoxSearch() {
     wResults.push_back(gData[4 * wId + 3]);
   }
 
-  assert(wExpected.size() == wResults.size());
+  EXPECT_EQ(wExpected.size(), wResults.size());
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wResults.begin(), wResults.end());
 
-  assert(std::equal(wExpected.begin(), wExpected.end(), wResults.begin()));
+  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wResults.begin()));
 }
 
-void reconstructIndexFromArrayBuffer() {
-  std::cout << "reconstructs an index from array buffer" << std::endl;
+TEST(FlatbushTest, ReconstructIndexFromArrayBuffer) {
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();
   auto wIndex2 = flatbush::FlatbushBuilder<double>::from(wIndexBuffer.data(), wIndexBuffer.size());
   auto wIndex2Buffer = wIndex2.data();
 
-  assert(wIndexBuffer.size() == wIndex2Buffer.size());
+  EXPECT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
 
-  assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
+  EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
 
-void doesNotFreezeOnZeroNumItems() {
-  std::cout << "does not freeze on numItems = 0" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double> wBuilder;
-    wBuilder.finish();
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("No items have been added. Nothing to build.") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, DoesNotFreezeOnZeroNumItems) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double> wBuilder;
+        wBuilder.finish();
+      },
+      std::invalid_argument);
 }
 
-void performNeighborsQuery() {
-  std::cout << "performs a k-nearest-neighbors query" << std::endl;
+TEST(FlatbushTest, PerformNeighborsQuery) {
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors({50, 50}, 3);
   std::vector<size_t> wExpected = {31, 6, 75};
 
-  assert(wExpected.size() == wIds.size());
+  EXPECT_EQ(wExpected.size(), wIds.size());
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  assert(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
+  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
-void neighborsQueryAllItems() {
-  std::cout << "performs a k-nearest-neighbors query with all items" << std::endl;
+TEST(FlatbushTest, NeighborsQueryAllItems) {
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors({50, 50});
 
-  assert(wIds.size() == wIndex.numItems());
+  EXPECT_EQ(wIds.size(), wIndex.numItems());
 }
 
-void neighborsQueryMaxDistance() {
-  std::cout << "k-nearest-neighbors query accepts maxDistance" << std::endl;
+TEST(FlatbushTest, NeighborsQueryMaxDistance) {
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors({50, 50}, flatbush::gMaxResults, 12);
   std::vector<size_t> wExpected = {6, 29, 31, 75, 85};
 
-  assert(wExpected.size() == wIds.size());
+  EXPECT_EQ(wExpected.size(), wIds.size());
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  assert(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
+  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
-void neighborsQueryFilterFunc() {
-  std::cout << "k-nearest-neighbors query accepts filterFn" << std::endl;
+TEST(FlatbushTest, NeighborsQueryFilterFunc) {
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors(
       {50, 50}, 6, flatbush::gMaxDistance, [](size_t iValue, const flatbush::Box<double>&) {
@@ -247,175 +237,121 @@ void neighborsQueryFilterFunc() {
       });
   std::vector<size_t> wExpected = {6, 16, 18, 24, 54, 80};
 
-  assert(wExpected.size() == wIds.size());
+  EXPECT_EQ(wExpected.size(), wIds.size());
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wIds.begin(), wIds.end());
 
-  assert(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
+  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
-void returnIndexOfNewlyAddedRectangle() {
-  std::cout << "returns index of newly-added rectangle" << std::endl;
+TEST(FlatbushTest, ReturnIndexOfNewlyAddedRectangle) {
   flatbush::FlatbushBuilder<double> wBuilder;
 
   for (size_t wIdx = 0; wIdx < 5; ++wIdx) {
-    assert(wIdx == wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]}));
+    EXPECT_EQ(wIdx, wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]}));
   }
 }
 
-void searchQueryFilterFunc() {
-  std::cout << "bbox search query accepts filterFn" << std::endl;
+TEST(FlatbushTest, SearchQueryFilterFunc) {
   auto wIndex = createIndex();
   auto wIds = wIndex.search({40, 40, 60, 60}, [](size_t iValue, const flatbush::Box<double>&) {
     return iValue % 2 == 0;
   });
-  assert(wIds.size() == 1);
-  assert(wIds.front() == 6);
+  EXPECT_EQ(wIds.size(), 1);
+  EXPECT_EQ(wIds.front(), 6);
 }
 
-void reconstructIndexFromJSArrayBuffer() {
-  std::cout << "reconstructs an index from JS array buffer" << std::endl;
+TEST(FlatbushTest, ReconstructIndexFromJSArrayBuffer) {
   auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), gFlatbush.size());
   auto wIndexBuffer = wIndex.data();
 
-  assert(wIndexBuffer.size() == gFlatbush.size());
+  EXPECT_EQ(wIndexBuffer.size(), gFlatbush.size());
 
-  assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), gFlatbush.begin()));
+  EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), gFlatbush.begin()));
 }
 
-void fromNull() {
-  std::cout << "throws an error if no data passed to from()" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double>::from(nullptr, flatbush::gHeaderByteSize);
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("Data is incomplete or missing.") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromNull) {
+  EXPECT_THROW(
+      { flatbush::FlatbushBuilder<double>::from(nullptr, flatbush::gHeaderByteSize); },
+      std::invalid_argument);
 }
 
-void fromWrongMagic() {
-  std::cout << "throws an error if magic field is invalid" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{0xf1}.data(),
-                                            flatbush::gHeaderByteSize);
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("Data does not appear to be in a Flatbush format.") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromWrongMagic) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{0xf1}.data(),
+                                                flatbush::gHeaderByteSize);
+      },
+      std::invalid_argument);
 }
 
-void fromWrongVersion() {
-  std::cout << "throws an error on version mismatch" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{0xfb, 2 << 4}.data(),
-                                            flatbush::gHeaderByteSize);
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("Got v2 data when expected v" + std::to_string(flatbush::gVersion) +
-                             ".") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromWrongVersion) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{0xfb, 2 << 4}.data(),
+                                                flatbush::gHeaderByteSize);
+      },
+      std::invalid_argument);
 }
 
-void fromWrongEncodedType() {
-  std::cout << "throws an error reconstructing a type distinct than template type" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<int>::from(gFlatbush.data(), gFlatbush.size());
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown =
-        (std::string("Expected type is double, but got template type int32_t") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromWrongEncodedType) {
+  EXPECT_THROW(
+      { flatbush::FlatbushBuilder<int>::from(gFlatbush.data(), gFlatbush.size()); },
+      std::invalid_argument);
 }
 
-void fromInvalidHeaderSize() {
-  std::cout << "throws an error when the buffer size is less than header size" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{251, 56, 0, 0}.data(), 4);
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("Data buffer size must be at least 8 bytes.") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromInvalidHeaderSize) {
+  EXPECT_THROW(
+      { flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{251, 56, 0, 0}.data(), 4); },
+      std::invalid_argument);
 }
 
-void fromInvalidNodeSize() {
-  std::cout << "throws an error if nodeSize is less than minimum allowed" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t>{251, 56, 0, 0, 0, 0, 0, 0}.data(),
-                                            flatbush::gHeaderByteSize);
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("Node size cannot be < 2.") == iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromInvalidNodeSize) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double>::from(
+            std::vector<uint8_t>{251, 56, 0, 0, 0, 0, 0, 0}.data(), flatbush::gHeaderByteSize);
+      },
+      std::invalid_argument);
 }
 
-void fromInvalidNumItems() {
-  std::cout << "throws an error if buffer of numItems does not match provided size" << std::endl;
-  bool wIsThrown = false;
-
-  try {
-    flatbush::FlatbushBuilder<double>::from(
-        std::vector<uint8_t>{251, 56, 16, 0, 14, 0, 0, 0}.data(), flatbush::gHeaderByteSize);
-  } catch (const std::invalid_argument& iError) {
-    wIsThrown = (std::string("Num items dictates a total size of 518, but got buffer size 8.") ==
-                 iError.what());
-  }
-
-  assert(wIsThrown);
+TEST(FlatbushTest, FromInvalidNumItems) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double>::from(
+            std::vector<uint8_t>{251, 56, 16, 0, 14, 0, 0, 0}.data(), flatbush::gHeaderByteSize);
+      },
+      std::invalid_argument);
 }
 
-void adjustedNodeSize() {
-  std::cout << "adjusts the minimum nodeSize when constructing new index" << std::endl;
-
+TEST(FlatbushTest, AdjustedNodeSize) {
   flatbush::FlatbushBuilder<int> wBuilder0(1, 0);
   wBuilder0.add({0, 0, 0, 0});
   auto wIndex0 = wBuilder0.finish();
-  assert(wIndex0.numItems() == 1);
-  assert(wIndex0.nodeSize() == 2);
+  EXPECT_EQ(wIndex0.numItems(), 1);
+  EXPECT_EQ(wIndex0.nodeSize(), 2);
 
   flatbush::FlatbushBuilder<int> wBuilder1(1, 1);
   wBuilder1.add({0, 0, 0, 0});
   auto wIndex1 = wBuilder1.finish();
-  assert(wIndex1.numItems() == 1);
-  assert(wIndex1.nodeSize() == 2);
+  EXPECT_EQ(wIndex1.numItems(), 1);
+  EXPECT_EQ(wIndex1.nodeSize(), 2);
 }
 
-void searchQuerySinglePointSmallNumItems() {
-  std::cout << "bbox search query single point (same min/max) with numitems < nodesize"
-            << std::endl;
-
+TEST(FlatbushTest, SearchQuerySinglePointSmallNumItems) {
   flatbush::FlatbushBuilder<int> wBuilder;
   wBuilder.add({0, 0, 0, 0});
   auto wIndex = wBuilder.finish();
 
-  assert(wIndex.numItems() == 1);
-  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
+  EXPECT_EQ(wIndex.numItems(), 1);
+  EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({0, 0, 0, 0});
-  assert(wIds.size() == 1);
-  assert(wIds.front() == 0);
+  EXPECT_EQ(wIds.size(), 1);
+  EXPECT_EQ(wIds.front(), 0);
 }
 
-void searchQuerySinglePointLargeNumItems() {
-  std::cout << "bbox search query single point (same min/max) with numitems > nodesize"
-            << std::endl;
+TEST(FlatbushTest, SearchQuerySinglePointLargeNumItems) {
   uint32_t wNumItems = 5;
   uint16_t wNodeSize = 4;
 
@@ -427,17 +363,15 @@ void searchQuerySinglePointLargeNumItems() {
   wBuilder.add({1, 2, 3, 4});
   auto wIndex = wBuilder.finish();
 
-  assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == wNodeSize);
+  EXPECT_EQ(wIndex.numItems(), wNumItems);
+  EXPECT_EQ(wIndex.nodeSize(), wNodeSize);
 
   auto wIds = wIndex.search({0, 0, 0, 0});
-  assert(wIds.size() == 1);
-  assert(wIds.front() == 0);
+  EXPECT_EQ(wIds.size(), 1);
+  EXPECT_EQ(wIds.front(), 0);
 }
 
-void searchQueryMultiPointSmallNumItems() {
-  std::cout << "bbox search query multiple points (same min/max) with numitems < nodesize"
-            << std::endl;
+TEST(FlatbushTest, SearchQueryMultiPointSmallNumItems) {
   uint32_t wNumItems = 5;
 
   flatbush::FlatbushBuilder<int> wBuilder;
@@ -448,18 +382,16 @@ void searchQueryMultiPointSmallNumItems() {
   wBuilder.add({1, 2, 3, 4});
   auto wIndex = wBuilder.finish();
 
-  assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
+  EXPECT_EQ(wIndex.numItems(), wNumItems);
+  EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({0, 0, 1, 1});
-  assert(wIds.size() == 4);
-  assert(wIds.front() == 0);
-  assert(wIds.back() == 3);
+  EXPECT_EQ(wIds.size(), 4);
+  EXPECT_EQ(wIds.front(), 0);
+  EXPECT_EQ(wIds.back(), 3);
 }
 
-void searchQueryMultiPointLargeNumItems() {
-  std::cout << "bbox search query multiple points (same min/max) with numitems > nodesize"
-            << std::endl;
+TEST(FlatbushTest, SearchQueryMultiPointLargeNumItems) {
   uint32_t wNumItems = 9;
   uint16_t wNodeSize = 4;
 
@@ -475,18 +407,38 @@ void searchQueryMultiPointLargeNumItems() {
   wBuilder.add({9, 9, 9, 9});
   auto wIndex = wBuilder.finish();
 
-  assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == wNodeSize);
+  EXPECT_EQ(wIndex.numItems(), wNumItems);
+  EXPECT_EQ(wIndex.nodeSize(), wNodeSize);
 
   auto wIds = wIndex.search({0, 0, 1, 1});
-  assert(wIds.size() == 4);
-  assert(wIds.front() == 0);
-  assert(wIds.back() == 1);
+  EXPECT_EQ(wIds.size(), 4);
+  EXPECT_EQ(wIds.front(), 0);
+  EXPECT_EQ(wIds.back(), 1);
 }
 
-void testOneMillionItems() {
-  std::cout << "test adding one million items" << std::endl;
+TEST(FlatbushTest, ClearAndReuseBuilder) {
+  flatbush::FlatbushBuilder<double> wBuilder;
 
+  for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4) {
+    wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]});
+  }
+
+  auto wIndex = wBuilder.finish();
+  wBuilder.add({1, 2, 3, 4});
+  auto wIndex2 = wBuilder.finish();
+
+  EXPECT_EQ(wIndex2.numItems(), wIndex.numItems() + 1);
+  EXPECT_EQ(wIndex2.nodeSize(), wIndex.nodeSize());
+
+  wBuilder.clear();
+  wBuilder.add({1, 2, 3, 4});
+  auto wIndex3 = wBuilder.finish();
+
+  EXPECT_EQ(wIndex3.numItems(), 1);
+  EXPECT_EQ(wIndex3.nodeSize(), wIndex2.nodeSize());
+}
+
+TEST(FlatbushTest, TestOneMillionItems) {
   flatbush::FlatbushBuilder<uint32_t> wBuilder;
   uint32_t wNumItems = 1000000;
 
@@ -495,20 +447,18 @@ void testOneMillionItems() {
   }
 
   auto wIndex = wBuilder.finish();
-  assert(wIndex.numItems() == wNumItems);
-  assert(wIndex.nodeSize() == flatbush::gDefaultNodeSize);
+  EXPECT_EQ(wIndex.numItems(), wNumItems);
+  EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({0, 0, 0, 0});
-  assert(wIds.size() == 1);
-  assert(wIds.front() == 0);
+  EXPECT_EQ(wIds.size(), 1);
+  EXPECT_EQ(wIds.front(), 0);
 
   auto wIds2 = wIndex.search({0, 0, wNumItems, wNumItems});
-  assert(wIds2.size() == wNumItems);
+  EXPECT_EQ(wIds2.size(), wNumItems);
 }
 
-void quickSortImbalancedDataset() {
-  std::cout << "quicksort should work with an imbalanced dataset" << std::endl;
-
+TEST(FlatbushTest, QuickSortImbalancedDataset) {
   static const auto linspace = [](double wStart, double wStop, uint32_t wNum) {
     const auto wStep = (wStop - wStart) / (wNum - 1);
     std::vector<double> wItems(wNum);
@@ -518,9 +468,7 @@ void quickSortImbalancedDataset() {
     return wItems;
   };
 
-  bool wIsThrown = false;
-
-  try {
+  EXPECT_NO_THROW({
     flatbush::FlatbushBuilder<double> wBuilder;
     uint32_t wNumItems = 15000;
     const auto& wItems = linspace(0, 1000, wNumItems);
@@ -531,16 +479,10 @@ void quickSortImbalancedDataset() {
       }
     }
     wBuilder.finish();
-  } catch (const std::exception&) {
-    wIsThrown = true;
-  }
-
-  assert(!wIsThrown);
+  });
 }
 
-void quickSortWorksOnDuplicates() {
-  std::cout << "quicksort should work with duplicates" << std::endl;
-
+TEST(FlatbushTest, QuickSortWorksOnDuplicates) {
   uint32_t wNumItems = 55000 + 5500 + 7700;
   flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
   auto wX = 0.0;
@@ -560,30 +502,32 @@ void quickSortWorksOnDuplicates() {
   const auto wIndex = wBuilder.finish();
 
   const auto wIds = wIndex.search({0.5, -1, 6.5, 1});
-  assert(wIds.size() == 0);
+  EXPECT_EQ(wIds.size(), 0);
 
   const auto wIds2 = wIndex.search({55000, 4.0, 55000, 4.0});
-  assert(wIds2.size() == 1);
+  EXPECT_EQ(wIds2.size(), 1);
 }
 
-void reconstructIndexFromMovedVector() {
-  std::cout << "reconstructs an index from a moved vector" << std::endl;
+TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();
   auto wIndexVector = std::vector<uint8_t>{wIndexBuffer.begin(), wIndexBuffer.end()};
   auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wIndexVector));
   auto wIndex2Buffer = wIndex2.data();
 
-  assert(wIndexBuffer.size() == wIndex2Buffer.size());
+  EXPECT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
 
-  assert(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
+  EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
 
-template <typename ArrayType>
-void simpleIndexTypeTest() {
-  std::cout << "simple test for type: "
-            << flatbush::detail::arrayTypeName(flatbush::detail::arrayTypeIndex<ArrayType>())
-            << std::endl;
+template <typename T>
+class FlatbushTypedTest : public Test {};
+
+using TypesToTest = Types<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>;
+TYPED_TEST_SUITE(FlatbushTypedTest, TypesToTest);
+
+TYPED_TEST(FlatbushTypedTest, BasicIndexCreationAndSearch) {
+  using ArrayType = TypeParam;
 
   // Test basic index creation and search
   flatbush::FlatbushBuilder<ArrayType> wBuilder;
@@ -593,7 +537,7 @@ void simpleIndexTypeTest() {
         {wVal, wVal, static_cast<ArrayType>(wVal + 10), static_cast<ArrayType>(wVal + 10)});
   }
   auto wIndex = wBuilder.finish();
-  assert(wIndex.numItems() == 100);
+  EXPECT_EQ(wIndex.numItems(), 100);
 
   // Item at index i has box [i, i, i+10, i+10]
   // Search [45, 45, 55, 55] should overlap items 35-55
@@ -601,50 +545,20 @@ void simpleIndexTypeTest() {
                              static_cast<ArrayType>(45),
                              static_cast<ArrayType>(55),
                              static_cast<ArrayType>(55)});
-  assert(wIds.size() == 21);
-
-  auto wNeighbors = wIndex.neighbors({static_cast<ArrayType>(50), static_cast<ArrayType>(50)}, 5);
-  assert(wNeighbors.size() == 5);
+  EXPECT_EQ(wIds.size(), 21);
 }
 
-int main(int /*argc*/, char** /*argv*/) {
-  indexBunchOfRectangles();
-  skipSortingLessThanNodeSizeRectangles();
-  performBoxSearch();
-  reconstructIndexFromArrayBuffer();
-  doesNotFreezeOnZeroNumItems();
-  returnIndexOfNewlyAddedRectangle();
-  performNeighborsQuery();
-  neighborsQueryAllItems();
-  neighborsQueryMaxDistance();
-  neighborsQueryFilterFunc();
-  searchQueryFilterFunc();
-  reconstructIndexFromJSArrayBuffer();
-  fromNull();
-  fromWrongMagic();
-  fromWrongVersion();
-  fromWrongEncodedType();
-  fromInvalidHeaderSize();
-  fromInvalidNodeSize();
-  fromInvalidNumItems();
-  adjustedNodeSize();
-  searchQuerySinglePointSmallNumItems();
-  searchQuerySinglePointLargeNumItems();
-  searchQueryMultiPointSmallNumItems();
-  searchQueryMultiPointLargeNumItems();
-  testOneMillionItems();
-  quickSortImbalancedDataset();
-  quickSortWorksOnDuplicates();
-  reconstructIndexFromMovedVector();
+TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
+  using ArrayType = TypeParam;
 
-  simpleIndexTypeTest<int8_t>();
-  simpleIndexTypeTest<uint8_t>();
-  simpleIndexTypeTest<int16_t>();
-  simpleIndexTypeTest<uint16_t>();
-  simpleIndexTypeTest<int32_t>();
-  simpleIndexTypeTest<uint32_t>();
-  simpleIndexTypeTest<float>();
-  simpleIndexTypeTest<double>();
+  flatbush::FlatbushBuilder<ArrayType> wBuilder;
+  for (size_t wIdx = 0; wIdx < 100; wIdx++) {
+    ArrayType wVal = static_cast<ArrayType>(wIdx);
+    wBuilder.add(
+        {wVal, wVal, static_cast<ArrayType>(wVal + 10), static_cast<ArrayType>(wVal + 10)});
+  }
+  auto wIndex = wBuilder.finish();
 
-  return EXIT_SUCCESS;
+  auto wNeighbors = wIndex.neighbors({static_cast<ArrayType>(50), static_cast<ArrayType>(50)}, 5);
+  EXPECT_EQ(wNeighbors.size(), 5);
 }
