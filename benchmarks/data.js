@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1767128910177,
+  "lastUpdate": 1767128928308,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -1430,6 +1430,72 @@ window.BENCHMARK_DATA = {
             "value": 570354762.9999548,
             "unit": "ns/iter",
             "extra": "iterations: 1\ncpu: 570283783.0000007 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "36134278+chusitoo@users.noreply.github.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "75d2b4f9878c87d4411095bb300595bf1e38e337",
+          "message": "Improve CI tests (#6)\n\n- Adapt test.cpp to run with gtest\n- Adapt bench.cpp to run with benchmark\n- Add fuzztest to CI\n- Add clang-format to CI\n- Add cppcheck to CI\n- Combine CI unit tests into one workflow\n- Test clang and g++ in UTs for Ubuntu",
+          "timestamp": "2025-12-30T16:07:45-05:00",
+          "tree_id": "7ea4a4997624bffba5ce2ff40287ec50e4c56d16",
+          "url": "https://github.com/chusitoo/flatbush/commit/75d2b4f9878c87d4411095bb300595bf1e38e337"
+        },
+        "date": 1767128927389,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 132153033.99999812,
+            "unit": "ns/iter",
+            "extra": "iterations: 5\ncpu: 132130998.1999999 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 195471527.99999878,
+            "unit": "ns/iter",
+            "extra": "iterations: 4\ncpu: 195445094.4999997 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 32987551.10526336,
+            "unit": "ns/iter",
+            "extra": "iterations: 19\ncpu: 32981052.421052527 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 3165532.9466666947,
+            "unit": "ns/iter",
+            "extra": "iterations: 225\ncpu: 3164993.4622222194 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 16597612.952379916,
+            "unit": "ns/iter",
+            "extra": "iterations: 42\ncpu: 16594543.404761927 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 109573860.66666193,
+            "unit": "ns/iter",
+            "extra": "iterations: 6\ncpu: 109565363.99999984 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 463570342.50002015,
+            "unit": "ns/iter",
+            "extra": "iterations: 2\ncpu: 463507837.99999994 ns\nthreads: 1"
           }
         ]
       }
