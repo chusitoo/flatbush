@@ -1,7 +1,7 @@
 # Flatbush for C++
 
-[![Code format](https://github.com/chusitoo/flatbush/actions/workflows/format.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/format.yml)
-[![Static code analysis](https://github.com/chusitoo/flatbush/actions/workflows/cppcheck.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cppcheck.yml)
+[![Format](https://github.com/chusitoo/flatbush/actions/workflows/format.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/format.yml)
+[![CppCheck](https://github.com/chusitoo/flatbush/actions/workflows/cppcheck.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/cppcheck.yml)
 [![CodeQL](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/codeql.yml)
 [![Unit Tests](https://github.com/chusitoo/flatbush/actions/workflows/test.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/test.yml)
 [![Fuzz tests](https://github.com/chusitoo/flatbush/actions/workflows/fuzz.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/fuzz.yml)
