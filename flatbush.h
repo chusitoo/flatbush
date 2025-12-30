@@ -80,6 +80,28 @@ constexpr size_t gHeaderByteSize = 8;
 constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
 
+template <typename ArrayType>
+struct Box {
+  ArrayType mMinX;
+  ArrayType mMinY;
+  ArrayType mMaxX;
+  ArrayType mMaxY;
+
+  template <typename OtherType>
+  explicit operator Box<OtherType>() const noexcept {
+    return Box<OtherType>{static_cast<OtherType>(mMinX),
+                          static_cast<OtherType>(mMinY),
+                          static_cast<OtherType>(mMaxX),
+                          static_cast<OtherType>(mMaxY)};
+  }
+};
+
+template <typename ArrayType>
+struct Point {
+  ArrayType mX;
+  ArrayType mY;
+};
+
 namespace detail {
 
 // From https://www.boost.org/doc/libs/1_81_0/boost/core/bit.hpp (modified)
@@ -229,21 +251,30 @@ inline const char* arrayTypeName(size_t iIndex) {
                                                                      "double"};
   return iIndex < kArrayTypeNames.size() ? kArrayTypeNames.at(iIndex) : kUnknownType;
 }
+
+template <typename ArrayType>
+inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
+                                     const Box<ArrayType>& iBoxSearch,
+                                     const size_t iNumItems) {
+  const auto wBoundsIndex = static_cast<const Box<double>>(iBoxIndex);
+  const auto wBoundsSearch = static_cast<const Box<double>>(iBoxSearch);
+
+  // Calculate intersection area
+  const auto wWidth = std::min(wBoundsIndex.mMaxX, wBoundsSearch.mMaxX) -
+                      std::max(wBoundsIndex.mMinX, wBoundsSearch.mMinX);
+  const auto wHeight = std::min(wBoundsIndex.mMaxY, wBoundsSearch.mMaxY) -
+                       std::max(wBoundsIndex.mMinY, wBoundsSearch.mMinY);
+
+  // Approximate results vector size based on intersection area, assuming uniform distribution
+  const auto wSearchArea =
+      (wBoundsSearch.mMaxX - wBoundsSearch.mMinX) * (wBoundsSearch.mMaxY - wBoundsSearch.mMinY);
+
+  return (wWidth > 0 && wHeight > 0 && wSearchArea > 0)
+             ? static_cast<size_t>(wSearchArea / (wWidth * wHeight) *
+                                   static_cast<double>(iNumItems))
+             : 0UL;
+}
 }  // namespace detail
-
-template <typename ArrayType>
-struct Box {
-  ArrayType mMinX;
-  ArrayType mMinY;
-  ArrayType mMaxX;
-  ArrayType mMaxY;
-};
-
-template <typename ArrayType>
-struct Point {
-  ArrayType mX;
-  ArrayType mY;
-};
 
 template <class ArrayType>
 class Flatbush;
@@ -395,7 +426,7 @@ class Flatbush {
   static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
 
   static inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
-    return iValue < iMin ? iMin - iValue : std::max(iValue - iMax, 0.0);
+    return iValue < iMin ? iMin - iValue : std::max<double>(iValue - iMax, 0.0);
   }
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
@@ -706,17 +737,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
-  // Calculate intersection area
-  const auto wWidth =
-      std::min(mBounds.mMaxX, iBounds.mMaxX) - std::max(mBounds.mMinX, iBounds.mMinX);
-  const auto wHeight =
-      std::min(mBounds.mMaxY, iBounds.mMaxY) - std::max(mBounds.mMinY, iBounds.mMinY);
-  // Approximate results vector size based on intersection area, assuming uniform distribution
-  const auto wSearchArea = (iBounds.mMaxX - iBounds.mMinX) * (iBounds.mMaxY - iBounds.mMinY);
-  wResults.reserve(
-      (wWidth > ArrayType{0} && wHeight > ArrayType{0} && wSearchArea > ArrayType{0})
-          ? static_cast<size_t>(static_cast<double>(wNumItems) * wSearchArea / (wWidth * wHeight))
-          : 0UL);
+  wResults.reserve(detail::approximateResultsSize(mBounds, iBounds, wNumItems));
 
   while (wCanLoop) {
     // find the end index of the node
