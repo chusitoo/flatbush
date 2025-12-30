@@ -22,16 +22,64 @@ if(WITH_SPAN)
 endif()
 
 if(WITH_BENCHMARKS)
+  set(CMAKE_BUILD_TYPE Release)
+
+  include(FetchContent)
+  FetchContent_Declare(
+    benchmark
+    GIT_REPOSITORY https://github.com/google/benchmark.git
+    GIT_TAG v1.9.1
+  )
+  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(benchmark)
+
   set(bench_target bench)
   add_executable(${bench_target} "bench.cpp")
+  target_link_libraries(${bench_target} PRIVATE benchmark::benchmark)
 endif()
 
 if(WITH_TESTS)
+  set(CMAKE_BUILD_TYPE Debug)
+
+  include(FetchContent)
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.15.2
+  )
+
+  set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+  FetchContent_MakeAvailable(googletest)
+
+  include(GoogleTest)
+  enable_testing()
+
   set(test_target unit_test)
   add_executable(${test_target} "test.cpp")
+  target_link_libraries(${test_target} PRIVATE gtest_main)
+  gtest_discover_tests(${test_target})
+endif()
 
+if(WITH_FUZZING)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo)
+
+  include(FetchContent)
+  FetchContent_Declare(
+    fuzztest
+    GIT_REPOSITORY https://github.com/google/fuzztest.git
+    GIT_TAG 2025-08-05
+  )
+  FetchContent_MakeAvailable(fuzztest)
+
+  include(GoogleTest)
   enable_testing()
-  add_test(NAME ${test_target} COMMAND ${test_target})
+
+  fuzztest_setup_fuzzing_flags()
+  set(fuzz_target fuzz_test)
+  add_executable(${fuzz_target} "fuzz.cpp")
+  link_fuzztest(${fuzz_target})
+  gtest_discover_tests(${fuzz_target})
 endif()
 
 configure_file(
