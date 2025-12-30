@@ -1,4 +1,4 @@
-name: Ubuntu
+name: "Fuzz tests"
 
 on:
   push:
@@ -9,19 +9,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
 
     steps:
     - uses: actions/checkout@v3
 
     - name: Configure CMake
-      run: cmake -B ${{github.workspace}}/build -DWITH_FUZZING=ON \
-                                                -DFUZZTEST_FUZZING_MODE=ON \
-                                                -DCMAKE_C_COMPILER=clang \
-                                                -DCMAKE_CXX_COMPILER=clang++
+      run: cmake -B ${{github.workspace}}/build -DWITH_FUZZING=ON -DFUZZTEST_FUZZING_MODE=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
     - name: Build
-      run: cmake --build ${{github.workspace}}/build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . -j $(nproc)
 
     - name: Fuzz
       working-directory: ${{github.workspace}}/build
