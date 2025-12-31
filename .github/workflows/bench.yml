@@ -37,4 +37,4 @@ jobs:
         fail-on-alert: false
         alert-threshold: 150%
         gh-pages-branch: gh-pages
-        benchmark-data-dir-path: 'benchmarks'
+        benchmark-data-dir-path: benchmarks/${{matrix.compiler}}
