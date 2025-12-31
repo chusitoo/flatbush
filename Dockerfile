@@ -6,6 +6,7 @@ RUN apt update -y \
                    clang \
                    clang-format \
                    cmake \
+                   cppcheck \
                    curl \
                    git \
                    tar \

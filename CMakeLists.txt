@@ -34,7 +34,7 @@ if(WITH_BENCHMARKS)
   set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(benchmark)
 
-  set(bench_target bench)
+  set(bench_target bench_test)
   add_executable(${bench_target} "bench.cpp")
   target_link_libraries(${bench_target} PRIVATE benchmark::benchmark)
 endif()

@@ -7,7 +7,9 @@
 [![Fuzz tests](https://github.com/chusitoo/flatbush/actions/workflows/fuzz.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/fuzz.yml)
 [![Benchmarks](https://github.com/chusitoo/flatbush/actions/workflows/bench.yml/badge.svg)](https://github.com/chusitoo/flatbush/actions/workflows/bench.yml)
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/chusitoo/flatbush)](https://github.com/chusitoo/flatbush/releases/latest) [![Conan Center](https://img.shields.io/conan/v/flatbush)](https://conan.io/center/recipes/flatbush) [![Vcpkg](https://img.shields.io/vcpkg/v/flatbush)](https://vcpkg.io/en/package/flatbush)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/chusitoo/flatbush)](https://github.com/chusitoo/flatbush/releases/latest)
+[![Conan Center](https://img.shields.io/conan/v/flatbush)](https://conan.io/center/recipes/flatbush)
+[![Vcpkg](https://img.shields.io/vcpkg/v/flatbush)](https://vcpkg.io/en/package/flatbush)
 
 A C++ adaptation of the great Flatbush JS library which implements a packed Hilbert R-tree algorithm.
 
@@ -36,11 +38,6 @@ for (const auto& box : boxes) {
 
 // perform the indexing
 auto index = builder.finish();
-
-// can reuse existing builder
-// call builder.clear() or keep adding items
-builder.add({ box.minX, box.minY, box.maxX, box.maxY });
-auto other = builder.finish();
 ```
 
 ### Searching a bounding box
@@ -113,13 +110,13 @@ The library automatically detects and uses SIMD instructions for improved perfor
 ### Bench tests
 
 ```shell
-(cmake -B build/bench -DWITH_BENCHMARKS=ON && cmake --build build/bench -j $(nproc) && ./build/bench/bench)
+(cmake -B build/bench -DWITH_BENCHMARKS=ON && cmake --build build/bench -j $(nproc) && ./build/bench/bench_test)
 ```
 
 ### Fuzz tests
 
 ```shell
-(cmake -B build/fuzz -DWITH_FUZZING=ON -DFUZZTEST_FUZZING_MODE=ON && cmake --build build/fuzz -j $(nproc) && ./build/fuzz/fuzz)
+(cmake -B build/fuzz -DWITH_FUZZING=ON -DFUZZTEST_FUZZING_MODE=ON && cmake --build build/fuzz -j $(nproc) && ./build/fuzz/fuzz_test)
 ```
 
 ## Performance

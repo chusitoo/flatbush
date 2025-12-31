@@ -29,7 +29,7 @@ jobs:
 
     - name: Bench
       working-directory: ${{github.workspace}}/build
-      run: ./bench --benchmark_format=json | tee benchmark_results_${{matrix.compiler}}.txt
+      run: ./bench_test --benchmark_format=json | tee benchmark_results_${{matrix.compiler}}.txt
 
     - name: Store benchmark result
       uses: benchmark-action/github-action-benchmark@v1

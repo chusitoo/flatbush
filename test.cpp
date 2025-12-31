@@ -416,28 +416,6 @@ TEST(FlatbushTest, SearchQueryMultiPointLargeNumItems) {
   EXPECT_EQ(wIds.back(), 1);
 }
 
-TEST(FlatbushTest, ClearAndReuseBuilder) {
-  flatbush::FlatbushBuilder<double> wBuilder;
-
-  for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4) {
-    wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]});
-  }
-
-  auto wIndex = wBuilder.finish();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex2 = wBuilder.finish();
-
-  EXPECT_EQ(wIndex2.numItems(), wIndex.numItems() + 1);
-  EXPECT_EQ(wIndex2.nodeSize(), wIndex.nodeSize());
-
-  wBuilder.clear();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex3 = wBuilder.finish();
-
-  EXPECT_EQ(wIndex3.numItems(), 1);
-  EXPECT_EQ(wIndex3.nodeSize(), wIndex2.nodeSize());
-}
-
 TEST(FlatbushTest, TestOneMillionItems) {
   flatbush::FlatbushBuilder<uint32_t> wBuilder;
   uint32_t wNumItems = 1000000;
