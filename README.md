@@ -132,3 +132,5 @@ index 1000000 rectangles: | 93ms | 112ms | 124ms
 1000 searches of 100 neighbors: | 12ms | 12ms | 17ms
 1 searches of 1000000 neighbors: | 80ms | 59ms | 61ms
 100000 searches of 1 neighbors: | 297ms | 363ms | 503ms
+
+Runner benchmarks over time for [gcc](https://chusitoo.github.io/flatbush/benchmarks/g++) and [clang](https://chusitoo.github.io/flatbush/benchmarks/clang++)
