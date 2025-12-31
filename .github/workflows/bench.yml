@@ -43,5 +43,5 @@ jobs:
         comment-on-alert: true
         alert-threshold: 150%
         gh-pages-branch: gh-pages
-        benchmark-data-dir-path: 'benchmarks'
+        benchmark-data-dir-path: benchmarks/${{matrix.compiler}}
         auto-push: true
