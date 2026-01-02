@@ -744,7 +744,7 @@ inline double computeDistanceSquared<double>(const Point<double>& iPoint,
 template <>
 inline double computeDistanceSquared<float>(const Point<float>& iPoint,
                                             const Box<float>& iBox) noexcept {
-  const auto wPoint = _mm_loadu_ps(&iPoint.mX);
+  const auto wPoint = _mm_castpd_ps(_mm_load_sd(bit_cast<const double*>(&iPoint.mX)));
   const auto wPointHl = _mm_movelh_ps(wPoint, wPoint);
   const auto wBox = _mm_loadu_ps(&iBox.mMinX);
   const auto wBoxMin = _mm_movelh_ps(wBox, wBox);
