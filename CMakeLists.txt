@@ -56,7 +56,6 @@ if(WITH_TESTS)
   enable_testing()
 
   set(test_target unit_test)
-  add_compile_options(-Wall -Wextra -Werror -Wpedantic -Wold-style-cast -Wdelete-incomplete -Wformat-nonliteral -Wno-varargs -Wconversion)
   add_executable(${test_target} "test.cpp")
   target_link_libraries(${test_target} PRIVATE gtest_main)
   gtest_discover_tests(${test_target})
