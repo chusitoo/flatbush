@@ -44,12 +44,11 @@ struct BenchmarkData {
   }
 
   static void addRandomBox(std::vector<double>& iBoxes, double iBoxSize) {
-    std::random_device wDevice;
-    std::mt19937 wEngine(wDevice());
-    double wMinX = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
-    double wMinY = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
-    double wMaxX = wMinX + randomDouble(0.0, iBoxSize)(wEngine);
-    double wMaxY = wMinY + randomDouble(0.0, iBoxSize)(wEngine);
+    static std::mt19937 wEngine(5489031744);
+    auto wMinX = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
+    auto wMinY = randomDouble(0.0, 100.0 - iBoxSize)(wEngine);
+    auto wMaxX = wMinX + randomDouble(0.0, iBoxSize)(wEngine);
+    auto wMaxY = wMinY + randomDouble(0.0, iBoxSize)(wEngine);
     iBoxes.push_back(wMinX);
     iBoxes.push_back(wMinY);
     iBoxes.push_back(wMaxX);
