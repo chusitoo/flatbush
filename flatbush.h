@@ -326,7 +326,7 @@ inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
     return iNumItems;
   }
 
-  return iNumItems * static_cast<size_t>(std::min(1.0, wAreaRatio * 1.5));
+  return static_cast<size_t>(static_cast<double>(iNumItems) * std::min(1.0, wAreaRatio * 1.5));
 }
 
 template <typename ArrayType>
