@@ -304,32 +304,29 @@ inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
   const auto wBoundsIndex = static_cast<const Box<double>>(iBoxIndex);
   const auto wBoundsSearch = static_cast<const Box<double>>(iBoxSearch);
 
-  // Calculate intersection area
-  const auto wWidth = std::min(wBoundsIndex.mMaxX, wBoundsSearch.mMaxX) -
-                      std::max(wBoundsIndex.mMinX, wBoundsSearch.mMinX);
-  const auto wHeight = std::min(wBoundsIndex.mMaxY, wBoundsSearch.mMaxY) -
-                       std::max(wBoundsIndex.mMinY, wBoundsSearch.mMinY);
-  const auto wIntersectionArea = wWidth * wHeight;
+  // Calculate index area
+  const auto wIndexWidth = wBoundsIndex.mMaxX - wBoundsIndex.mMinX;
+  const auto wIndexHeight = wBoundsIndex.mMaxY - wBoundsIndex.mMinY;
+  const auto wIndexArea = wIndexWidth * wIndexHeight;
 
-  // Calculate search area
+  // Calculate intersection area
   const auto wSearchWidth = wBoundsSearch.mMaxX - wBoundsSearch.mMinX;
   const auto wSearchHeight = wBoundsSearch.mMaxY - wBoundsSearch.mMinY;
   const auto wSearchArea = wSearchWidth * wSearchHeight;
 
-  if (wWidth <= 0 || wHeight <= 0 || wIntersectionArea <= 0 || wSearchWidth <= 0 ||
+  if (wIndexWidth <= 0 || wIndexHeight <= 0 || wIndexArea <= 0 || wSearchWidth <= 0 ||
       wSearchHeight <= 0 || !std::isfinite(wSearchWidth) || !std::isfinite(wSearchHeight) ||
       !std::isfinite(wSearchArea) || wSearchArea <= 0) {
     return 0UL;
   }
 
   // Approximate results size based as ratio of areas, assuming uniform distribution
-  const auto wAreaRatio = wSearchArea / wIntersectionArea;
-
+  const auto wAreaRatio = wSearchArea / wIndexArea;
   if (!std::isfinite(wAreaRatio) || wAreaRatio > 1.0) {
     return iNumItems;
   }
 
-  return static_cast<size_t>(wAreaRatio * static_cast<double>(iNumItems));
+  return iNumItems * static_cast<size_t>(std::min(1.0, wAreaRatio * 1.8));
 }
 
 template <typename ArrayType>
