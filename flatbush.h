@@ -309,7 +309,7 @@ inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
   const auto wIndexHeight = wBoundsIndex.mMaxY - wBoundsIndex.mMinY;
   const auto wIndexArea = wIndexWidth * wIndexHeight;
 
-  // Calculate intersection area
+  // Calculate search area
   const auto wSearchWidth = wBoundsSearch.mMaxX - wBoundsSearch.mMinX;
   const auto wSearchHeight = wBoundsSearch.mMaxY - wBoundsSearch.mMinY;
   const auto wSearchArea = wSearchWidth * wSearchHeight;
@@ -357,8 +357,12 @@ inline double computeDistanceSquared(const Point<ArrayType>& iPoint,
 }
 
 #if defined(FLATBUSH_USE_SIMD)
-static const auto kZeroPd = _mm_setzero_pd();
-static const auto kZeroPs = _mm_setzero_ps();
+static constexpr auto kShuffleUnpackLo = _MM_SHUFFLE(1, 0, 1, 0);
+static constexpr auto kShuffleUnpackHi = _MM_SHUFFLE(3, 2, 3, 2);
+static constexpr auto kShuffleBroadcast0 = _MM_SHUFFLE(0, 0, 0, 0);
+static constexpr auto kShuffleBroadcast1 = _MM_SHUFFLE(1, 1, 1, 1);
+static constexpr auto kShuffleBlendMinMax = _MM_SHUFFLE(3, 2, 1, 0);
+static constexpr auto kShuffleExchange01 = _MM_SHUFFLE2(0, 1);
 static const auto kOffset8 = _mm_set1_epi8(std::numeric_limits<int8_t>::min());
 static const auto kOffset16 = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
 static const auto kOffset32 = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
@@ -366,11 +370,14 @@ static const auto kShuffleMin =
     _mm_setr_epi8(0, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
 static const auto kShuffleMax =
     _mm_setr_epi8(2, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
+static const auto kZeroPd = _mm_setzero_pd();
+static const auto kZeroPs = _mm_setzero_ps();
+
+static const auto kMaskAllOnes = _mm_set1_epi32(0xFFFF);
 static const auto kMaskInterleave1 = _mm_set1_epi32(0x00FF00FF);
 static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
 static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
-static const auto kMaskAllOnes = _mm_set1_epi32(0xFFFF);
 
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
 static const auto kShuffleMinX512 = _mm512_setr_epi64(0, 4, 8, 12, 0, 0, 0, 0);
@@ -459,8 +466,8 @@ template <>
 inline bool boxesIntersect<float>(const Box<float>& iQuery, const Box<float>& iBox) noexcept {
   const auto wQuery = _mm_loadu_ps(&iQuery.mMinX);
   const auto wBox = _mm_loadu_ps(&iBox.mMinX);
-  const auto wMin = _mm_unpacklo_ps(wQuery, wBox);
-  const auto wMax = _mm_unpackhi_ps(wBox, wQuery);
+  const auto wMin = _mm_shuffle_ps(wQuery, wBox, kShuffleUnpackLo);
+  const auto wMax = _mm_shuffle_ps(wBox, wQuery, kShuffleUnpackHi);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
   return _mm_cmp_ps_mask(wMax, wMin, _CMP_LT_OQ) == 0;
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
@@ -504,10 +511,10 @@ inline bool boxesIntersect<int8_t>(const Box<int8_t>& iQuery, const Box<int8_t>&
   const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi8(wBox, kShuffleMax),
                                        _mm_shuffle_epi8(wQuery, kShuffleMax));
 #else
-  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
-                                      _mm_shufflelo_epi16(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
-  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
-                                      _mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, kShuffleBroadcast0),
+                                      _mm_shufflelo_epi16(wBox, kShuffleBroadcast0));
+  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, kShuffleBroadcast1),
+                                      _mm_shufflelo_epi16(wQuery, kShuffleBroadcast1));
 #endif
   const auto wCmp = _mm_cmplt_epi8(wMax, wMin);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
@@ -527,10 +534,10 @@ inline bool boxesIntersect<uint8_t>(const Box<uint8_t>& iQuery, const Box<uint8_
   const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi8(wBox, kShuffleMax),
                                        _mm_shuffle_epi8(wQuery, kShuffleMax));
 #else
-  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
-                                      _mm_shufflelo_epi16(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
-  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
-                                      _mm_shufflelo_epi16(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, kShuffleBroadcast0),
+                                      _mm_shufflelo_epi16(wBox, kShuffleBroadcast0));
+  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, kShuffleBroadcast1),
+                                      _mm_shufflelo_epi16(wQuery, kShuffleBroadcast1));
 #endif
   const auto wCmp = _mm_cmplt_epi8(_mm_add_epi8(wMax, kOffset8), _mm_add_epi8(wMin, kOffset8));
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
@@ -544,10 +551,10 @@ template <>
 inline bool boxesIntersect<int16_t>(const Box<int16_t>& iQuery, const Box<int16_t>& iBox) noexcept {
   const auto wQuery = _mm_loadu_si64(&iQuery.mMinX);
   const auto wBox = _mm_loadu_si64(&iBox.mMinX);
-  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
-                                       _mm_shuffle_epi32(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
-  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
-                                       _mm_shuffle_epi32(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, kShuffleBroadcast0),
+                                       _mm_shuffle_epi32(wBox, kShuffleBroadcast0));
+  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, kShuffleBroadcast1),
+                                       _mm_shuffle_epi32(wQuery, kShuffleBroadcast1));
   const auto wCmp = _mm_cmplt_epi16(wMax, wMin);
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
@@ -561,10 +568,10 @@ inline bool boxesIntersect<uint16_t>(const Box<uint16_t>& iQuery,
                                      const Box<uint16_t>& iBox) noexcept {
   const auto wQuery = _mm_loadu_si64(&iQuery.mMinX);
   const auto wBox = _mm_loadu_si64(&iBox.mMinX);
-  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, _MM_SHUFFLE(0, 0, 0, 0)),
-                                       _mm_shuffle_epi32(wBox, _MM_SHUFFLE(0, 0, 0, 0)));
-  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, _MM_SHUFFLE(1, 1, 1, 1)),
-                                       _mm_shuffle_epi32(wQuery, _MM_SHUFFLE(1, 1, 1, 1)));
+  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, kShuffleBroadcast0),
+                                       _mm_shuffle_epi32(wBox, kShuffleBroadcast0));
+  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, kShuffleBroadcast1),
+                                       _mm_shuffle_epi32(wQuery, kShuffleBroadcast1));
   const auto wCmp = _mm_cmplt_epi16(_mm_add_epi16(wMax, kOffset16), _mm_add_epi16(wMin, kOffset16));
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   return _mm_testz_si128(wCmp, wCmp);
@@ -611,7 +618,7 @@ inline void updateBounds<float>(Box<float>& ioSrc, const Box<float>& iBox) noexc
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   _mm_storeu_ps(&ioSrc.mMinX, _mm_blend_ps(wMins, wMaxs, 0xC));
 #else
-  _mm_storeu_ps(&ioSrc.mMinX, _mm_shuffle_ps(wMins, wMaxs, _MM_SHUFFLE(3, 2, 1, 0)));
+  _mm_storeu_ps(&ioSrc.mMinX, _mm_shuffle_ps(wMins, wMaxs, kShuffleBlendMinMax));
 #endif
 }
 
@@ -740,7 +747,7 @@ inline double computeDistanceSquared<double>(const Point<double>& iPoint,
   const auto wResult = _mm_hadd_pd(wDistSq, wDistSq);
 #else
   const auto wDistSq = _mm_mul_pd(wDist, wDist);
-  const auto wResult = _mm_add_pd(wDistSq, _mm_unpackhi_pd(wDistSq, wDistSq));
+  const auto wResult = _mm_add_pd(wDistSq, _mm_shuffle_pd(wDistSq, wDistSq, kShuffleExchange01));
 #endif
   return _mm_cvtsd_f64(wResult);
 }
@@ -748,14 +755,14 @@ inline double computeDistanceSquared<double>(const Point<double>& iPoint,
 template <>
 inline double computeDistanceSquared<float>(const Point<float>& iPoint,
                                             const Box<float>& iBox) noexcept {
-  const auto wPoint = _mm_castpd_ps(_mm_load_sd(bit_cast<const double*>(&iPoint.mX)));
-  const auto wPointHl = _mm_movelh_ps(wPoint, wPoint);
   const auto wBox = _mm_loadu_ps(&iBox.mMinX);
-  const auto wBoxMin = _mm_movelh_ps(wBox, wBox);
-  const auto wBoxMax = _mm_movehl_ps(wBox, wBox);
+  const auto wPoint = _mm_castpd_ps(_mm_load_sd(bit_cast<const double*>(&iPoint.mX)));
+  const auto wPoint2 = _mm_shuffle_ps(wPoint, wPoint, kShuffleUnpackLo);
+  const auto wBoxMin = _mm_shuffle_ps(wBox, wBox, kShuffleUnpackLo);
+  const auto wBoxMax = _mm_shuffle_ps(wBox, wBox, kShuffleUnpackHi);
   // Compute axis distances - using max to clamp to zero
   const auto wDist =
-      _mm_max_ps(kZeroPs, _mm_max_ps(_mm_sub_ps(wBoxMin, wPointHl), _mm_sub_ps(wPointHl, wBoxMax)));
+      _mm_max_ps(kZeroPs, _mm_max_ps(_mm_sub_ps(wBoxMin, wPoint2), _mm_sub_ps(wPoint2, wBoxMax)));
   // Square and sum
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   const auto wResult = _mm_dp_ps(wDist, wDist, 0x31);
@@ -764,8 +771,7 @@ inline double computeDistanceSquared<float>(const Point<float>& iPoint,
   const auto wResult = _mm_hadd_ps(wDistSq, wDistSq);
 #else
   const auto wDistSq = _mm_mul_ps(wDist, wDist);
-  const auto wShuf = _mm_shuffle_ps(wDistSq, wDistSq, _MM_SHUFFLE(1, 1, 1, 1));
-  const auto wResult = _mm_add_ps(wDistSq, wShuf);
+  const auto wResult = _mm_add_ps(wDistSq, _mm_shuffle_ps(wDistSq, wDistSq, kShuffleBroadcast1));
 #endif
   return static_cast<double>(_mm_cvtss_f32(wResult));
 }
@@ -1070,10 +1076,10 @@ inline std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
     const auto wBox1 = _mm256_loadu_pd(&iBoxes[wIdx + 1].mMinX);
     const auto wBox2 = _mm256_loadu_pd(&iBoxes[wIdx + 2].mMinX);
     const auto wBox3 = _mm256_loadu_pd(&iBoxes[wIdx + 3].mMinX);
-    const auto wBoxes01Lo = _mm256_unpacklo_pd(wBox0, wBox1);
-    const auto wBoxes01Hi = _mm256_unpackhi_pd(wBox0, wBox1);
-    const auto wBoxes23Lo = _mm256_unpacklo_pd(wBox2, wBox3);
-    const auto wBoxes23Hi = _mm256_unpackhi_pd(wBox2, wBox3);
+    const auto wBoxes01Lo = _mm256_shuffle_pd(wBox0, wBox1, 0x0);
+    const auto wBoxes01Hi = _mm256_shuffle_pd(wBox0, wBox1, 0xF);
+    const auto wBoxes23Lo = _mm256_shuffle_pd(wBox2, wBox3, 0x0);
+    const auto wBoxes23Hi = _mm256_shuffle_pd(wBox2, wBox3, 0xF);
     const auto wMinX = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x20);
     const auto wMinY = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x20);
     const auto wMaxX = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x31);
@@ -1101,10 +1107,10 @@ inline std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
     const auto wBox1Lo = _mm_loadu_pd(&iBoxes[wIdx + 1].mMinX);
     const auto wBox1Hi = _mm_loadu_pd(&iBoxes[wIdx + 1].mMaxX);
 
-    const auto wMinX = _mm_unpacklo_pd(wBox0Lo, wBox1Lo);
-    const auto wMinY = _mm_unpackhi_pd(wBox0Lo, wBox1Lo);
-    const auto wMaxX = _mm_unpacklo_pd(wBox0Hi, wBox1Hi);
-    const auto wMaxY = _mm_unpackhi_pd(wBox0Hi, wBox1Hi);
+    const auto wMinX = _mm_shuffle_pd(wBox0Lo, wBox1Lo, 0x0);
+    const auto wMinY = _mm_shuffle_pd(wBox0Lo, wBox1Lo, 0x3);
+    const auto wMaxX = _mm_shuffle_pd(wBox0Hi, wBox1Hi, 0x0);
+    const auto wMaxY = _mm_shuffle_pd(wBox0Hi, wBox1Hi, 0x3);
 
     const auto wSumX = _mm_add_pd(wMinX, wMaxX);
     const auto wSumY = _mm_add_pd(wMinY, wMaxY);
