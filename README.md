@@ -38,11 +38,6 @@ for (const auto& box : boxes) {
 
 // perform the indexing
 auto index = builder.finish();
-
-// can reuse existing builder
-// call builder.clear() or keep adding items
-builder.add({ box.minX, box.minY, box.maxX, box.maxY });
-auto other = builder.finish();
 ```
 
 ### Searching a bounding box
@@ -94,6 +89,18 @@ This is a single header library with the aim to support C++11 and up.
 
 If the target compiler does not have support for C++20 features, namely the ```<span>``` header, a minimalistic implementation is available if **FLATBUSH_SPAN** flag is defined.
 
+### SIMD Optimizations
+The library automatically detects and uses SIMD instructions for improved performance. You can control the SIMD level with the following flags:
+
+| ISA Level | GCC/Clang | MSVC |
+|-----------|-----------|------|
+| **SSE2** (default on x64) | `-msse2` | `/arch:SSE2` |
+| **SSE3** | `-msse3` | N/A |
+| **SSE4** | `-msse4`  | N/A |
+| **AVX** | `-mavx` | `/arch:AVX` |
+| **AVX2** | `-mavx2` | `/arch:AVX2` |
+| **AVX512** | `-mavx512f -mavx512dq -mavx512vl` | `/arch:AVX512` |
+
 ### Unit tests
     
 ```shell
@@ -125,3 +132,5 @@ index 1000000 rectangles: | 93ms | 112ms | 124ms
 1000 searches of 100 neighbors: | 12ms | 12ms | 17ms
 1 searches of 1000000 neighbors: | 80ms | 59ms | 61ms
 100000 searches of 1 neighbors: | 297ms | 363ms | 503ms
+
+Runner benchmarks over time for [gcc](https://chusitoo.github.io/flatbush/benchmarks/g++) and [clang](https://chusitoo.github.io/flatbush/benchmarks/clang++)
