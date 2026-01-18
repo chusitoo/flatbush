@@ -1561,7 +1561,15 @@ void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues,
 
 template <typename ArrayType>
 size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
-  const auto& wIt = std::upper_bound(mLevelBounds.cbegin(), mLevelBounds.cend(), iNodeIndex);
+  static constexpr auto kSmallInput = 64UL;
+  decltype(mLevelBounds.cbegin()) wIt;
+
+  if (mLevelBounds.size() < kSmallInput) {
+    for (wIt = mLevelBounds.cbegin(); wIt != mLevelBounds.cend() && *wIt <= iNodeIndex; ++wIt);
+  } else {
+    wIt = std::upper_bound(mLevelBounds.cbegin(), mLevelBounds.cend(), iNodeIndex);
+  }
+
   return (mLevelBounds.cend() == wIt) ? mLevelBounds.back() : *wIt;
 }
 
@@ -1618,7 +1626,9 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
-  std::priority_queue<IndexDistance> wQueue;
+  std::vector<IndexDistance> wQueueStorage;
+  wQueueStorage.reserve(wNodeSize);
+  std::priority_queue<IndexDistance> wQueue(std::less<IndexDistance>(), std::move(wQueueStorage));
   std::vector<size_t> wResults;
   wResults.reserve(std::min(wNumItems, iMaxResults));
 
