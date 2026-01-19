@@ -380,10 +380,9 @@ static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-static const auto kShuffleMinX512 = _mm512_setr_epi64(0, 4, 8, 12, 0, 0, 0, 0);
-static const auto kShuffleMinY512 = _mm512_setr_epi64(1, 5, 9, 13, 0, 0, 0, 0);
-static const auto kShuffleMaxX512 = _mm512_setr_epi64(2, 6, 10, 14, 0, 0, 0, 0);
-static const auto kShuffleMaxY512 = _mm512_setr_epi64(3, 7, 11, 15, 0, 0, 0, 0);
+static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
+static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
+static const auto kPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
 #endif
 
 inline __m128i Interleave(__m128i v) {
@@ -1009,10 +1008,17 @@ std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
   auto wIdx = 0UL;
 
 #if defined(FLATBUSH_USE_SIMD)
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+  const auto wHilbertWidth128 = _mm_broadcast_ss(&wHilbertWidth);
+  const auto wHilbertHeight128 = _mm_broadcast_ss(&wHilbertHeight);
+  const auto wDoubleMinX128 = _mm_broadcast_ss(&wDoubleMinX);
+  const auto wDoubleMinY128 = _mm_broadcast_ss(&wDoubleMinY);
+#else
   const auto wHilbertWidth128 = _mm_set1_ps(wHilbertWidth);
   const auto wHilbertHeight128 = _mm_set1_ps(wHilbertHeight);
   const auto wDoubleMinX128 = _mm_set1_ps(wDoubleMinX);
   const auto wDoubleMinY128 = _mm_set1_ps(wDoubleMinY);
+#endif
 
   for (; wIdx + 3 < iNumItems; wIdx += 4) {
     __m128 wMinX;
@@ -1041,9 +1047,9 @@ std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
 }
 
 template <>
-inline std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
-                                                          const Box<double>& iBounds,
-                                                          span<Box<double>> iBoxes) {
+std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
+                                                   const Box<double>& iBounds,
+                                                   span<Box<double>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5 * std::numeric_limits<uint16_t>::max();
   const auto wHilbertWidth = kMaxHilbertRatio / (iBounds.mMaxX - iBounds.mMinX);
   const auto wHilbertHeight = kMaxHilbertRatio / (iBounds.mMaxY - iBounds.mMinY);
@@ -1053,25 +1059,36 @@ inline std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
   auto wIdx = 0UL;
 
 #if defined(FLATBUSH_USE_SIMD)
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wHilbertWidth256 = _mm256_set1_pd(wHilbertWidth);
-  const auto wHilbertHeight256 = _mm256_set1_pd(wHilbertHeight);
-  const auto wDoubleMinX256 = _mm256_set1_pd(wDoubleMinX);
-  const auto wDoubleMinY256 = _mm256_set1_pd(wDoubleMinY);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  const auto wHilbertWidth512 = _mm512_set1_pd(wHilbertWidth);
+  const auto wHilbertHeight512 = _mm512_set1_pd(wHilbertHeight);
+  const auto wDoubleMinX512 = _mm512_set1_pd(wDoubleMinX);
+  const auto wDoubleMinY512 = _mm512_set1_pd(wDoubleMinY);
+  const auto wWidthHeight512 = _mm512_mask_blend_pd(0xAA, wHilbertWidth512, wHilbertHeight512);
+  const auto wDoubleMinXY512 = _mm512_mask_blend_pd(0xAA, wDoubleMinX512, wDoubleMinY512);
 
   for (; wIdx + 3 < iNumItems; wIdx += 4) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
     const auto wBoxes01 = _mm512_loadu_pd(&iBoxes[wIdx].mMinX);
     const auto wBoxes23 = _mm512_loadu_pd(&iBoxes[wIdx + 2].mMinX);
-    const auto wMinX =
-        _mm512_castpd512_pd256(_mm512_permutex2var_pd(wBoxes01, kShuffleMinX512, wBoxes23));
-    const auto wMinY =
-        _mm512_castpd512_pd256(_mm512_permutex2var_pd(wBoxes01, kShuffleMinY512, wBoxes23));
-    const auto wMaxX =
-        _mm512_castpd512_pd256(_mm512_permutex2var_pd(wBoxes01, kShuffleMaxX512, wBoxes23));
-    const auto wMaxY =
-        _mm512_castpd512_pd256(_mm512_permutex2var_pd(wBoxes01, kShuffleMaxY512, wBoxes23));
-#else
+    const auto wMin = _mm512_permutex2var_pd(wBoxes01, kPermuteMinXY512, wBoxes23);
+    const auto wMax = _mm512_permutex2var_pd(wBoxes01, kPermuteMaxXY512, wBoxes23);
+    const auto wResult = _mm256_permutevar8x32_epi32(
+        _mm512_cvtpd_epi32(_mm512_mul_pd(
+            wWidthHeight512, _mm512_sub_pd(_mm512_add_pd(wMin, wMax), wDoubleMinXY512))),
+        kPermuteXLoYHi);
+    const auto wResultX = _mm256_castsi256_si128(wResult);
+    const auto wResultY = _mm256_extracti32x4_epi32(wResult, 1);
+
+    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
+                     HilbertXYToIndex(wResultX, wResultY));
+  }
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+  const auto wHilbertWidth256 = _mm256_broadcast_sd(&wHilbertWidth);
+  const auto wHilbertHeight256 = _mm256_broadcast_sd(&wHilbertHeight);
+  const auto wDoubleMinX256 = _mm256_broadcast_sd(&wDoubleMinX);
+  const auto wDoubleMinY256 = _mm256_broadcast_sd(&wDoubleMinY);
+
+  for (; wIdx + 3 < iNumItems; wIdx += 4) {
     const auto wBox0 = _mm256_loadu_pd(&iBoxes[wIdx].mMinX);
     const auto wBox1 = _mm256_loadu_pd(&iBoxes[wIdx + 1].mMinX);
     const auto wBox2 = _mm256_loadu_pd(&iBoxes[wIdx + 2].mMinX);
@@ -1084,7 +1101,6 @@ inline std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
     const auto wMinY = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x20);
     const auto wMaxX = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x31);
     const auto wMaxY = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x31);
-#endif
     const auto wSumX = _mm256_add_pd(wMinX, wMaxX);
     const auto wSumY = _mm256_add_pd(wMinY, wMaxY);
     const auto wResultX = _mm256_mul_pd(wHilbertWidth256, _mm256_sub_pd(wSumX, wDoubleMinX256));
@@ -1462,7 +1478,7 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
       auto wNodeBox = mBoxes[wPosition];
 
       // calculate bbox for the new node
-      for (size_t wCount = 0; wCount < wNodeSize && wPosition < wEnd; ++wCount, ++wPosition) {
+      for (size_t wCount = 0UL; wCount < wNodeSize && wPosition < wEnd; ++wCount, ++wPosition) {
         detail::updateBounds(wNodeBox, mBoxes[wPosition]);
       }
 
@@ -1611,6 +1627,12 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
 
     wNodeIndex = wQueue.back() >> 2U;  // for binary compatibility with JS
     wQueue.pop_back();
+
+#ifdef __GNUC__
+    __builtin_prefetch(&mBoxes[wNodeIndex], 0, 3);
+#elif defined(_MSC_VER)
+    _mm_prefetch(detail::bit_cast<const char*>(&mBoxes[wNodeIndex]), _MM_HINT_T0);
+#endif
   }
 
   return wResults;
@@ -1666,6 +1688,12 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 
     wNodeIndex = wQueue.top().mId >> 3U;  // 1 to undo indexing + 2 for binary compatibility with JS
     wQueue.pop();
+
+#ifdef __GNUC__
+    __builtin_prefetch(&mBoxes[wNodeIndex], 0, 3);
+#elif defined(_MSC_VER)
+    _mm_prefetch(detail::bit_cast<const char*>(&mBoxes[wNodeIndex]), _MM_HINT_T0);
+#endif
   }
 
   return wResults;
