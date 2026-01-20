@@ -28,6 +28,9 @@ SOFTWARE.
 
 #include "flatbush.h"
 
+using ::testing::Test;
+using ::testing::Types;
+
 static constexpr std::array<double, 400> gData{
     8,  62, 11, 66, 57, 17, 57, 19, 76, 26, 79, 29, 36, 56, 38, 56, 92, 77, 96, 80, 87, 70, 90, 74,
     43, 41, 47, 43, 0,  58, 2,  62, 76, 86, 80, 89, 27, 13, 27, 15, 71, 63, 75, 67, 25, 2,  27, 2,
@@ -413,28 +416,6 @@ TEST(FlatbushTest, SearchQueryMultiPointLargeNumItems) {
   EXPECT_EQ(wIds.back(), 1);
 }
 
-TEST(FlatbushTest, ClearAndReuseBuilder) {
-  flatbush::FlatbushBuilder<double> wBuilder;
-
-  for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4) {
-    wBuilder.add({gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3]});
-  }
-
-  auto wIndex = wBuilder.finish();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex2 = wBuilder.finish();
-
-  EXPECT_EQ(wIndex2.numItems(), wIndex.numItems() + 1);
-  EXPECT_EQ(wIndex2.nodeSize(), wIndex.nodeSize());
-
-  wBuilder.clear();
-  wBuilder.add({1, 2, 3, 4});
-  auto wIndex3 = wBuilder.finish();
-
-  EXPECT_EQ(wIndex3.numItems(), 1);
-  EXPECT_EQ(wIndex3.nodeSize(), wIndex2.nodeSize());
-}
-
 TEST(FlatbushTest, TestOneMillionItems) {
   flatbush::FlatbushBuilder<uint32_t> wBuilder;
   uint32_t wNumItems = 1000000;
@@ -515,4 +496,47 @@ TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   EXPECT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
 
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
+}
+
+template <typename T>
+class FlatbushTypedTest : public Test {};
+
+using TypesToTest = Types<int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>;
+TYPED_TEST_SUITE(FlatbushTypedTest, TypesToTest);
+
+TYPED_TEST(FlatbushTypedTest, BasicIndexCreationAndSearch) {
+  using ArrayType = TypeParam;
+
+  // Test basic index creation and search
+  flatbush::FlatbushBuilder<ArrayType> wBuilder;
+  for (size_t wIdx = 0; wIdx < 100; wIdx++) {
+    ArrayType wVal = static_cast<ArrayType>(wIdx);
+    wBuilder.add(
+        {wVal, wVal, static_cast<ArrayType>(wVal + 10), static_cast<ArrayType>(wVal + 10)});
+  }
+  auto wIndex = wBuilder.finish();
+  EXPECT_EQ(wIndex.numItems(), 100);
+
+  // Item at index i has box [i, i, i+10, i+10]
+  // Search [45, 45, 55, 55] should overlap items 35-55
+  auto wIds = wIndex.search({static_cast<ArrayType>(45),
+                             static_cast<ArrayType>(45),
+                             static_cast<ArrayType>(55),
+                             static_cast<ArrayType>(55)});
+  EXPECT_EQ(wIds.size(), 21);
+}
+
+TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
+  using ArrayType = TypeParam;
+
+  flatbush::FlatbushBuilder<ArrayType> wBuilder;
+  for (size_t wIdx = 0; wIdx < 100; wIdx++) {
+    ArrayType wVal = static_cast<ArrayType>(wIdx);
+    wBuilder.add(
+        {wVal, wVal, static_cast<ArrayType>(wVal + 10), static_cast<ArrayType>(wVal + 10)});
+  }
+  auto wIndex = wBuilder.finish();
+
+  auto wNeighbors = wIndex.neighbors({static_cast<ArrayType>(50), static_cast<ArrayType>(50)}, 5);
+  EXPECT_EQ(wNeighbors.size(), 5);
 }

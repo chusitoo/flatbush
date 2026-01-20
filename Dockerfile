@@ -10,7 +10,7 @@ RUN apt update -y \
                    curl \
                    git \
                    tar \
-                   unzip 
+                   unzip \
                    zip \
  && apt clean all \
  && rm -rf /var/cache/tdnf
