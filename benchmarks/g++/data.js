@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771387453052,
+  "lastUpdate": 1771387652252,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -5392,6 +5392,72 @@ window.BENCHMARK_DATA = {
             "value": 395999856.9999925,
             "unit": "ns/iter",
             "extra": "iterations: 2\ncpu: 395965293.5000002 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "36134278+chusitoo@users.noreply.github.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ed5f2286d1804e462406eafc1004921f0f13c700",
+          "message": "Implement simd (#5)\n\nImplement SIMD to slightly improve performance of:\n\n- boxes intersection\n- bound updates\n- computation of squared distance\n- computation of Hilbert values\n\nMinor tweaks to attempt to reserve enough for search results and neighbors queue\n\nPerform linear search of upper bound on small inputs",
+          "timestamp": "2026-01-20T08:50:43-05:00",
+          "tree_id": "8f5d78ff33c8584c43bb5e3f53150abd3b7a3a26",
+          "url": "https://github.com/chusitoo/flatbush/commit/ed5f2286d1804e462406eafc1004921f0f13c700"
+        },
+        "date": 1771387651080,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 124278065.66666651,
+            "unit": "ns/iter",
+            "extra": "iterations: 6\ncpu: 124262749.83333333 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 239127293.00000045,
+            "unit": "ns/iter",
+            "extra": "iterations: 3\ncpu: 239078431.33333334 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 38462571.647059046,
+            "unit": "ns/iter",
+            "extra": "iterations: 17\ncpu: 38455913.23529412 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 3135826.5470085517,
+            "unit": "ns/iter",
+            "extra": "iterations: 234\ncpu: 3135386.786324788 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 16212932.558139555,
+            "unit": "ns/iter",
+            "extra": "iterations: 43\ncpu: 16210297.906976746 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 114450672.00000025,
+            "unit": "ns/iter",
+            "extra": "iterations: 6\ncpu: 114442328.33333333 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 416219396.5000007,
+            "unit": "ns/iter",
+            "extra": "iterations: 2\ncpu: 416117131.50000006 ns\nthreads: 1"
           }
         ]
       }
