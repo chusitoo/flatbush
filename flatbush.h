@@ -86,15 +86,6 @@ SOFTWARE.
 #endif
 #endif
 
-// Branch prediction hint macros (C++11 compatible)
-#if defined(__GNUC__) || defined(__clang__)
-#define FLATBUSH_LIKELY(x) __builtin_expect(!!(x), 1)
-#define FLATBUSH_UNLIKELY(x) __builtin_expect(!!(x), 0)
-#else
-#define FLATBUSH_LIKELY(x) (x)
-#define FLATBUSH_UNLIKELY(x) (x)
-#endif
-
 namespace flatbush {
 #ifndef FLATBUSH_SPAN
 #include <span>
@@ -1667,20 +1658,20 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
     // search through child nodes
     for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       // check if node bbox intersects with query bbox
-      if (FLATBUSH_UNLIKELY(!detail::boxesIntersect(iBounds, mBoxes[wPosition]))) {
+      if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
         continue;
       }
 
       const size_t wIndex = getIndex<IsWide>(wPosition);
 
-      if (FLATBUSH_UNLIKELY(wNodeIndex >= wNumItems)) {
+      if (wNodeIndex >= wNumItems) {
         wQueue.push_back(wIndex);  // node; add it to the search queue
-      } else if (FLATBUSH_LIKELY(!iFilterFn) || iFilterFn(wIndex, mBoxes[wPosition])) {
+      } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         wResults.push_back(wIndex);  // leaf item
       }
     }
 
-    if (FLATBUSH_UNLIKELY(wQueue.empty())) {
+    if (wQueue.empty()) {
       break;
     }
 
@@ -1700,7 +1691,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
                                                 const FilterCb& iFilterFn) const noexcept {
-  if (FLATBUSH_UNLIKELY(!canDoSearch(iBounds))) {
+  if (!canDoSearch(iBounds)) {
     return std::vector<size_t>();
   }
 
@@ -1735,11 +1726,11 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
       const size_t wIndex = getIndex<IsWide>(wPosition);
       const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
 
-      if (FLATBUSH_UNLIKELY(wDistSquared > iMaxDistSquared)) {
+      if (wDistSquared > iMaxDistSquared) {
         continue;
-      } else if (FLATBUSH_UNLIKELY(wNodeIndex >= wNumItems)) {
+      } else if (wNodeIndex >= wNumItems) {
         wQueue.emplace(wIndex << 1U, wDistSquared);
-      } else if (FLATBUSH_LIKELY(!iFilterFn) || iFilterFn(wIndex, mBoxes[wPosition])) {
+      } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         // put an odd index if it's an item rather than a node, to recognize later
         wQueue.emplace((wIndex << 1U) + 1U, wDistSquared);  // leaf node
       }
@@ -1749,12 +1740,12 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
     while (!wQueue.empty() && (wQueue.top().mId & 1U)) {
       wResults.push_back(wQueue.top().mId >> 1U);
       wQueue.pop();
-      if (FLATBUSH_UNLIKELY(wResults.size() >= iMaxResults)) {
+      if (wResults.size() >= iMaxResults) {
         return wResults;
       }
     }
 
-    if (FLATBUSH_UNLIKELY(wQueue.empty())) {
+    if (wQueue.empty()) {
       break;
     }
 
@@ -1778,7 +1769,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    const FilterCb& iFilterFn) const noexcept {
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
 
-  if (FLATBUSH_UNLIKELY(!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wMaxDistSquared))) {
+  if (!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wMaxDistSquared)) {
     return std::vector<size_t>();
   }
 
