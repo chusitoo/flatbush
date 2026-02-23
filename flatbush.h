@@ -1350,27 +1350,45 @@ class Flatbush {
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues,
                          size_t iLeft,
                          size_t iRight) noexcept;
+  template <bool IsWideIndex>
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-  void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+
+  template <bool IsWideIndex>
+  typename std::enable_if<IsWideIndex, void>::type swap(std::vector<uint32_t>& iValues,
+                                                        size_t iLeft,
+                                                        size_t iRight) noexcept;
+
+  template <bool IsWideIndex>
+  typename std::enable_if<!IsWideIndex, void>::type swap(std::vector<uint32_t>& iValues,
+                                                         size_t iLeft,
+                                                         size_t iRight) noexcept;
+
   inline size_t upperBound(size_t iNodeIndex) const noexcept;
 
-  template <bool IsWide>
-  inline size_t getIndex(size_t iPosition) const noexcept;
+  template <bool IsWideIndex>
+  inline typename std::enable_if<IsWideIndex, size_t>::type getIndex(
+      size_t iPosition) const noexcept;
 
-  template <bool IsWide>
-  inline void setIndex(size_t iPosition, size_t iValue) noexcept;
+  template <bool IsWideIndex>
+  inline typename std::enable_if<!IsWideIndex, size_t>::type getIndex(
+      size_t iPosition) const noexcept;
 
-  template <bool IsWide>
-  void swapImpl(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+  template <bool IsWideIndex>
+  inline typename std::enable_if<IsWideIndex, void>::type setIndex(size_t iPosition,
+                                                                   size_t iValue) noexcept;
 
-  template <bool IsWide>
+  template <bool IsWideIndex>
+  inline typename std::enable_if<!IsWideIndex, void>::type setIndex(size_t iPosition,
+                                                                    size_t iValue) noexcept;
+
+  template <bool IsWideIndex>
   void createImpl(std::vector<Box<ArrayType>>&& iItems) noexcept;
 
-  template <bool IsWide>
+  template <bool IsWideIndex>
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds,
                                  const FilterCb& iFilterFn) const noexcept;
 
-  template <bool IsWide>
+  template <bool IsWideIndex>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iMaxDistSquared,
@@ -1379,7 +1397,6 @@ class Flatbush {
   struct IndexDistance {
     IndexDistance(size_t iId, ArrayType iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
-    bool operator>(const IndexDistance& iOther) const { return iOther.mDistance > mDistance; }
 
     size_t mId;
     ArrayType mDistance;
@@ -1465,10 +1482,10 @@ void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept 
 }
 
 template <typename ArrayType>
-template <bool IsWide>
+template <bool IsWideIndex>
 void Flatbush<ArrayType>::createImpl(std::vector<Box<ArrayType>>&& iItems) noexcept {
   for (auto&& wBox : iItems) {
-    setIndex<IsWide>(mPosition, mPosition);
+    setIndex<IsWideIndex>(mPosition, mPosition);
     mBoxes[mPosition] = std::move(wBox);
     detail::updateBounds(mBounds, mBoxes[mPosition]);
     ++mPosition;
@@ -1485,7 +1502,7 @@ void Flatbush<ArrayType>::createImpl(std::vector<Box<ArrayType>>&& iItems) noexc
   // map item centers into Hilbert coordinate space and calculate Hilbert values
   auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
   // sort items by their Hilbert value (for packing later)
-  sort(wHilbertValues, 0U, wNumItems - 1U);
+  sort<IsWideIndex>(wHilbertValues, 0U, wNumItems - 1U);
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
@@ -1501,7 +1518,7 @@ void Flatbush<ArrayType>::createImpl(std::vector<Box<ArrayType>>&& iItems) noexc
       }
 
       // add the new node to the tree data
-      setIndex<IsWide>(mPosition, wNodeIndex);
+      setIndex<IsWideIndex>(mPosition, wNodeIndex);
       mBoxes[mPosition++] = wNodeBox;
     }
   }
@@ -1538,6 +1555,7 @@ uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues
 
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
+template <bool IsWideIndex>
 void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
                                size_t iLeft,
                                size_t iRight) noexcept {
@@ -1571,7 +1589,7 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
           break;
         }
 
-        swap(iValues, wPivotLeft, wPivotRight);
+        swap<IsWideIndex>(iValues, wPivotLeft, wPivotRight);
       }
 
       wStack.push_back(wLeft);
@@ -1579,33 +1597,6 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
       wStack.push_back(wPivotRight + 1UL);
       wStack.push_back(wRight);
     }
-  }
-}
-
-// swap two values and two corresponding boxes
-template <typename ArrayType>
-template <bool IsWide>
-void Flatbush<ArrayType>::swapImpl(std::vector<uint32_t>& iValues,
-                                   size_t iLeft,
-                                   size_t iRight) noexcept {
-  std::swap(iValues[iLeft], iValues[iRight]);
-  std::swap(mBoxes[iLeft], mBoxes[iRight]);
-
-  if (IsWide) {
-    std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
-  } else {
-    std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
-  }
-}
-
-template <typename ArrayType>
-void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues,
-                               size_t iLeft,
-                               size_t iRight) noexcept {
-  if (mIsWideIndex) {
-    swapImpl<true>(iValues, iLeft, iRight);
-  } else {
-    swapImpl<false>(iValues, iLeft, iRight);
   }
 }
 
@@ -1623,24 +1614,55 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
   return (mLevelBounds.cend() == wIt) ? mLevelBounds.back() : *wIt;
 }
 
+// swap two values and two corresponding boxes
 template <typename ArrayType>
-template <bool IsWide>
-inline size_t Flatbush<ArrayType>::getIndex(size_t iPosition) const noexcept {
-  return IsWide ? mIndicesUint32[iPosition] : mIndicesUint16[iPosition];
+template <bool IsWideIndex>
+typename std::enable_if<IsWideIndex, void>::type Flatbush<ArrayType>::swap(
+    std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+  std::swap(iValues[iLeft], iValues[iRight]);
+  std::swap(mBoxes[iLeft], mBoxes[iRight]);
+  std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
 }
 
 template <typename ArrayType>
-template <bool IsWide>
-inline void Flatbush<ArrayType>::setIndex(size_t iPosition, size_t iValue) noexcept {
-  if (IsWide) {
-    mIndicesUint32[iPosition] = static_cast<uint32_t>(iValue);
-  } else {
-    mIndicesUint16[iPosition] = static_cast<uint16_t>(iValue);
-  }
+template <bool IsWideIndex>
+typename std::enable_if<!IsWideIndex, void>::type Flatbush<ArrayType>::swap(
+    std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+  std::swap(iValues[iLeft], iValues[iRight]);
+  std::swap(mBoxes[iLeft], mBoxes[iRight]);
+  std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
 }
 
 template <typename ArrayType>
-template <bool IsWide>
+template <bool IsWideIndex>
+inline typename std::enable_if<IsWideIndex, size_t>::type Flatbush<ArrayType>::getIndex(
+    size_t iPosition) const noexcept {
+  return mIndicesUint32[iPosition];
+}
+
+template <typename ArrayType>
+template <bool IsWideIndex>
+inline typename std::enable_if<!IsWideIndex, size_t>::type Flatbush<ArrayType>::getIndex(
+    size_t iPosition) const noexcept {
+  return mIndicesUint16[iPosition];
+}
+
+template <typename ArrayType>
+template <bool IsWideIndex>
+inline typename std::enable_if<IsWideIndex, void>::type Flatbush<ArrayType>::setIndex(
+    size_t iPosition, size_t iValue) noexcept {
+  mIndicesUint32[iPosition] = static_cast<uint32_t>(iValue);
+}
+
+template <typename ArrayType>
+template <bool IsWideIndex>
+inline typename std::enable_if<!IsWideIndex, void>::type Flatbush<ArrayType>::setIndex(
+    size_t iPosition, size_t iValue) noexcept {
+  mIndicesUint16[iPosition] = static_cast<uint16_t>(iValue);
+}
+
+template <typename ArrayType>
+template <bool IsWideIndex>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
                                                     const FilterCb& iFilterFn) const noexcept {
   const auto wNumItems = numItems();
@@ -1662,7 +1684,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
         continue;
       }
 
-      const size_t wIndex = getIndex<IsWide>(wPosition);
+      const size_t wIndex = getIndex<IsWideIndex>(wPosition);
 
       if (wNodeIndex >= wNumItems) {
         wQueue.push_back(wIndex);  // node; add it to the search queue
@@ -1692,7 +1714,7 @@ template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
                                                 const FilterCb& iFilterFn) const noexcept {
   if (!canDoSearch(iBounds)) {
-    return std::vector<size_t>();
+    return {};
   }
 
   if (mIsWideIndex) {
@@ -1703,7 +1725,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
 }
 
 template <typename ArrayType>
-template <bool IsWide>
+template <bool IsWideIndex>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
                                                        double iMaxDistSquared,
@@ -1712,7 +1734,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
   std::vector<IndexDistance> wQueueStorage;
-  wQueueStorage.reserve(wNodeSize);
+  wQueueStorage.reserve(wNodeSize << 2U);
   std::priority_queue<IndexDistance> wQueue(std::less<IndexDistance>(), std::move(wQueueStorage));
   std::vector<size_t> wResults;
   wResults.reserve(std::min(wNumItems, iMaxResults));
@@ -1723,7 +1745,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
     // search through child nodes
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-      const size_t wIndex = getIndex<IsWide>(wPosition);
+      const size_t wIndex = getIndex<IsWideIndex>(wPosition);
       const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
 
       if (wDistSquared > iMaxDistSquared) {
@@ -1770,7 +1792,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
 
   if (!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wMaxDistSquared)) {
-    return std::vector<size_t>();
+    return {};
   }
 
   if (mIsWideIndex) {
