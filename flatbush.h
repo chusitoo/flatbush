@@ -379,6 +379,10 @@ static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
 static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+static const auto wSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
+#endif
+
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
 static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
 static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
@@ -1576,14 +1580,89 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
       auto wPivotLeft = wLeft - 1UL;
       auto wPivotRight = wRight + 1UL;
 
-      while (true) {
-        do {
-          ++wPivotLeft;
-        } while (iValues[wPivotLeft] < wPivot);
+#if defined(FLATBUSH_USE_SIMD)
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+      static constexpr size_t kSortBatch = sizeof(__m512i) / sizeof(int32_t);
+      const auto wPivotVec512 = _mm512_set1_epi32(static_cast<int32_t>(wPivot));
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+      static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(int32_t);
+      const auto wPivotVecS256 =
+          _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(wPivot)), detail::wSignFlip256);
+#else
+      static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(int32_t);
+      const auto wPivotVecS128 =
+          _mm_xor_si128(_mm_set1_epi32(static_cast<int32_t>(wPivot)), detail::kOffset32);
+#endif
+#endif  // defined(FLATBUSH_USE_SIMD)
 
-        do {
-          --wPivotRight;
-        } while (iValues[wPivotRight] > wPivot);
+      while (true) {
+#if defined(FLATBUSH_USE_SIMD)
+        // SIMD-accelerated left scan: skip batches where all values < pivot
+        for (auto wPos = wPivotLeft + 1; wPos + kSortBatch <= wPivotRight;
+             wPos += kSortBatch, wPivotLeft = wPos - 1) {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+          const auto wVals = _mm512_loadu_si512(&iValues[wPos]);
+          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_NLT);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+          const auto wVals =
+              _mm256_xor_si256(_mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos])),
+                               detail::wSignFlip256);
+          const auto wMask =
+              ~_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(wPivotVecS256, wVals))) &
+              0xFFU;
+#else
+          const auto wVals = _mm_xor_si128(
+              _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos])), detail::kOffset32);
+          const auto wMask =
+              ~_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpgt_epi32(wPivotVecS128, wVals))) & 0xFU;
+#endif
+          if (wMask) {
+#ifdef _MSC_VER
+            unsigned long wBitIdx;
+            _BitScanForward(&wBitIdx, static_cast<unsigned>(wMask));
+            wPivotLeft = wPos + wBitIdx - 1;
+#else
+            wPivotLeft = wPos + __builtin_ctz(static_cast<unsigned>(wMask)) - 1;
+#endif
+            break;
+          }
+        }
+#endif  // defined(FLATBUSH_USE_SIMD)
+        while (iValues[++wPivotLeft] < wPivot);
+
+#if defined(FLATBUSH_USE_SIMD)
+        // SIMD-accelerated right scan: skip batches where all values > pivot
+        for (auto wPos = wPivotRight - kSortBatch; wPivotRight > wPivotLeft + kSortBatch;
+             wPos -= kSortBatch, wPivotRight -= kSortBatch) {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+          const auto wVals = _mm512_loadu_si512(detail::bit_cast<const __m512i*>(&iValues[wPos]));
+          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_LE);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+          const auto wVals =
+              _mm256_xor_si256(_mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos])),
+                               detail::wSignFlip256);
+          const auto wMask =
+              ~_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(wVals, wPivotVecS256))) &
+              0xFFU;
+#else
+          const auto wVals = _mm_xor_si128(
+              _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos])), detail::kOffset32);
+          const auto wMask =
+              ~_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpgt_epi32(wVals, wPivotVecS128))) & 0xFU;
+#endif
+          if (wMask) {
+#ifdef _MSC_VER
+            unsigned long wBitIdx;
+            _BitScanReverse(&wBitIdx, static_cast<unsigned>(wMask));
+            wPivotRight = wPos + wBitIdx + 1;
+#else
+            wPivotRight = wPos + (31 - __builtin_clz(static_cast<unsigned>(wMask))) + 1;
+#endif
+            break;
+          }
+        }
+#endif  // defined(FLATBUSH_USE_SIMD)
+        while (iValues[--wPivotRight] > wPivot);
 
         if (wPivotLeft >= wPivotRight) {
           break;
