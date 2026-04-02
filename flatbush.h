@@ -1399,11 +1399,11 @@ class Flatbush {
                                     const FilterCb& iFilterFn) const noexcept;
 
   struct IndexDistance {
-    IndexDistance(size_t iId, ArrayType iDistance) noexcept : mId(iId), mDistance(iDistance) {}
+    IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
 
     size_t mId;
-    ArrayType mDistance;
+    double mDistance;
   };
 
   // views
@@ -1756,19 +1756,31 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
     // find the end index of the node
     const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
 
-    // search through child nodes
-    for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-      // check if node bbox intersects with query bbox
-      if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-        continue;
+    // Split node-vs-leaf: the check is invariant across all children of a node
+    if (wNodeIndex >= wNumItems) {
+      // Internal node: just collect intersecting child node indices
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          wQueue.push_back(getIndex<IsWideIndex>(wPosition));
+        }
       }
-
-      const size_t wIndex = getIndex<IsWideIndex>(wPosition);
-
-      if (wNodeIndex >= wNumItems) {
-        wQueue.push_back(wIndex);  // node; add it to the search queue
-      } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
-        wResults.push_back(wIndex);  // leaf item
+    } else if (iFilterFn) {
+      // Leaf node with filter
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          continue;
+        }
+        const auto wIndex = getIndex<IsWideIndex>(wPosition);
+        if (iFilterFn(wIndex, mBoxes[wPosition])) {
+          wResults.push_back(wIndex);
+        }
+      }
+    } else {
+      // Leaf node without filter
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          wResults.push_back(getIndex<IsWideIndex>(wPosition));
+        }
       }
     }
 
@@ -1812,6 +1824,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
+  auto wMaxDistance = iMaxDistSquared;
   std::vector<IndexDistance> wQueueStorage;
   wQueueStorage.reserve(wNodeSize << 2U);
   std::priority_queue<IndexDistance> wQueue(std::less<IndexDistance>(), std::move(wQueueStorage));
@@ -1822,18 +1835,18 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
     // find the end index of the node
     const auto wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
 
-    // search through child nodes
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-      const size_t wIndex = getIndex<IsWideIndex>(wPosition);
       const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
 
-      if (wDistSquared > iMaxDistSquared) {
+      if (wDistSquared > wMaxDistance) {
         continue;
-      } else if (wNodeIndex >= wNumItems) {
-        wQueue.emplace(wIndex << 1U, wDistSquared);
-      } else if (!iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
-        // put an odd index if it's an item rather than a node, to recognize later
-        wQueue.emplace((wIndex << 1U) + 1U, wDistSquared);  // leaf node
+      }
+
+      const auto wIndex = getIndex<IsWideIndex>(wPosition);
+      const auto wIsInternalNode = wNodeIndex >= wNumItems;
+
+      if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
+        wQueue.emplace((wIndex << 1U) + !wIsInternalNode, wDistSquared);
       }
     }
 
@@ -1848,6 +1861,11 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
     if (wQueue.empty()) {
       break;
+    } else if (wResults.size() + 1U >= iMaxResults) {
+      // Tighten search radius: if we have enough pending results and the queue
+      // top is a node, its distance is the minimum possible for any future leaf.
+      // Any child farther than the farthest queued leaf can't contribute.
+      wMaxDistance = std::min(wMaxDistance, static_cast<double>(wQueue.top().mDistance));
     }
 
     wNodeIndex = wQueue.top().mId >> 3U;  // 1 to undo indexing + 2 for binary compatibility with JS
