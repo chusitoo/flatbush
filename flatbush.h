@@ -1392,7 +1392,7 @@ class Flatbush {
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds,
                                  const FilterCb& iFilterFn) const noexcept;
 
-  template <bool IsWideIndex>
+  template <bool IsWideIndex, bool UseHeap>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iMaxDistSquared,
@@ -1816,13 +1816,11 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
 }
 
 template <typename ArrayType>
-template <bool IsWideIndex>
+template <bool IsWideIndex, bool UseHeap>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
                                                        double iMaxDistSquared,
                                                        const FilterCb& iFilterFn) const noexcept {
-  static constexpr auto kMergeThreshold = 64UL;
-  const auto wUseHeap = iMaxResults > kMergeThreshold;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1834,55 +1832,47 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   while (true) {
     // find the end index of the node
     const auto wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
+    const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wQueueSize = wQueue.size();
 
-    if (wUseHeap) {
-      // Heap strategy: push_heap after each insert, pop from front
-      for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-        const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
-        if (wDistSquared > iMaxDistSquared) {
-          continue;
-        }
-        const auto wIndex = getIndex<IsWideIndex>(wPosition);
-        const auto wIsInternalNode = wNodeIndex >= wNumItems;
-        if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
-          wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistSquared);
-          std::push_heap(wQueue.begin(), wQueue.end());
-        }
+    for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+      const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
+
+      if (wDistSquared > iMaxDistSquared) {
+        continue;
       }
 
+      const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+      if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
+        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistSquared);
+        if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
+      }
+    }
+
+    if (UseHeap) {  // Heap strategy: push_heap after each insert, pop from front
       while (!wQueue.empty() && (wQueue.front().mId & 1U)) {
         wResults.push_back(wQueue.front().mId >> 1U);
         std::pop_heap(wQueue.begin(), wQueue.end());
         wQueue.pop_back();
+
         if (wResults.size() >= iMaxResults) {
           return wResults;
         }
       }
-    } else {
-      // Sorted-vector strategy: batch insert, sort+merge, pop from back
-      const auto wOldSize = wQueue.size();
 
-      for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-        const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
-        if (wDistSquared > iMaxDistSquared) {
-          continue;
-        }
-        const auto wIndex = getIndex<IsWideIndex>(wPosition);
-        const auto wIsInternalNode = wNodeIndex >= wNumItems;
-        if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
-          wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistSquared);
-        }
-      }
-
-      if (wQueue.size() > wOldSize) {
-        const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wOldSize);
-        std::sort(wMid, wQueue.end(), std::less<IndexDistance>());
-        std::inplace_merge(wQueue.begin(), wMid, wQueue.end(), std::less<IndexDistance>());
+      std::pop_heap(wQueue.begin(), wQueue.end());
+    } else {  // Sorted-vector strategy: batch insert, sort+merge, pop from back
+      if (wQueue.size() > wQueueSize) {
+        const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wQueueSize);
+        std::sort(wMid, wQueue.end());
+        std::inplace_merge(wQueue.begin(), wMid, wQueue.end());
       }
 
       while (!wQueue.empty() && (wQueue.back().mId & 1U)) {
         wResults.push_back(wQueue.back().mId >> 1U);
         wQueue.pop_back();
+
         if (wResults.size() >= iMaxResults) {
           return wResults;
         }
@@ -1893,8 +1883,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
       break;
     }
 
-    if (wUseHeap) std::pop_heap(wQueue.begin(), wQueue.end());
-    wNodeIndex = wQueue.back().mId >> 3U;
+    wNodeIndex = wQueue.back().mId >> 3U;  // 1 undo indexing + 2 for binary compatibility with JS
     wQueue.pop_back();
 
 #ifdef __GNUC__
@@ -1912,17 +1901,29 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    size_t iMaxResults,
                                                    double iMaxDistance,
                                                    const FilterCb& iFilterFn) const noexcept {
+  static constexpr auto kMergeThreshold = 128UL;
+  static constexpr auto kWideIndex = true;
+  static constexpr auto kUseHeap = true;
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
+  const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
   if (!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wMaxDistSquared)) {
     return {};
   }
 
   if (mIsWideIndex) {
-    return neighborsImpl<true>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+    if (wNeedHeap) {
+      return neighborsImpl<kWideIndex, kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+    }
+
+    return neighborsImpl<kWideIndex, !kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
   }
 
-  return neighborsImpl<false>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+  if (wNeedHeap) {
+    return neighborsImpl<!kWideIndex, kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+  }
+
+  return neighborsImpl<!kWideIndex, !kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
 }
 }  // namespace flatbush
 
