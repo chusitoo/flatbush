@@ -345,7 +345,7 @@ inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noex
 
 template <typename ArrayType>
 inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
-  return std::max(0.0, std::max<double>(iMin - iValue, iValue - iMax));
+  return std::max(0.0, static_cast<double>(std::max(iMin - iValue, iValue - iMax)));
 }
 
 template <typename ArrayType>
@@ -1168,7 +1168,7 @@ class FlatbushBuilder {
     mItems.reserve(iNumItems);
   }
 
-  inline void clear() noexcept { mItems.clear(); };
+  inline void clear() noexcept { mItems.clear(); }
 
   inline size_t add(const Box<ArrayType>& iBox) noexcept {
     mItems.push_back(iBox);
@@ -1293,23 +1293,19 @@ class Flatbush {
                                 double iMaxDistance = gMaxDistance,
                                 const FilterCb& iFilterFn = nullptr) const noexcept;
 
-  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(&mData[2]); };
+  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(&mData[2]); }
 
-  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(&mData[4]); };
+  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(&mData[4]); }
 
-  inline size_t indexSize() const noexcept { return mBoxes.size(); };
+  inline size_t indexSize() const noexcept { return mBoxes.size(); }
 
-  inline span<const uint8_t> data() const noexcept { return {mData.data(), mData.capacity()}; };
+  inline span<const uint8_t> data() const noexcept { return {mData.data(), mData.capacity()}; }
 
   friend class FlatbushBuilder<ArrayType>;
 
  private:
   static constexpr ArrayType cMaxValue = std::numeric_limits<ArrayType>::max();
   static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
-
-  static inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
-    return iValue < iMin ? iMin - iValue : std::max<double>(iValue - iMax, 0.0);
-  }
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1613,8 +1609,9 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
 #else
           const auto wVals = _mm_xor_si128(
               _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos])), detail::kOffset32);
-          const auto wMask =
-              ~_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpgt_epi32(wPivotVecS128, wVals))) & 0xFU;
+          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(
+                                 _mm_castsi128_ps(_mm_cmpgt_epi32(wPivotVecS128, wVals)))) &
+                             0xFU;
 #endif
           if (wMask) {
 #ifdef _MSC_VER
@@ -1622,7 +1619,8 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
             _BitScanForward(&wBitIdx, static_cast<unsigned>(wMask));
             wPivotLeft = wPos + wBitIdx - 1;
 #else
-            wPivotLeft = wPos + __builtin_ctz(static_cast<unsigned>(wMask)) - 1;
+            wPivotLeft =
+                wPos + static_cast<size_t>(__builtin_ctz(static_cast<unsigned>(wMask))) - 1;
 #endif
             break;
           }
@@ -1647,8 +1645,9 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
 #else
           const auto wVals = _mm_xor_si128(
               _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos])), detail::kOffset32);
-          const auto wMask =
-              ~_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpgt_epi32(wVals, wPivotVecS128))) & 0xFU;
+          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(
+                                 _mm_castsi128_ps(_mm_cmpgt_epi32(wVals, wPivotVecS128)))) &
+                             0xFU;
 #endif
           if (wMask) {
 #ifdef _MSC_VER
@@ -1656,7 +1655,9 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
             _BitScanReverse(&wBitIdx, static_cast<unsigned>(wMask));
             wPivotRight = wPos + wBitIdx + 1;
 #else
-            wPivotRight = wPos + (31 - __builtin_clz(static_cast<unsigned>(wMask))) + 1;
+            wPivotRight =
+                wPos + (31U - static_cast<unsigned>(__builtin_clz(static_cast<unsigned>(wMask)))) +
+                1;
 #endif
             break;
           }
