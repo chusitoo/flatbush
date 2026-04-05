@@ -1600,27 +1600,25 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
           const auto wVals = _mm512_loadu_si512(&iValues[wPos]);
           const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_NLT);
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-          const auto wVals =
-              _mm256_xor_si256(_mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos])),
-                               detail::wSignFlip256);
+          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
           const auto wMask =
-              ~_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(wPivotVecS256, wVals))) &
+              ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+                  wPivotVecS256, _mm256_xor_si256(wVals, detail::wSignFlip256))))) &
               0xFFU;
 #else
-          const auto wVals = _mm_xor_si128(
-              _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos])), detail::kOffset32);
-          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(
-                                 _mm_castsi128_ps(_mm_cmpgt_epi32(wPivotVecS128, wVals)))) &
-                             0xFU;
+          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
+          const auto wMask =
+              ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
+                  _mm_cmpgt_epi32(wPivotVecS128, _mm_xor_si128(wVals, detail::kOffset32))))) &
+              0xFU;
 #endif
           if (wMask) {
 #ifdef _MSC_VER
             unsigned long wBitIdx;
-            _BitScanForward(&wBitIdx, static_cast<unsigned>(wMask));
+            _BitScanForward(&wBitIdx, wMask);
             wPivotLeft = wPos + wBitIdx - 1;
 #else
-            wPivotLeft =
-                wPos + static_cast<size_t>(__builtin_ctz(static_cast<unsigned>(wMask))) - 1;
+            wPivotLeft = wPos + static_cast<size_t>(__builtin_ctz(wMask)) - 1;
 #endif
             break;
           }
@@ -1636,28 +1634,25 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
           const auto wVals = _mm512_loadu_si512(detail::bit_cast<const __m512i*>(&iValues[wPos]));
           const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_LE);
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-          const auto wVals =
-              _mm256_xor_si256(_mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos])),
-                               detail::wSignFlip256);
+          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
           const auto wMask =
-              ~_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(wVals, wPivotVecS256))) &
+              ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(
+                  _mm256_xor_si256(wVals, detail::wSignFlip256), wPivotVecS256)))) &
               0xFFU;
 #else
-          const auto wVals = _mm_xor_si128(
-              _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos])), detail::kOffset32);
-          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(
-                                 _mm_castsi128_ps(_mm_cmpgt_epi32(wVals, wPivotVecS128)))) &
-                             0xFU;
+          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
+          const auto wMask =
+              ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
+                  _mm_cmpgt_epi32(_mm_xor_si128(wVals, detail::kOffset32), wPivotVecS128)))) &
+              0xFU;
 #endif
           if (wMask) {
 #ifdef _MSC_VER
             unsigned long wBitIdx;
-            _BitScanReverse(&wBitIdx, static_cast<unsigned>(wMask));
+            _BitScanReverse(&wBitIdx, wMask);
             wPivotRight = wPos + wBitIdx + 1;
 #else
-            wPivotRight =
-                wPos + (31U - static_cast<unsigned>(__builtin_clz(static_cast<unsigned>(wMask)))) +
-                1;
+            wPivotRight = wPos + static_cast<size_t>(31 - __builtin_clz(wMask)) + 1;
 #endif
             break;
           }
