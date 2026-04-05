@@ -21,6 +21,34 @@ if(WITH_SPAN)
   add_compile_options(-DFLATBUSH_SPAN)
 endif()
 
+set(FLATBUSH_WARNING_FLAGS "")
+if(MSVC)
+  set(FLATBUSH_WARNING_FLAGS
+    /EHsc
+    /W4
+    /WX
+    /permissive-
+  )
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+  set(FLATBUSH_WARNING_FLAGS
+    -Wall
+    -Wextra
+    -Werror
+    -Wunused
+    -Wundef
+    -Wextra-semi
+    -Wshadow
+    -Wconversion
+    -Wsign-conversion
+    -Wdouble-promotion
+    -Wcast-align
+    -Wimplicit-fallthrough
+  )
+  if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    list(APPEND FLATBUSH_WARNING_FLAGS -Wno-gnu-zero-variadic-macro-arguments)
+  endif()
+endif()
+
 if(WITH_BENCHMARKS)
   set(CMAKE_BUILD_TYPE Release)
 
@@ -57,6 +85,7 @@ if(WITH_TESTS)
 
   set(test_target unit_test)
   add_executable(${test_target} "test.cpp")
+  target_compile_options(${test_target} PRIVATE ${FLATBUSH_WARNING_FLAGS})
   target_link_libraries(${test_target} PRIVATE gtest_main)
   gtest_discover_tests(${test_target})
 endif()
