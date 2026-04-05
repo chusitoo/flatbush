@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1775350652475,
+  "lastUpdate": 1775354846379,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -8810,6 +8810,72 @@ window.BENCHMARK_DATA = {
             "value": 293410083.0000119,
             "unit": "ns/iter",
             "extra": "iterations: 2\ncpu: 293388630.00000036 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "36134278+chusitoo@users.noreply.github.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bc7532656e4cc3d265ebdaeecac2eb7e9ed0b9c0",
+          "message": "Test improving performance of index view (#8)\n\n- Improve index creation by looping in batches during `sort`\n- Reduce branching by propagating `IsWideIndex` to several function templates,\n- Remove branching from `searchImpl` hot path\n- Implement partially sorted vector strategy for small results in `neighborsImpl`",
+          "timestamp": "2026-04-04T22:06:52-04:00",
+          "tree_id": "d0ba244c4483e2792f934e3fa6fd73131d6522bb",
+          "url": "https://github.com/chusitoo/flatbush/commit/bc7532656e4cc3d265ebdaeecac2eb7e9ed0b9c0"
+        },
+        "date": 1775354845207,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 113855576.83333284,
+            "unit": "ns/iter",
+            "extra": "iterations: 6\ncpu: 113841677.5 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 111047763.99999969,
+            "unit": "ns/iter",
+            "extra": "iterations: 6\ncpu: 111047494.50000001 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 20562188.499999892,
+            "unit": "ns/iter",
+            "extra": "iterations: 34\ncpu: 20557829.970588233 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 2336270.125000004,
+            "unit": "ns/iter",
+            "extra": "iterations: 304\ncpu: 2336035.328947369 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 15011818.659574559,
+            "unit": "ns/iter",
+            "extra": "iterations: 47\ncpu: 15009685.127659582 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 105037369.00000048,
+            "unit": "ns/iter",
+            "extra": "iterations: 7\ncpu: 105027097.00000004 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 251007895.33333293,
+            "unit": "ns/iter",
+            "extra": "iterations: 3\ncpu: 250979792.33333322 ns\nthreads: 1"
           }
         ]
       }
