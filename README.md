@@ -13,7 +13,7 @@
 
 A C++ adaptation of the great Flatbush JS library which implements a packed Hilbert R-tree algorithm.
 
-As such, unit tests and benchmarks are virtually identical in order to provide a close comparison to the original.
+As such, unit tests and benchmarks are largely based on the original source in order to provide a close comparison.
 
 ## Acknowledgement
 
