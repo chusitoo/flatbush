@@ -652,7 +652,7 @@ inline void updateBounds<int8_t>(Box<int8_t>& ioSrc, const Box<int8_t>& iBox) no
   const auto wMins = _mm_or_si128(_mm_and_si128(wCmpMin, wCur), _mm_andnot_si128(wCmpMin, wNew));
   const auto wMaxs = _mm_or_si128(_mm_and_si128(wCmpMax, wCur), _mm_andnot_si128(wCmpMax, wNew));
 #endif
-  _mm_storeu_si32(&ioSrc.mMinX, _mm_unpacklo_epi16(wMins, wMaxs));
+  _mm_storeu_si32(&ioSrc.mMinX, _mm_unpacklo_epi16(wMins, _mm_srli_si128(wMaxs, 2)));
 }
 
 template <>
@@ -661,7 +661,7 @@ inline void updateBounds<uint8_t>(Box<uint8_t>& ioSrc, const Box<uint8_t>& iBox)
   const auto wNew = _mm_loadu_si32(&iBox.mMinX);
   const auto wMins = _mm_min_epu8(wCur, wNew);
   const auto wMaxs = _mm_max_epu8(wCur, wNew);
-  _mm_storeu_si32(&ioSrc.mMinX, _mm_unpacklo_epi16(wMins, wMaxs));
+  _mm_storeu_si32(&ioSrc.mMinX, _mm_unpacklo_epi16(wMins, _mm_srli_si128(wMaxs, 2)));
 }
 
 template <>
@@ -670,7 +670,7 @@ inline void updateBounds<int16_t>(Box<int16_t>& ioSrc, const Box<int16_t>& iBox)
   const auto wNew = _mm_loadu_si64(&iBox.mMinX);
   const auto wMins = _mm_min_epi16(wCur, wNew);
   const auto wMaxs = _mm_max_epi16(wCur, wNew);
-  _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, wMaxs));
+  _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, _mm_srli_si128(wMaxs, 4)));
 }
 
 template <>
@@ -686,7 +686,7 @@ inline void updateBounds<uint16_t>(Box<uint16_t>& ioSrc, const Box<uint16_t>& iB
   const auto wMins = _mm_sub_epi16(_mm_min_epi16(wCurOff, wNewOff), kOffset16);
   const auto wMaxs = _mm_sub_epi16(_mm_max_epi16(wCurOff, wNewOff), kOffset16);
 #endif
-  _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, wMaxs));
+  _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, _mm_srli_si128(wMaxs, 4)));
 }
 
 template <>
@@ -704,7 +704,9 @@ inline void updateBounds<int32_t>(Box<int32_t>& ioSrc, const Box<int32_t>& iBox)
   const auto wMaxs =
       _mm_or_si128(_mm_and_si128(wCmpMax, wCurrent), _mm_andnot_si128(wCmpMax, wNewVals));
 #endif
-  _mm_storeu_si128(bit_cast<__m128i*>(&ioSrc.mMinX), _mm_unpacklo_epi64(wMins, wMaxs));
+  _mm_storeu_si128(bit_cast<__m128i*>(&ioSrc.mMinX),
+                   _mm_castps_si128(_mm_shuffle_ps(
+                       _mm_castsi128_ps(wMins), _mm_castsi128_ps(wMaxs), kShuffleBlendMinMax)));
 }
 
 template <>
@@ -724,7 +726,9 @@ inline void updateBounds<uint32_t>(Box<uint32_t>& ioSrc, const Box<uint32_t>& iB
   const auto wMaxs = _mm_sub_epi32(
       _mm_or_si128(_mm_and_si128(wCmpMax, wCurOff), _mm_andnot_si128(wCmpMax, wNewOff)), kOffset32);
 #endif
-  _mm_storeu_si128(bit_cast<__m128i*>(&ioSrc.mMinX), _mm_unpacklo_epi64(wMins, wMaxs));
+  _mm_storeu_si128(bit_cast<__m128i*>(&ioSrc.mMinX),
+                   _mm_castps_si128(_mm_shuffle_ps(
+                       _mm_castsi128_ps(wMins), _mm_castsi128_ps(wMaxs), kShuffleBlendMinMax)));
 }
 
 template <>

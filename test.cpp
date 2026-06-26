@@ -540,3 +540,23 @@ TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
   auto wNeighbors = wIndex.neighbors({static_cast<ArrayType>(50), static_cast<ArrayType>(50)}, 5);
   EXPECT_EQ(wNeighbors.size(), 5);
 }
+
+TYPED_TEST(FlatbushTypedTest, UpdateBoundsMergesMinAndMaxPerAxis) {
+  using ArrayType = TypeParam;
+
+  flatbush::Box<ArrayType> wBounds{static_cast<ArrayType>(5),
+                                   static_cast<ArrayType>(40),
+                                   static_cast<ArrayType>(10),
+                                   static_cast<ArrayType>(60)};
+  flatbush::Box<ArrayType> wIncoming{static_cast<ArrayType>(3),
+                                     static_cast<ArrayType>(50),
+                                     static_cast<ArrayType>(12),
+                                     static_cast<ArrayType>(55)};
+
+  flatbush::detail::updateBounds(wBounds, wIncoming);
+
+  EXPECT_EQ(wBounds.mMinX, static_cast<ArrayType>(3));
+  EXPECT_EQ(wBounds.mMinY, static_cast<ArrayType>(40));
+  EXPECT_EQ(wBounds.mMaxX, static_cast<ArrayType>(12));
+  EXPECT_EQ(wBounds.mMaxY, static_cast<ArrayType>(60));
+}
