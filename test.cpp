@@ -560,3 +560,38 @@ TYPED_TEST(FlatbushTypedTest, UpdateBoundsMergesMinAndMaxPerAxis) {
   EXPECT_EQ(wBounds.mMaxX, static_cast<ArrayType>(12));
   EXPECT_EQ(wBounds.mMaxY, static_cast<ArrayType>(60));
 }
+
+TYPED_TEST(FlatbushTypedTest, BoxesIntersectDetectsOverlapAndSeparation) {
+  using ArrayType = TypeParam;
+
+  const flatbush::Box<ArrayType> wQuery{static_cast<ArrayType>(10),
+                                        static_cast<ArrayType>(10),
+                                        static_cast<ArrayType>(20),
+                                        static_cast<ArrayType>(20)};
+  const flatbush::Box<ArrayType> wOverlap{static_cast<ArrayType>(15),
+                                          static_cast<ArrayType>(15),
+                                          static_cast<ArrayType>(25),
+                                          static_cast<ArrayType>(25)};
+  const flatbush::Box<ArrayType> wDisjoint{static_cast<ArrayType>(21),
+                                           static_cast<ArrayType>(21),
+                                           static_cast<ArrayType>(30),
+                                           static_cast<ArrayType>(30)};
+
+  EXPECT_TRUE(flatbush::detail::boxesIntersect(wQuery, wOverlap));
+  EXPECT_FALSE(flatbush::detail::boxesIntersect(wQuery, wDisjoint));
+}
+
+TYPED_TEST(FlatbushTypedTest, ComputeDistanceSquaredInsideAndOutside) {
+  using ArrayType = TypeParam;
+
+  const flatbush::Box<ArrayType> wBox{static_cast<ArrayType>(2),
+                                      static_cast<ArrayType>(3),
+                                      static_cast<ArrayType>(5),
+                                      static_cast<ArrayType>(7)};
+
+  const flatbush::Point<ArrayType> wInside{static_cast<ArrayType>(3), static_cast<ArrayType>(4)};
+  const flatbush::Point<ArrayType> wOutside{static_cast<ArrayType>(0), static_cast<ArrayType>(10)};
+
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wInside, wBox), 0.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wOutside, wBox), 13.0);
+}
