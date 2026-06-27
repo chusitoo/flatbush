@@ -498,6 +498,93 @@ TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
 
+TEST(FlatbushTest, SearchQueryNaNBoundsReturnsEmpty) {
+  auto wIndex = createIndex();
+  const auto wNaN = std::numeric_limits<double>::quiet_NaN();
+  const auto wIds = wIndex.search({wNaN, 0.0, 10.0, 10.0});
+  EXPECT_TRUE(wIds.empty());
+}
+
+TEST(FlatbushTest, NeighborsGuardPathsReturnEmpty) {
+  auto wIndex = createIndex();
+  const auto wNaN = std::numeric_limits<double>::quiet_NaN();
+
+  EXPECT_TRUE(wIndex.neighbors({wNaN, 50.0}, 10).empty());
+  EXPECT_TRUE(wIndex.neighbors({50.0, 50.0}, 0).empty());
+  EXPECT_TRUE(wIndex.neighbors({50.0, 50.0}, 10, 0.0).empty());
+  EXPECT_TRUE(wIndex.neighbors({50.0, 50.0}, 10, -1.0).empty());
+}
+
+TEST(FlatbushTest, SearchOutsideGlobalBoundsReturnsEmpty) {
+  auto wIndex = createIndex();
+  const auto wIds = wIndex.search({1000.0, 1000.0, 1010.0, 1010.0});
+  EXPECT_TRUE(wIds.empty());
+}
+
+TEST(FlatbushTest, ApproximateResultsSizeEdgeCases) {
+  const flatbush::Box<double> wDegenerateIndex{1.0, 1.0, 1.0, 10.0};
+  const flatbush::Box<double> wValidSearch{0.0, 0.0, 2.0, 2.0};
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wDegenerateIndex, wValidSearch, 100), 0UL);
+
+  const flatbush::Box<double> wValidIndex{0.0, 0.0, 10.0, 10.0};
+  const flatbush::Box<double> wDegenerateSearch{1.0, 1.0, 1.0, 3.0};
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wDegenerateSearch, 100), 0UL);
+
+  const flatbush::Box<double> wNegativeDimensionSearch{6.0, 1.0, 5.0, 3.0};
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wNegativeDimensionSearch, 100),
+            0UL);
+
+  const auto wInf = std::numeric_limits<double>::infinity();
+  const auto wNaN = std::numeric_limits<double>::quiet_NaN();
+  const flatbush::Box<double> wInfiniteSearch{0.0, 0.0, wInf, 2.0};
+  const flatbush::Box<double> wNanSearch{0.0, 0.0, wNaN, 2.0};
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wInfiniteSearch, 100), 0UL);
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wNanSearch, 100), 0UL);
+
+  const flatbush::Box<double> wBiggerSearch{-5.0, -5.0, 15.0, 15.0};
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wBiggerSearch, 100), 100UL);
+
+  const flatbush::Box<double> wQuarterSearch{0.0, 0.0, 5.0, 5.0};
+  EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wQuarterSearch, 100), 37UL);
+}
+
+TEST(FlatbushTest, NeighborsUsesBothStrategyBranches) {
+  const uint32_t wNumItems = 300;
+  flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
+  for (uint32_t wIdx = 0; wIdx < wNumItems; ++wIdx) {
+    const auto wVal = static_cast<double>(wIdx);
+    wBuilder.add({wVal, wVal, wVal, wVal});
+  }
+  const auto wIndex = wBuilder.finish();
+
+  const auto wSmallLimit = wIndex.neighbors({50.0, 50.0}, 127);
+  const auto wLargeLimit = wIndex.neighbors({50.0, 50.0}, 129);
+
+  EXPECT_EQ(wSmallLimit.size(), 127UL);
+  EXPECT_EQ(wLargeLimit.size(), 129UL);
+
+  for (const auto wId : wSmallLimit) {
+    EXPECT_NE(std::find(wLargeLimit.begin(), wLargeLimit.end(), wId), wLargeLimit.end());
+  }
+}
+
+TEST(FlatbushTest, WideIndexSupportsSearchAndNeighbors) {
+  const uint32_t wNumItems = 20000;
+  flatbush::FlatbushBuilder<uint32_t> wBuilder(wNumItems);
+  for (uint32_t wIdx = 0; wIdx < wNumItems; ++wIdx) {
+    wBuilder.add({wIdx, wIdx, wIdx, wIdx});
+  }
+  const auto wIndex = wBuilder.finish();
+
+  const auto wSearch = wIndex.search({12345U, 12345U, 12345U, 12345U});
+  EXPECT_EQ(wSearch.size(), 1UL);
+  EXPECT_EQ(wSearch.front(), 12345UL);
+
+  const auto wNeighbors = wIndex.neighbors({12345U, 12345U}, 10);
+  EXPECT_EQ(wNeighbors.size(), 10UL);
+  EXPECT_NE(std::find(wNeighbors.begin(), wNeighbors.end(), 12345UL), wNeighbors.end());
+}
+
 template <typename T>
 class FlatbushTypedTest : public Test {};
 
@@ -539,4 +626,78 @@ TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
 
   auto wNeighbors = wIndex.neighbors({static_cast<ArrayType>(50), static_cast<ArrayType>(50)}, 5);
   EXPECT_EQ(wNeighbors.size(), 5);
+}
+
+TYPED_TEST(FlatbushTypedTest, UpdateBounds) {
+  using ArrayType = TypeParam;
+
+  flatbush::Box<ArrayType> wBounds{static_cast<ArrayType>(5),
+                                   static_cast<ArrayType>(40),
+                                   static_cast<ArrayType>(10),
+                                   static_cast<ArrayType>(60)};
+  flatbush::Box<ArrayType> wIncoming{static_cast<ArrayType>(3),
+                                     static_cast<ArrayType>(50),
+                                     static_cast<ArrayType>(12),
+                                     static_cast<ArrayType>(55)};
+
+  flatbush::detail::updateBounds(wBounds, wIncoming);
+
+  EXPECT_EQ(wBounds.mMinX, static_cast<ArrayType>(3));
+  EXPECT_EQ(wBounds.mMinY, static_cast<ArrayType>(40));
+  EXPECT_EQ(wBounds.mMaxX, static_cast<ArrayType>(12));
+  EXPECT_EQ(wBounds.mMaxY, static_cast<ArrayType>(60));
+}
+
+TYPED_TEST(FlatbushTypedTest, BoxesIntersect) {
+  using ArrayType = TypeParam;
+
+  const flatbush::Box<ArrayType> wQuery{static_cast<ArrayType>(10),
+                                        static_cast<ArrayType>(10),
+                                        static_cast<ArrayType>(20),
+                                        static_cast<ArrayType>(20)};
+  const flatbush::Box<ArrayType> wOverlap{static_cast<ArrayType>(15),
+                                          static_cast<ArrayType>(15),
+                                          static_cast<ArrayType>(25),
+                                          static_cast<ArrayType>(25)};
+  const flatbush::Box<ArrayType> wDisjoint{static_cast<ArrayType>(21),
+                                           static_cast<ArrayType>(21),
+                                           static_cast<ArrayType>(30),
+                                           static_cast<ArrayType>(30)};
+
+  EXPECT_TRUE(flatbush::detail::boxesIntersect(wQuery, wOverlap));
+  EXPECT_FALSE(flatbush::detail::boxesIntersect(wQuery, wDisjoint));
+  const flatbush::Box<ArrayType> wTouchEdge{static_cast<ArrayType>(20),
+                                            static_cast<ArrayType>(12),
+                                            static_cast<ArrayType>(25),
+                                            static_cast<ArrayType>(18)};
+  const flatbush::Box<ArrayType> wTouchCorner{static_cast<ArrayType>(20),
+                                              static_cast<ArrayType>(20),
+                                              static_cast<ArrayType>(25),
+                                              static_cast<ArrayType>(25)};
+
+  EXPECT_TRUE(flatbush::detail::boxesIntersect(wQuery, wTouchEdge));
+  EXPECT_TRUE(flatbush::detail::boxesIntersect(wQuery, wTouchCorner));
+}
+
+TYPED_TEST(FlatbushTypedTest, ComputeDistanceSquared) {
+  using ArrayType = TypeParam;
+
+  const flatbush::Box<ArrayType> wBox{static_cast<ArrayType>(2),
+                                      static_cast<ArrayType>(3),
+                                      static_cast<ArrayType>(5),
+                                      static_cast<ArrayType>(7)};
+
+  const flatbush::Point<ArrayType> wInside{static_cast<ArrayType>(3), static_cast<ArrayType>(4)};
+  const flatbush::Point<ArrayType> wOutside{static_cast<ArrayType>(0), static_cast<ArrayType>(10)};
+
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wInside, wBox), 0.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wOutside, wBox), 13.0);
+  const flatbush::Point<ArrayType> wOnBoundary{static_cast<ArrayType>(2),
+                                               static_cast<ArrayType>(5)};
+  const flatbush::Point<ArrayType> wOutsideX{static_cast<ArrayType>(1), static_cast<ArrayType>(5)};
+  const flatbush::Point<ArrayType> wOutsideY{static_cast<ArrayType>(4), static_cast<ArrayType>(8)};
+
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wOnBoundary, wBox), 0.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wOutsideX, wBox), 1.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wOutsideY, wBox), 1.0);
 }
