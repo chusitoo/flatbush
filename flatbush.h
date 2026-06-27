@@ -345,7 +345,10 @@ inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noex
 
 template <typename ArrayType>
 inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
-  return std::max(0.0, static_cast<double>(std::max(iMin - iValue, iValue - iMax)));
+  const auto wValue = static_cast<double>(iValue);
+  const auto wMin = static_cast<double>(iMin);
+  const auto wMax = static_cast<double>(iMax);
+  return std::max(0.0, std::max(wMin - wValue, wValue - wMax));
 }
 
 template <typename ArrayType>
