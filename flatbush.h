@@ -33,6 +33,9 @@ SOFTWARE.
 #include <functional>   // for function
 #include <limits>       // for numeric_limits
 #include <queue>        // for priority_queue
+#ifndef FLATBUSH_SPAN
+#include <span>  // for span
+#endif
 #include <stdexcept>    // for invalid_argument
 #include <string>       // for operator+, to_string, allocator, basic_string, char_traits, string
 #include <type_traits>  // for enable_if, is_same, false_type, integral_constant
@@ -88,7 +91,6 @@ SOFTWARE.
 
 namespace flatbush {
 #ifndef FLATBUSH_SPAN
-#include <span>
 using std::span;
 #else
 template <typename Type>
