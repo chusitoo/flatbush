@@ -1348,12 +1348,12 @@ class Flatbush {
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const noexcept;
 
   template <typename DistanceFn>
-  std::vector<size_t> neighborsDispatch(const Point<ArrayType>& iPoint,
-                                        size_t iMaxResults,
-                                        double iMaxDistance,
-                                        double iThreshold,
-                                        const FilterCb& iFilterFn,
-                                        const DistanceFn& iDistanceFn) const noexcept;
+  std::vector<size_t> neighborsWithMetric(const Point<ArrayType>& iPoint,
+                                          size_t iMaxResults,
+                                          double iMaxDistance,
+                                          double iThreshold,
+                                          const FilterCb& iFilterFn,
+                                          const DistanceFn& iDistanceFn) const noexcept;
 
   template <bool IsWideIndex, bool UseHeap, typename DistanceFn>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
@@ -1855,12 +1855,12 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
 template <typename ArrayType>
 template <typename DistanceFn>
-std::vector<size_t> Flatbush<ArrayType>::neighborsDispatch(const Point<ArrayType>& iPoint,
-                                                           size_t iMaxResults,
-                                                           double iMaxDistance,
-                                                           double iThreshold,
-                                                           const FilterCb& iFilterFn,
-                                                           const DistanceFn& iDistanceFn) const noexcept {
+std::vector<size_t> Flatbush<ArrayType>::neighborsWithMetric(const Point<ArrayType>& iPoint,
+                                                             size_t iMaxResults,
+                                                             double iMaxDistance,
+                                                             double iThreshold,
+                                                             const FilterCb& iFilterFn,
+                                                             const DistanceFn& iDistanceFn) const noexcept {
   static constexpr auto kMergeThreshold = 128UL;
   static constexpr auto kWideIndex = true;
   static constexpr auto kUseHeap = true;
@@ -1894,15 +1894,15 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
   // A custom metric owns its units, so its threshold is taken as given; the built-in one
   // compares squared distances to keep the square root out of the traversal
   if (iDistanceFn) {
-    return neighborsDispatch(iPoint, iMaxResults, iMaxDistance, iMaxDistance, iFilterFn, iDistanceFn);
+    return neighborsWithMetric(iPoint, iMaxResults, iMaxDistance, iMaxDistance, iFilterFn, iDistanceFn);
   }
 
-  return neighborsDispatch(iPoint,
-                           iMaxResults,
-                           iMaxDistance,
-                           iMaxDistance * iMaxDistance,
-                           iFilterFn,
-                           detail::DefaultDistance<ArrayType> {});
+  return neighborsWithMetric(iPoint,
+                             iMaxResults,
+                             iMaxDistance,
+                             iMaxDistance * iMaxDistance,
+                             iFilterFn,
+                             detail::DefaultDistance<ArrayType> {});
 }
 }  // namespace flatbush
 
