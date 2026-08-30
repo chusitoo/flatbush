@@ -76,7 +76,7 @@ struct BenchmarkData {
     // Build the index
     flatbush::FlatbushBuilder<double> wBuilder(wNodeSize);
     for (size_t wIdx = 0; wIdx < mCoords.size(); wIdx += 4) {
-      wBuilder.add({mCoords[wIdx], mCoords[wIdx + 1], mCoords[wIdx + 2], mCoords[wIdx + 3]});
+      wBuilder.add({ mCoords[wIdx], mCoords[wIdx + 1], mCoords[wIdx + 2], mCoords[wIdx + 3] });
     }
     auto wIndex = wBuilder.finish();
     auto span = wIndex.data();
@@ -85,8 +85,8 @@ struct BenchmarkData {
 };
 
 static BenchmarkData gData = BenchmarkData::instance();
-static flatbush::Flatbush<double> gIndex =
-    flatbush::FlatbushBuilder<double>::from(gData.mIndexData.data(), gData.mIndexData.size());
+static flatbush::Flatbush<double> gIndex = flatbush::FlatbushBuilder<double>::from(gData.mIndexData.data(),
+                                                                                   gData.mIndexData.size());
 
 static void BM_Index1M(benchmark::State& state) {
   static constexpr auto kNumItems = 1000000;
@@ -100,7 +100,7 @@ static void BM_Index1M(benchmark::State& state) {
   for (auto _ : state) {
     flatbush::FlatbushBuilder<double> wBuilder(kNodeSize);
     for (size_t wIdx = 0; wIdx < wCoords.size(); wIdx += 4) {
-      wBuilder.add({wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3]});
+      wBuilder.add({ wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3] });
     }
     auto wIndex = wBuilder.finish();
     benchmark::DoNotOptimize(wIndex);
@@ -113,10 +113,8 @@ BENCHMARK(BM_Index1M);
 static void BM_Search10Percent(benchmark::State& state) {
   for (auto _ : state) {
     for (size_t wIdx = 0; wIdx < gData.mBoxes100.size(); wIdx += 4) {
-      auto result = gIndex.search({gData.mBoxes100[wIdx],
-                                   gData.mBoxes100[wIdx + 1],
-                                   gData.mBoxes100[wIdx + 2],
-                                   gData.mBoxes100[wIdx + 3]});
+      auto result = gIndex.search(
+          { gData.mBoxes100[wIdx], gData.mBoxes100[wIdx + 1], gData.mBoxes100[wIdx + 2], gData.mBoxes100[wIdx + 3] });
       benchmark::DoNotOptimize(result);
     }
   }
@@ -128,10 +126,8 @@ BENCHMARK(BM_Search10Percent);
 static void BM_Search1Percent(benchmark::State& state) {
   for (auto _ : state) {
     for (size_t wIdx = 0; wIdx < gData.mBoxes10.size(); wIdx += 4) {
-      auto result = gIndex.search({gData.mBoxes10[wIdx],
-                                   gData.mBoxes10[wIdx + 1],
-                                   gData.mBoxes10[wIdx + 2],
-                                   gData.mBoxes10[wIdx + 3]});
+      auto result = gIndex.search(
+          { gData.mBoxes10[wIdx], gData.mBoxes10[wIdx + 1], gData.mBoxes10[wIdx + 2], gData.mBoxes10[wIdx + 3] });
       benchmark::DoNotOptimize(result);
     }
   }
@@ -143,10 +139,8 @@ BENCHMARK(BM_Search1Percent);
 static void BM_Search001Percent(benchmark::State& state) {
   for (auto _ : state) {
     for (size_t wIdx = 0; wIdx < gData.mBoxes1.size(); wIdx += 4) {
-      auto result = gIndex.search({gData.mBoxes1[wIdx],
-                                   gData.mBoxes1[wIdx + 1],
-                                   gData.mBoxes1[wIdx + 2],
-                                   gData.mBoxes1[wIdx + 3]});
+      auto result = gIndex.search(
+          { gData.mBoxes1[wIdx], gData.mBoxes1[wIdx + 1], gData.mBoxes1[wIdx + 2], gData.mBoxes1[wIdx + 3] });
       benchmark::DoNotOptimize(result);
     }
   }
@@ -160,7 +154,7 @@ static void BM_Neighbors100(benchmark::State& state) {
 
   for (auto _ : state) {
     for (size_t wIdx = 0; wIdx < kNumTests; ++wIdx) {
-      auto result = gIndex.neighbors({gData.mCoords[4 * wIdx], gData.mCoords[4 * wIdx + 1]}, 100);
+      auto result = gIndex.neighbors({ gData.mCoords[4 * wIdx], gData.mCoords[4 * wIdx + 1] }, 100);
       benchmark::DoNotOptimize(result);
     }
   }
@@ -171,7 +165,7 @@ BENCHMARK(BM_Neighbors100);
 
 static void BM_NeighborsAll(benchmark::State& state) {
   for (auto _ : state) {
-    auto result = gIndex.neighbors({gData.mCoords[0], gData.mCoords[1]}, gData.mCoords.size() / 4);
+    auto result = gIndex.neighbors({ gData.mCoords[0], gData.mCoords[1] }, gData.mCoords.size() / 4);
     benchmark::DoNotOptimize(result);
   }
 
@@ -184,7 +178,7 @@ static void BM_Neighbors1(benchmark::State& state) {
 
   for (auto _ : state) {
     for (size_t wIdx = 0; wIdx < kNumTests; ++wIdx) {
-      auto result = gIndex.neighbors({gData.mCoords[4 * wIdx], gData.mCoords[4 * wIdx + 1]}, 1);
+      auto result = gIndex.neighbors({ gData.mCoords[4 * wIdx], gData.mCoords[4 * wIdx + 1] }, 1);
       benchmark::DoNotOptimize(result);
     }
   }

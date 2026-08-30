@@ -43,7 +43,7 @@ flatbush::Flatbush<ArrayType> createIndex(uint32_t iNumItems, uint16_t iNodeSize
   auto wSize = static_cast<size_t>(iNumItems);
   for (size_t wIdx = 0; wIdx < wSize; ++wIdx) {
     auto coord = static_cast<ArrayType>(wIdx);
-    wBuilder.add({coord, coord, coord, coord});
+    wBuilder.add({ coord, coord, coord, coord });
   }
   auto wIndex = wBuilder.finish();
 
@@ -53,7 +53,7 @@ flatbush::Flatbush<ArrayType> createIndex(uint32_t iNumItems, uint16_t iNodeSize
 std::vector<size_t> calculateNumNodesPerLevel(uint32_t iNumItems, uint32_t iNodeSize) {
   size_t wCount = iNumItems;
   size_t wNumNodes = iNumItems;
-  std::vector<size_t> wLevelBounds{wNumNodes};
+  std::vector<size_t> wLevelBounds { wNumNodes };
 
   do {
     wCount = (wCount + iNodeSize - 1) / iNodeSize;
@@ -68,10 +68,8 @@ template <typename ArrayType>
 flatbush::Flatbush<ArrayType> createSearchIndex() {
   flatbush::FlatbushBuilder<ArrayType> wBuilder;
 
-  wBuilder.add({static_cast<ArrayType>(42),
-                static_cast<ArrayType>(0),
-                static_cast<ArrayType>(42),
-                static_cast<ArrayType>(0)});
+  wBuilder.add(
+      { static_cast<ArrayType>(42), static_cast<ArrayType>(0), static_cast<ArrayType>(42), static_cast<ArrayType>(0) });
   auto wIndex = wBuilder.finish();
 
   return wIndex;
@@ -101,8 +99,8 @@ void FuzzFromTemplate(const std::string& data) {
 
   const auto& wLevelBounds = calculateNumNodesPerLevel(wNumItems, wNodeSize);
   const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
-  const auto wIndicesByteSize =
-      wNumNodes * ((wNumNodes > flatbush::gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
+  const auto wIndicesByteSize = wNumNodes *
+                                ((wNumNodes > flatbush::gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
   const auto wNodesByteSize = wNumNodes * sizeof(flatbush::Box<ArrayType>);
   const auto wSize = flatbush::gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   if (wSize != iSize) return;
@@ -146,10 +144,10 @@ FUZZ_TEST(FlatbushFuzzTest, FuzzFromDouble);
 template <typename ArrayType>
 void FuzzSearchTemplate(ArrayType minX, ArrayType minY, ArrayType maxX, ArrayType maxY) {
   auto wIndex = createSearchIndex<ArrayType>();
-  auto wResult = wIndex.search({minX, minY, maxX, maxY});
+  auto wResult = wIndex.search({ minX, minY, maxX, maxY });
 
-  if (minX <= static_cast<ArrayType>(42) && maxX >= static_cast<ArrayType>(42) &&
-      minY <= static_cast<ArrayType>(0) && maxY >= static_cast<ArrayType>(0)) {
+  if (minX <= static_cast<ArrayType>(42) && maxX >= static_cast<ArrayType>(42) && minY <= static_cast<ArrayType>(0) &&
+      maxY >= static_cast<ArrayType>(0)) {
     ASSERT_EQ(wResult.size(), 1);
   } else {
     ASSERT_EQ(wResult.size(), 0);
@@ -207,12 +205,11 @@ void FuzzNeighborsTemplate(ArrayType iX, ArrayType iY, size_t iMaxResults, doubl
   const auto wY = static_cast<double>(iY);
   const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
 
-  const flatbush::Point<ArrayType> wPoint{iX, iY};
+  const flatbush::Point<ArrayType> wPoint { iX, iY };
   const auto wResult = wIndex.neighbors(wPoint, iMaxResults, iMaxDistance);
   const auto wDistance = std::pow(wX - 42, 2.0) + std::pow(wY, 2.0);
 
-  if (iMaxResults > 0 && iMaxDistance >= 0.0 && std::isnormal(wMaxDistSquared) &&
-      wDistance <= wMaxDistSquared) {
+  if (iMaxResults > 0 && iMaxDistance >= 0.0 && std::isnormal(wMaxDistSquared) && wDistance <= wMaxDistSquared) {
     ASSERT_EQ(wResult.size(), 1);
   } else {
     ASSERT_EQ(wResult.size(), 0);
