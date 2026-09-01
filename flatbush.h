@@ -1228,6 +1228,9 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
 template <typename ArrayType>
 class Flatbush {
   using FilterCb = std::function<bool(size_t, const Box<ArrayType>&)>;
+  // Must return a lower bound of the distance from the point to any point of the box,
+  // otherwise the traversal prunes and orders on a value it cannot trust
+  using DistanceCb = std::function<double(const Point<ArrayType>&, const Box<ArrayType>&)>;
 
  public:
   Flatbush(const Flatbush&) = delete;
@@ -1238,10 +1241,13 @@ class Flatbush {
 
   std::vector<size_t> search(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn = nullptr) const noexcept;
 
+  // Without a distance callback, iMaxDistance is a Euclidean distance in index units; with
+  // one, it is compared as-is against whatever that callback returns
   std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
                                 size_t iMaxResults = gMaxResults,
                                 double iMaxDistance = gMaxDistance,
-                                const FilterCb& iFilterFn = nullptr) const noexcept;
+                                const FilterCb& iFilterFn = nullptr,
+                                const DistanceCb& iDistanceFn = nullptr) const noexcept;
 
   inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(&mData[2]); }
 
@@ -1276,7 +1282,8 @@ class Flatbush {
   inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
                              size_t iMaxResults,
                              double iMaxDistance,
-                             double iMaxDistSquared) const {
+                             double iThreshold,
+                             const DistanceCb& iDistanceFn) const {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanPoint = (std::isnan(static_cast<double>(iPoint.mX)) || std::isnan(static_cast<double>(iPoint.mY)));
@@ -1284,10 +1291,10 @@ class Flatbush {
     const auto wIsNanPoint = (std::isnan(iPoint.mX) || std::isnan(iPoint.mY));
 #endif
 
-    const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBounds);
+    const auto wDistance = iDistanceFn(iPoint, mBounds);
 
-    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistSquared) &&
-           std::isnormal(iMaxDistSquared) && wDistSquared <= iMaxDistSquared;
+    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistance) &&
+           std::isnormal(iThreshold) && wDistance <= iThreshold;
   }
 
   Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
@@ -1333,8 +1340,9 @@ class Flatbush {
   template <bool IsWideIndex, bool UseHeap>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
-                                    double iMaxDistSquared,
-                                    const FilterCb& iFilterFn) const noexcept;
+                                    double iThreshold,
+                                    const FilterCb& iFilterFn,
+                                    const DistanceCb& iDistanceFn) const noexcept;
 
   struct IndexDistance {
     IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
@@ -1749,8 +1757,9 @@ template <typename ArrayType>
 template <bool IsWideIndex, bool UseHeap>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
-                                                       double iMaxDistSquared,
-                                                       const FilterCb& iFilterFn) const noexcept {
+                                                       double iThreshold,
+                                                       const FilterCb& iFilterFn,
+                                                       const DistanceCb& iDistanceFn) const noexcept {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1766,16 +1775,16 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
     const auto wQueueSize = wQueue.size();
 
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-      const auto wDistSquared = detail::computeDistanceSquared(iPoint, mBoxes[wPosition]);
+      const auto wDistance = iDistanceFn(iPoint, mBoxes[wPosition]);
 
-      if (wDistSquared > iMaxDistSquared) {
+      if (wDistance > iThreshold) {
         continue;
       }
 
       const auto wIndex = getIndex<IsWideIndex>(wPosition);
 
       if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
-        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistSquared);
+        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
       }
     }
@@ -1830,30 +1839,39 @@ template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
                                                    size_t iMaxResults,
                                                    double iMaxDistance,
-                                                   const FilterCb& iFilterFn) const noexcept {
+                                                   const FilterCb& iFilterFn,
+                                                   const DistanceCb& iDistanceFn) const noexcept {
   static constexpr auto kMergeThreshold = 128UL;
   static constexpr auto kWideIndex = true;
   static constexpr auto kUseHeap = true;
-  const auto wMaxDistSquared = iMaxDistance * iMaxDistance;
   const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
-  if (!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wMaxDistSquared)) {
+  static const auto wDefaultFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+    return detail::computeDistanceSquared(iQuery, iBox);
+  };
+
+  // A custom metric owns its units, so its threshold is taken as given; the built-in one
+  // compares squared distances to keep the square root out of the traversal
+  const DistanceCb wDistanceFn = iDistanceFn ? iDistanceFn : DistanceCb(wDefaultFn);
+  const auto wThreshold = iDistanceFn ? iMaxDistance : iMaxDistance * iMaxDistance;
+
+  if (!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wThreshold, wDistanceFn)) {
     return {};
   }
 
   if (mIsWideIndex) {
     if (wNeedHeap) {
-      return neighborsImpl<kWideIndex, kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+      return neighborsImpl<kWideIndex, kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
     }
 
-    return neighborsImpl<kWideIndex, !kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+    return neighborsImpl<kWideIndex, !kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
   }
 
   if (wNeedHeap) {
-    return neighborsImpl<!kWideIndex, kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+    return neighborsImpl<!kWideIndex, kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
   }
 
-  return neighborsImpl<!kWideIndex, !kUseHeap>(iPoint, iMaxResults, wMaxDistSquared, iFilterFn);
+  return neighborsImpl<!kWideIndex, !kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
 }
 }  // namespace flatbush
 

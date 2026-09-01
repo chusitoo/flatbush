@@ -70,6 +70,24 @@ auto filterOdd = [](size_t id){ return id % 2 != 0; };
 auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
+### Searching for nearest neighbors with a custom metric
+
+By default, `neighbors` ranks and prunes on the planar Euclidean distance and `maxDistance` is
+expressed in index units. Passing a distance callback replaces that metric, in which case
+`maxDistance` is compared directly against whatever the callback returns.
+
+```cpp
+// e.g. a great-circle metric for a lon/lat index, with maxDistance then given in metres
+auto haversine = [](const Point<double>& point, const Box<double>& box) -> double {
+    return distanceToBoxInMetres(point, box);
+};
+auto nearbyIds = index.neighbors({13.4, 52.5}, 10, 5000.0, nullptr, haversine);
+```
+
+The callback must return a **lower bound** of the distance from the point to any point inside the
+box, otherwise the traversal prunes and orders on a value it cannot trust. Note that it is invoked
+once per visited node box, so it bypasses the SIMD path used by the built-in metric.
+
 ### Reconstruct from raw data
 
 ```cpp
