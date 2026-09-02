@@ -160,14 +160,6 @@ To bit_cast(From const& from) {
   return to;
 }
 
-// Header fields may live in a caller-provided buffer carrying no alignment guarantee
-template <class Type>
-inline Type readUnaligned(const uint8_t* iData) noexcept {
-  Type wValue;
-  std::memcpy(&wValue, iData, sizeof(Type));
-  return wValue;
-}
-
 inline uint32_t Interleave(uint32_t v) {
   v = (v | (v << 8U)) & 0x00FF00FF;
   v = (v | (v << 4U)) & 0x0F0F0F0F;
@@ -1181,14 +1173,15 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(std::vector<uint8_t>&& iDat
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
-  validate(iBytes.data(), iBytes.size());
-
-  // Unlike the owning overloads, external bytes carry no alignment guarantee
+  // Unlike the owning overloads, external bytes carry no alignment guarantee, so this has to
+  // clear before validate reads the header through it
   constexpr size_t wAlignment = alignof(Box<ArrayType>) > alignof(uint32_t) ? alignof(Box<ArrayType>)
-                                                                           : alignof(uint32_t);
+                                                                            : alignof(uint32_t);
   if ((reinterpret_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
     throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(wAlignment) + " bytes.");
   }
+
+  validate(iBytes.data(), iBytes.size());
 
   return Flatbush<ArrayType>(iBytes);
 }
@@ -1227,13 +1220,13 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
                                     .append(detail::arrayTypeName(wExpectedType)));
   }
 
-  const auto wNodeSize = detail::readUnaligned<uint16_t>(&iData[2]);
+  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
   if (wNodeSize < gMinNodeSize) {
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
 
-  const auto wNumItems = detail::readUnaligned<uint32_t>(&iData[4]);
-  const auto wSize = Flatbush<ArrayType>::packedByteSizeFor(wNumItems, wNodeSize);
+  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
+  const auto wSize = Flatbush<ArrayType>::calculateDataSize(wNumItems, wNodeSize);
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
                                 ", but got buffer size " + std::to_string(iSize) + ".");
@@ -1264,9 +1257,9 @@ class Flatbush {
                                 const FilterCb& iFilterFn = nullptr,
                                 const DistanceCb& iDistanceFn = nullptr) const noexcept;
 
-  inline size_t nodeSize() const noexcept { return detail::readUnaligned<uint16_t>(mBytes.data() + 2); }
+  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2); }
 
-  inline size_t numItems() const noexcept { return detail::readUnaligned<uint32_t>(mBytes.data() + 4); }
+  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(mBytes.data() + 4); }
 
   inline size_t indexSize() const noexcept { return mBoxes.size(); }
 
@@ -1319,7 +1312,7 @@ class Flatbush {
   explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
   explicit Flatbush(span<const uint8_t> iBytes) noexcept;
 
-  static size_t packedByteSizeFor(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
+  static size_t calculateDataSize(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
@@ -1372,8 +1365,7 @@ class Flatbush {
     double mDistance;
   };
 
-  // backing store, empty when the packed bytes are managed externally
-  std::vector<uint8_t> mData;
+  std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
   span<const uint8_t> mBytes;
   span<Box<ArrayType>> mBoxes;
   span<uint16_t> mIndicesUint16;
@@ -1390,7 +1382,7 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
 
-  mData.resize(packedByteSizeFor(iNumItems, iNodeSize), 0U);
+  mData.resize(calculateDataSize(iNumItems, iNodeSize), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -1417,8 +1409,8 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
   // Const is shed only to bind the typed views; externally managed bytes are never written to
   auto* const wBase = const_cast<uint8_t*>(mBytes.data());
-  const auto wNumItems = detail::readUnaligned<uint32_t>(wBase + 4);
-  const auto wNodeSize = detail::readUnaligned<uint16_t>(wBase + 2);
+  const auto wNumItems = *detail::bit_cast<const uint32_t*>(wBase + 4);
+  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(wBase + 2);
 
   mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
 
@@ -1449,7 +1441,7 @@ void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
 }
 
 template <typename ArrayType>
-size_t Flatbush<ArrayType>::packedByteSizeFor(uint32_t iNumItems, uint32_t iNodeSize) noexcept {
+size_t Flatbush<ArrayType>::calculateDataSize(uint32_t iNumItems, uint32_t iNodeSize) noexcept {
   size_t wCount = iNumItems;
   size_t wNumNodes = iNumItems;
 
