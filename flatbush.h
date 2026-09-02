@@ -1279,6 +1279,7 @@ class Flatbush {
  private:
   static constexpr ArrayType cMaxValue = std::numeric_limits<ArrayType>::max();
   static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
+  static constexpr bool cPacked = true;
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1321,8 +1322,7 @@ class Flatbush {
   static size_t packedByteSizeFor(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
-  void mapLayout() noexcept;
-  void adopt() noexcept;
+  void init(bool iIsPacked) noexcept;
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   template <bool IsWideIndex>
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
@@ -1397,24 +1397,24 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
   mBytes = { mData.data(), mData.size() };
 
-  mapLayout();
+  init(!cPacked);
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
   mData = std::move(iData);
   mBytes = { mData.data(), mData.size() };
-  adopt();
+  init(cPacked);
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept {
   mBytes = iBytes;
-  adopt();
+  init(cPacked);
 }
 
 template <typename ArrayType>
-void Flatbush<ArrayType>::mapLayout() noexcept {
+void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
   // Const is shed only to bind the typed views; externally managed bytes are never written to
   auto* const wBase = const_cast<uint8_t*>(mBytes.data());
   const auto wNumItems = detail::readUnaligned<uint32_t>(wBase + 4);
@@ -1440,15 +1440,11 @@ void Flatbush<ArrayType>::mapLayout() noexcept {
   mBoxes = { detail::bit_cast<Box<ArrayType>*>(wBase + gHeaderByteSize), wNumNodes };
   mIndicesUint16 = { detail::bit_cast<uint16_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
   mIndicesUint32 = { detail::bit_cast<uint32_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
-}
 
-template <typename ArrayType>
-void Flatbush<ArrayType>::adopt() noexcept {
-  mapLayout();
-  mPosition = mLevelBounds.back();
-
-  if (mPosition > 0UL) {
-    mBounds = mBoxes[mPosition - 1UL];
+  // Already-packed bytes leave nothing to fill in, so the tree starts out complete
+  if (iIsPacked && wNumNodes > 0UL) {
+    mPosition = wNumNodes;
+    mBounds = mBoxes[wNumNodes - 1UL];
   }
 }
 
