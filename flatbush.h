@@ -1321,9 +1321,8 @@ class Flatbush {
   static size_t packedByteSizeFor(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
+  void mapLayout() noexcept;
   void adopt() noexcept;
-  void initLayout(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
-  void bindViews(uint8_t* iBase) noexcept;
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   template <bool IsWideIndex>
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
@@ -1398,8 +1397,7 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
   mBytes = { mData.data(), mData.size() };
 
-  initLayout(iNumItems, iNodeSize);
-  bindViews(mData.data());
+  mapLayout();
 }
 
 template <typename ArrayType>
@@ -1416,12 +1414,38 @@ Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept {
 }
 
 template <typename ArrayType>
+void Flatbush<ArrayType>::mapLayout() noexcept {
+  // Const is shed only to bind the typed views; externally managed bytes are never written to
+  auto* const wBase = const_cast<uint8_t*>(mBytes.data());
+  const auto wNumItems = detail::readUnaligned<uint32_t>(wBase + 4);
+  const auto wNodeSize = detail::readUnaligned<uint16_t>(wBase + 2);
+
+  mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
+
+  // calculate the total number of nodes in the R-tree to allocate space for
+  // and the index of each tree level (used in search later)
+  size_t wCount = wNumItems;
+  size_t wNumNodes = wNumItems;
+  mLevelBounds.push_back(wNumNodes);
+
+  do {
+    wCount = (wCount + wNodeSize - 1UL) / wNodeSize;
+    wNumNodes += wCount;
+    mLevelBounds.push_back(wNumNodes);
+  } while (wCount > 1UL);
+
+  mIsWideIndex = wNumNodes > gMaxNumNodes;
+
+  const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
+  mBoxes = { detail::bit_cast<Box<ArrayType>*>(wBase + gHeaderByteSize), wNumNodes };
+  mIndicesUint16 = { detail::bit_cast<uint16_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+  mIndicesUint32 = { detail::bit_cast<uint32_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+}
+
+template <typename ArrayType>
 void Flatbush<ArrayType>::adopt() noexcept {
-  const auto* const wBase = mBytes.data();
-  initLayout(detail::readUnaligned<uint32_t>(wBase + 4), detail::readUnaligned<uint16_t>(wBase + 2));
-  // Const is shed only to reuse the layout binding; adopted bytes are never written to
-  bindViews(const_cast<uint8_t*>(wBase));
-  mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
+  mapLayout();
+  mPosition = mLevelBounds.back();
 
   if (mPosition > 0UL) {
     mBounds = mBoxes[mPosition - 1UL];
@@ -1442,34 +1466,6 @@ size_t Flatbush<ArrayType>::packedByteSizeFor(uint32_t iNumItems, uint32_t iNode
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
 
   return gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
-}
-
-template <typename ArrayType>
-void Flatbush<ArrayType>::initLayout(uint32_t iNumItems, uint32_t iNodeSize) noexcept {
-  mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
-
-  // calculate the total number of nodes in the R-tree to allocate space for
-  // and the index of each tree level (used in search later)
-  size_t wCount = iNumItems;
-  size_t wNumNodes = iNumItems;
-  mLevelBounds.push_back(wNumNodes);
-
-  do {
-    wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
-    wNumNodes += wCount;
-    mLevelBounds.push_back(wNumNodes);
-  } while (wCount > 1UL);
-
-  mIsWideIndex = wNumNodes > gMaxNumNodes;
-}
-
-template <typename ArrayType>
-void Flatbush<ArrayType>::bindViews(uint8_t* iBase) noexcept {
-  const auto wNumNodes = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
-  const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
-  mBoxes = { detail::bit_cast<Box<ArrayType>*>(iBase + gHeaderByteSize), wNumNodes };
-  mIndicesUint16 = { detail::bit_cast<uint16_t*>(iBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
-  mIndicesUint32 = { detail::bit_cast<uint32_t*>(iBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
 }
 
 template <typename ArrayType>
