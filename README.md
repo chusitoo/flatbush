@@ -104,25 +104,22 @@ auto other = FlatbushBuilder<double>::from(std::move(vector));
 
 ### Reconstruct without copying
 
-Passing an owner alongside the bytes builds the index directly on top of the existing buffer. The
-owner is kept alive for as long as the index, so any RAII handle works: a vector, a
-`shared_ptr`, or a memory mapping.
+`fromView` builds the index directly on top of bytes it does not own, so nothing is copied. The
+buffer stays the caller's responsibility and **must outlive the index**, which makes this the right
+fit for a memory mapping or a long-lived buffer shared between several indices.
 
 ```cpp
-// adopt a vector: the index points at its bytes, no copy is made
-auto vector = std::vector<uint8_t>{buffer.begin(), buffer.end()};
-auto bytes = span<const uint8_t>{vector.data(), vector.size()};
-auto borrowed = FlatbushBuilder<double>::from(std::move(vector), bytes);
+// the index reads these bytes in place; `storage` must outlive `view`
+auto storage = std::vector<uint8_t>{buffer.begin(), buffer.end()};
+auto bytes = span<const uint8_t>{storage.data(), storage.size()};
+auto view = FlatbushBuilder<double>::fromView(bytes);
 
-// or share one buffer between several indices
-auto shared = std::make_shared<std::vector<uint8_t>>(buffer.begin(), buffer.end());
-auto view = span<const uint8_t>{shared->data(), shared->size()};
-auto first = FlatbushBuilder<double>::from(shared, view);
-auto second = FlatbushBuilder<double>::from(shared, view);
+// several indices can share one buffer
+auto second = FlatbushBuilder<double>::fromView(bytes);
 ```
 
 Because the boxes are read in place, the buffer must be suitably aligned; an exception is thrown
-otherwise. The copying overloads above are just the same mechanism with a vector as the owner.
+otherwise. `isView()` reports whether an index borrows its bytes rather than owning them.
 
 ## Compiling
 This is a single header library with the aim to support C++11 and up.

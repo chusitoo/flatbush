@@ -394,45 +394,50 @@ TEST(FlatbushTest, FromMovedVectorDoesNotCopy) {
   EXPECT_EQ(wBefore, wIndex2.data().data());
 }
 
-TEST(FlatbushTest, FromOwnedBufferOutlivesSource) {
+TEST(FlatbushTest, FromViewAliasesSourceBytes) {
   auto wIndex = createIndex();
-  const auto wExpected = wIndex.search({ 40, 40, 60, 60 });
-  std::vector<size_t> wIds;
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
+  auto wView = flatbush::FlatbushBuilder<double>::fromView(wBytes);
 
-  {
-    auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
-    const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
-    auto wOwning = flatbush::FlatbushBuilder<double>::from(std::move(wVector), wBytes);
-
-    EXPECT_EQ(wBytes.data(), wOwning.data().data());
-    EXPECT_EQ(wIndex.data().size(), wOwning.data().size());
-
-    auto wMoved = std::move(wOwning);
-    wIds = wMoved.search({ 40, 40, 60, 60 });
-  }
-
-  EXPECT_EQ(wExpected, wIds);
+  EXPECT_TRUE(wView.isView());
+  EXPECT_FALSE(wIndex.isView());
+  EXPECT_EQ(wVector.data(), wView.data().data());
+  EXPECT_EQ(wVector.size(), wView.data().size());
+  EXPECT_EQ(wIndex.numItems(), wView.numItems());
+  EXPECT_EQ(wIndex.nodeSize(), wView.nodeSize());
+  EXPECT_EQ(wIndex.search({ 40, 40, 60, 60 }), wView.search({ 40, 40, 60, 60 }));
 }
 
-TEST(FlatbushTest, FromSharedOwnerAliasesSameBytes) {
+TEST(FlatbushTest, FromViewSurvivesMove) {
   auto wIndex = createIndex();
-  auto wShared = std::make_shared<std::vector<uint8_t>>(wIndex.data().begin(), wIndex.data().end());
-  const auto wBytes = flatbush::span<const uint8_t> { wShared->data(), wShared->size() };
-  auto wFirst = flatbush::FlatbushBuilder<double>::from(wShared, wBytes);
-  auto wSecond = flatbush::FlatbushBuilder<double>::from(wShared, wBytes);
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
+  auto wView = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+  auto wMoved = std::move(wView);
 
-  EXPECT_EQ(wShared->data(), wFirst.data().data());
-  EXPECT_EQ(wShared->data(), wSecond.data().data());
+  EXPECT_EQ(wVector.data(), wMoved.data().data());
+  EXPECT_EQ(wIndex.search({ 40, 40, 60, 60 }), wMoved.search({ 40, 40, 60, 60 }));
+}
+
+TEST(FlatbushTest, FromViewSharesOneBufferBetweenIndices) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
+  auto wFirst = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+  auto wSecond = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+
+  EXPECT_EQ(wFirst.data().data(), wSecond.data().data());
   EXPECT_EQ(wFirst.search({ 40, 40, 60, 60 }), wSecond.search({ 40, 40, 60, 60 }));
 }
 
-TEST(FlatbushTest, FromMisalignedBuffer) {
+TEST(FlatbushTest, FromViewMisalignedBuffer) {
   auto wIndex = createIndex();
-  auto wShared = std::make_shared<std::vector<uint8_t>>(wIndex.data().size() + 1);
-  std::memcpy(wShared->data() + 1, wIndex.data().data(), wIndex.data().size());
-  const auto wBytes = flatbush::span<const uint8_t> { wShared->data() + 1, wIndex.data().size() };
+  auto wVector = std::vector<uint8_t>(wIndex.data().size() + 1);
+  std::memcpy(wVector.data() + 1, wIndex.data().data(), wIndex.data().size());
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data() + 1, wIndex.data().size() };
 
-  EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(wShared, wBytes); }, std::invalid_argument);
+  EXPECT_THROW({ flatbush::FlatbushBuilder<double>::fromView(wBytes); }, std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromHostileNumItemsDoesNotAllocate) {

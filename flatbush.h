@@ -32,7 +32,6 @@ SOFTWARE.
 #include <cstring>      // for size_t, memcpy
 #include <functional>   // for function
 #include <limits>       // for numeric_limits
-#include <memory>       // for shared_ptr, make_shared
 #include <queue>        // for priority_queue
 #ifndef FLATBUSH_SPAN
 #include <span>         // for span
@@ -1145,9 +1144,8 @@ class FlatbushBuilder {
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
   static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
 
-  // Zero-copy: the index aliases iBytes and keeps iOwner alive for as long as it lives
-  template <class Owner>
-  static Flatbush<ArrayType> from(Owner&& iOwner, span<const uint8_t> iBytes);
+  // Zero-copy: the bytes stay owned by the caller, who must outlive the index
+  static Flatbush<ArrayType> fromView(span<const uint8_t> iBytes);
 
  private:
   static void validate(const uint8_t* iData, size_t iSize);
@@ -1171,38 +1169,28 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize) {
   validate(iData, iSize);
 
-  auto wBuffer = std::make_shared<std::vector<uint8_t>>(iData, iData + iSize);
-  const auto* const wBase = wBuffer->data();
-
-  return Flatbush<ArrayType>(std::move(wBuffer), wBase, iSize);
+  return Flatbush<ArrayType>(std::vector<uint8_t>(iData, iData + iSize));
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(std::vector<uint8_t>&& iData) {
   validate(iData.data(), iData.size());
 
-  const auto wSize = iData.size();
-  auto wBuffer = std::make_shared<std::vector<uint8_t>>(std::move(iData));
-  const auto* const wBase = wBuffer->data();
-
-  return Flatbush<ArrayType>(std::move(wBuffer), wBase, wSize);
+  return Flatbush<ArrayType>(std::move(iData));
 }
 
 template <typename ArrayType>
-template <class Owner>
-Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(Owner&& iOwner, span<const uint8_t> iBytes) {
+Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
   validate(iBytes.data(), iBytes.size());
 
-  // Unlike the copying overloads, a borrowed buffer carries no alignment guarantee
+  // Unlike the owning overloads, external bytes carry no alignment guarantee
   constexpr size_t wAlignment = alignof(Box<ArrayType>) > alignof(uint32_t) ? alignof(Box<ArrayType>)
                                                                            : alignof(uint32_t);
   if ((reinterpret_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
     throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(wAlignment) + " bytes.");
   }
 
-  auto wOwner = std::make_shared<typename std::decay<Owner>::type>(std::forward<Owner>(iOwner));
-
-  return Flatbush<ArrayType>(std::move(wOwner), iBytes.data(), iBytes.size());
+  return Flatbush<ArrayType>(iBytes);
 }
 
 template <typename ArrayType>
@@ -1276,13 +1264,15 @@ class Flatbush {
                                 const FilterCb& iFilterFn = nullptr,
                                 const DistanceCb& iDistanceFn = nullptr) const noexcept;
 
-  inline size_t nodeSize() const noexcept { return detail::readUnaligned<uint16_t>(mData + 2); }
+  inline size_t nodeSize() const noexcept { return detail::readUnaligned<uint16_t>(mBytes.data() + 2); }
 
-  inline size_t numItems() const noexcept { return detail::readUnaligned<uint32_t>(mData + 4); }
+  inline size_t numItems() const noexcept { return detail::readUnaligned<uint32_t>(mBytes.data() + 4); }
 
   inline size_t indexSize() const noexcept { return mBoxes.size(); }
 
-  inline span<const uint8_t> data() const noexcept { return { mData, mDataSize }; }
+  inline bool isView() const noexcept { return mData.empty(); }
+
+  inline span<const uint8_t> data() const noexcept { return mBytes; }
 
   friend class FlatbushBuilder<ArrayType>;
 
@@ -1325,11 +1315,13 @@ class Flatbush {
   }
 
   Flatbush(uint32_t iNumItems, uint16_t iNodeSize);
-  Flatbush(std::shared_ptr<void> iOwner, const uint8_t* iData, size_t iSize) noexcept;
+  explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
+  explicit Flatbush(span<const uint8_t> iBytes) noexcept;
 
   static size_t packedByteSizeFor(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
+  void adopt() noexcept;
   void initLayout(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
   void bindViews(uint8_t* iBase) noexcept;
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
@@ -1381,10 +1373,9 @@ class Flatbush {
     double mDistance;
   };
 
-  // packed buffer, kept alive by whoever produced it
-  std::shared_ptr<void> mOwner;
-  const uint8_t* mData = nullptr;
-  size_t mDataSize = 0;
+  // backing store, empty when the packed bytes are managed externally
+  std::vector<uint8_t> mData;
+  span<const uint8_t> mBytes;
   span<Box<ArrayType>> mBoxes;
   span<uint16_t> mIndicesUint16;
   span<uint32_t> mIndicesUint32;
@@ -1400,26 +1391,36 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
 
-  auto wBuffer = std::make_shared<std::vector<uint8_t>>(packedByteSizeFor(iNumItems, iNodeSize), 0U);
-  auto* const wBase = wBuffer->data();
-  wBase[0] = gValidityFlag;
-  wBase[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
-  *detail::bit_cast<uint16_t*>(wBase + 2) = iNodeSize;
-  *detail::bit_cast<uint32_t*>(wBase + 4) = iNumItems;
+  mData.resize(packedByteSizeFor(iNumItems, iNodeSize), 0U);
+  mData[0] = gValidityFlag;
+  mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
+  *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
+  *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
+  mBytes = { mData.data(), mData.size() };
 
-  mDataSize = wBuffer->size();
-  mData = wBase;
-  mOwner = std::move(wBuffer);
   initLayout(iNumItems, iNodeSize);
-  bindViews(wBase);
+  bindViews(mData.data());
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(std::shared_ptr<void> iOwner, const uint8_t* iData, size_t iSize) noexcept
-    : mOwner(std::move(iOwner)), mData(iData), mDataSize(iSize) {
-  initLayout(detail::readUnaligned<uint32_t>(iData + 4), detail::readUnaligned<uint16_t>(iData + 2));
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
+  mData = std::move(iData);
+  mBytes = { mData.data(), mData.size() };
+  adopt();
+}
+
+template <typename ArrayType>
+Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept {
+  mBytes = iBytes;
+  adopt();
+}
+
+template <typename ArrayType>
+void Flatbush<ArrayType>::adopt() noexcept {
+  const auto* const wBase = mBytes.data();
+  initLayout(detail::readUnaligned<uint32_t>(wBase + 4), detail::readUnaligned<uint16_t>(wBase + 2));
   // Const is shed only to reuse the layout binding; adopted bytes are never written to
-  bindViews(const_cast<uint8_t*>(iData));
+  bindViews(const_cast<uint8_t*>(wBase));
   mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
 
   if (mPosition > 0UL) {
