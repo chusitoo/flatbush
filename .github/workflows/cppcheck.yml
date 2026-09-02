@@ -26,6 +26,7 @@ jobs:
                  --error-exitcode=1 \
                  --force \
                  --inconclusive \
+                 --inline-suppr \
                  --language=c++ \
                  --std=c++11 \
                  -j $(nproc) \

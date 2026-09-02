@@ -1161,6 +1161,8 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize) {
   validate(iData, iSize);
 
+  // validate() rejects a null buffer, so the offset below is only ever taken on a live pointer
+  // cppcheck-suppress nullPointerArithmetic
   return Flatbush<ArrayType>(std::vector<uint8_t>(iData, iData + iSize));
 }
 
@@ -1393,15 +1395,13 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
-  mData = std::move(iData);
-  mBytes = { mData.data(), mData.size() };
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept
+    : mData(std::move(iData)), mBytes(mData.data(), mData.size()) {
   init(kIsPacked);
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept {
-  mBytes = iBytes;
+Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept : mBytes(iBytes) {
   init(kIsPacked);
 }
 
