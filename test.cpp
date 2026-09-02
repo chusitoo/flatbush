@@ -445,8 +445,7 @@ TEST(FlatbushTest, FromHostileNumItemsDoesNotAllocate) {
   auto wHeader = std::vector<uint8_t> { 251, 56, 16, 0, 0xff, 0xff, 0xff, 0xff };
 
   EXPECT_THROW(
-      { flatbush::FlatbushBuilder<double>::from(wHeader.data(), flatbush::gHeaderByteSize); },
-      std::invalid_argument);
+      { flatbush::FlatbushBuilder<double>::from(wHeader.data(), flatbush::gHeaderByteSize); }, std::invalid_argument);
 }
 
 TEST(FlatbushTest, AdjustedNodeSize) {

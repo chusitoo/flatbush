@@ -1175,9 +1175,9 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
   // Unlike the owning overloads, external bytes carry no alignment guarantee, so this has to
   // clear before validate reads the header through it
-  constexpr size_t wAlignment = alignof(Box<ArrayType>) > alignof(uint32_t) ? alignof(Box<ArrayType>)
-                                                                            : alignof(uint32_t);
-  if ((reinterpret_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
+  static constexpr auto wAlignment = std::max(alignof(Box<ArrayType>), alignof(uint32_t));
+
+  if ((detail::bit_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
     throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(wAlignment) + " bytes.");
   }
 
@@ -1270,9 +1270,9 @@ class Flatbush {
   friend class FlatbushBuilder<ArrayType>;
 
  private:
-  static constexpr ArrayType cMaxValue = std::numeric_limits<ArrayType>::max();
-  static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
-  static constexpr bool cPacked = true;
+  static constexpr ArrayType kMaxValue = std::numeric_limits<ArrayType>::max();
+  static constexpr ArrayType kMinValue = std::numeric_limits<ArrayType>::lowest();
+  static constexpr auto kIsPacked = true;
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1389,32 +1389,32 @@ Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
   mBytes = { mData.data(), mData.size() };
 
-  init(!cPacked);
+  init(!kIsPacked);
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
   mData = std::move(iData);
   mBytes = { mData.data(), mData.size() };
-  init(cPacked);
+  init(kIsPacked);
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept {
   mBytes = iBytes;
-  init(cPacked);
+  init(kIsPacked);
 }
 
 template <typename ArrayType>
 void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
   // Const is shed only to bind the typed views; externally managed bytes are never written to
-  auto* const wBase = const_cast<uint8_t*>(mBytes.data());
+  const auto wBase = const_cast<uint8_t*>(mBytes.data());
   const auto wNumItems = *detail::bit_cast<const uint32_t*>(wBase + 4);
   const auto wNodeSize = *detail::bit_cast<const uint16_t*>(wBase + 2);
 
-  mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
+  mBounds = { kMaxValue, kMaxValue, kMinValue, kMinValue };
 
-  // calculate the total number of nodes in the R-tree to allocate space for
+  // Calculate the total number of nodes in the R-tree to allocate space for
   // and the index of each tree level (used in search later)
   size_t wCount = wNumItems;
   size_t wNumNodes = wNumItems;
