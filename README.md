@@ -102,6 +102,28 @@ auto vector = std::vector<uint8_t>{buffer.begin(), buffer.end()};
 auto other = FlatbushBuilder<double>::from(std::move(vector));
 ```
 
+### Reconstruct without copying
+
+Passing an owner alongside the bytes builds the index directly on top of the existing buffer. The
+owner is kept alive for as long as the index, so any RAII handle works: a vector, a
+`shared_ptr`, or a memory mapping.
+
+```cpp
+// adopt a vector: the index points at its bytes, no copy is made
+auto vector = std::vector<uint8_t>{buffer.begin(), buffer.end()};
+auto bytes = span<const uint8_t>{vector.data(), vector.size()};
+auto borrowed = FlatbushBuilder<double>::from(std::move(vector), bytes);
+
+// or share one buffer between several indices
+auto shared = std::make_shared<std::vector<uint8_t>>(buffer.begin(), buffer.end());
+auto view = span<const uint8_t>{shared->data(), shared->size()};
+auto first = FlatbushBuilder<double>::from(shared, view);
+auto second = FlatbushBuilder<double>::from(shared, view);
+```
+
+Because the boxes are read in place, the buffer must be suitably aligned; an exception is thrown
+otherwise. `isView()` reports whether an index borrows its bytes rather than owning them.
+
 ## Compiling
 This is a single header library with the aim to support C++11 and up.
 
