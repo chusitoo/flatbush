@@ -118,6 +118,7 @@ constexpr uint16_t gMaxNodeSize = std::numeric_limits<uint16_t>::max();
 constexpr size_t gMaxNumNodes = gMaxNodeSize / 4U;
 constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
+constexpr size_t gCacheLineSize = 64;
 constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
 
@@ -981,12 +982,21 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
 
-  mData.resize(calculateDataSize(iNumItems, iNodeSize), 0U);
-  mData[0] = gValidityFlag;
-  mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
-  *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
-  *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
-  mBytes = { mData.data(), mData.size() };
+  // The header pushes the box array 8 bytes into the buffer, which would leave every
+  // other Box<double> straddling a cache line and a 16-wide node covering 9 lines
+  // instead of 8. Over-allocate and slide the logical start so the boxes land on a
+  // line boundary; the serialized bytes themselves are unchanged.
+  const auto wSize = calculateDataSize(iNumItems, iNodeSize);
+  mData.assign(wSize + gCacheLineSize, 0U);
+
+  const auto wStart = detail::bit_cast<uintptr_t>(mData.data()) + gHeaderByteSize;
+  const auto wBase = mData.data() + (gCacheLineSize - (wStart % gCacheLineSize)) % gCacheLineSize;
+
+  wBase[0] = gValidityFlag;
+  wBase[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
+  *detail::bit_cast<uint16_t*>(wBase + 2) = iNodeSize;
+  *detail::bit_cast<uint32_t*>(wBase + 4) = iNumItems;
+  mBytes = { wBase, wSize };
 
   init(!kIsPacked);
 }
