@@ -363,6 +363,91 @@ TEST(FlatbushTest, FromInvalidNumItems) {
       std::invalid_argument);
 }
 
+TEST(FlatbushTest, DataReportsPackedSizeNotCapacity) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> {};
+  wVector.reserve(wIndex.data().size() + 1024);
+  wVector.assign(wIndex.data().begin(), wIndex.data().end());
+
+  ASSERT_GT(wVector.capacity(), wVector.size());
+
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wVector));
+
+  EXPECT_EQ(wIndex.data().size(), wIndex2.data().size());
+}
+
+TEST(FlatbushTest, FromOversizedBuffer) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  wVector.resize(wVector.size() + 512, 0xAB);
+
+  EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(wVector.data(), wVector.size()); }, std::invalid_argument);
+  EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(std::move(wVector)); }, std::invalid_argument);
+}
+
+TEST(FlatbushTest, FromMovedVectorDoesNotCopy) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto* const wBefore = wVector.data();
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wVector));
+
+  EXPECT_EQ(wBefore, wIndex2.data().data());
+}
+
+TEST(FlatbushTest, FromViewAliasesSourceBytes) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
+  auto wView = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+
+  EXPECT_TRUE(wView.isView());
+  EXPECT_FALSE(wIndex.isView());
+  EXPECT_EQ(wVector.data(), wView.data().data());
+  EXPECT_EQ(wVector.size(), wView.data().size());
+  EXPECT_EQ(wIndex.numItems(), wView.numItems());
+  EXPECT_EQ(wIndex.nodeSize(), wView.nodeSize());
+  EXPECT_EQ(wIndex.search({ 40, 40, 60, 60 }), wView.search({ 40, 40, 60, 60 }));
+}
+
+TEST(FlatbushTest, FromViewSurvivesMove) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
+  auto wView = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+  auto wMoved = std::move(wView);
+
+  EXPECT_EQ(wVector.data(), wMoved.data().data());
+  EXPECT_EQ(wIndex.search({ 40, 40, 60, 60 }), wMoved.search({ 40, 40, 60, 60 }));
+}
+
+TEST(FlatbushTest, FromViewSharesOneBufferBetweenIndices) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
+  auto wFirst = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+  auto wSecond = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+
+  EXPECT_EQ(wFirst.data().data(), wSecond.data().data());
+  EXPECT_EQ(wFirst.search({ 40, 40, 60, 60 }), wSecond.search({ 40, 40, 60, 60 }));
+}
+
+TEST(FlatbushTest, FromViewMisalignedBuffer) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t>(wIndex.data().size() + 1);
+  std::memcpy(wVector.data() + 1, wIndex.data().data(), wIndex.data().size());
+  const auto wBytes = flatbush::span<const uint8_t> { wVector.data() + 1, wIndex.data().size() };
+
+  EXPECT_THROW({ flatbush::FlatbushBuilder<double>::fromView(wBytes); }, std::invalid_argument);
+}
+
+TEST(FlatbushTest, FromHostileNumItemsDoesNotAllocate) {
+  // Header claims ~4.29e9 items, which would otherwise size a ~164 GB allocation
+  auto wHeader = std::vector<uint8_t> { 251, 56, 16, 0, 0xff, 0xff, 0xff, 0xff };
+
+  EXPECT_THROW(
+      { flatbush::FlatbushBuilder<double>::from(wHeader.data(), flatbush::gHeaderByteSize); }, std::invalid_argument);
+}
+
 TEST(FlatbushTest, AdjustedNodeSize) {
   flatbush::FlatbushBuilder<int> wBuilder0(1, 0);
   wBuilder0.add({ 0, 0, 0, 0 });

@@ -102,6 +102,27 @@ auto vector = std::vector<uint8_t>{buffer.begin(), buffer.end()};
 auto other = FlatbushBuilder<double>::from(std::move(vector));
 ```
 
+### Reconstruct without copying
+
+`fromView` builds the index directly on top of bytes it does not own, 
+so nothing is copied. The buffer stays the caller's responsibility and 
+**must outlive the index**, which makes this the right fit for a memory 
+mapping or a long-lived buffer shared between several indices.
+
+```cpp
+// the index reads these bytes in place; `storage` must outlive `view`
+auto storage = std::vector<uint8_t>{buffer.begin(), buffer.end()};
+auto bytes = span<const uint8_t>{storage.data(), storage.size()};
+auto view = FlatbushBuilder<double>::fromView(bytes);
+
+// several indices can share one buffer
+auto second = FlatbushBuilder<double>::fromView(bytes);
+```
+
+Because the boxes are read in place, the buffer must be suitably 
+aligned; an exception is thrown otherwise. `isView()` reports whether 
+an index borrows its bytes rather than owning them.
+
 ## Compiling
 This is a single header library with the aim to support C++11 and up.
 

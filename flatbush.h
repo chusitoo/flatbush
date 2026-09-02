@@ -1136,6 +1136,9 @@ class FlatbushBuilder {
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
   static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
 
+  // Zero-copy: the bytes stay owned by the caller, who must outlive the index
+  static Flatbush<ArrayType> fromView(span<const uint8_t> iBytes);
+
  private:
   static void validate(const uint8_t* iData, size_t iSize);
   std::uint16_t mNodeSize;
@@ -1158,31 +1161,31 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize) {
   validate(iData, iSize);
 
-  auto wInstance = Flatbush<ArrayType>(iData, iSize);
-  const auto wSize = wInstance.data().size();
-
-  if (wSize != iSize) {
-    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
-                                ", but got buffer size " + std::to_string(iSize) + ".");
-  }
-
-  return wInstance;
+  // validate() rejects a null buffer, so the offset below is only ever taken on a live pointer
+  // cppcheck-suppress nullPointerArithmetic
+  return Flatbush<ArrayType>(std::vector<uint8_t>(iData, iData + iSize));
 }
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(std::vector<uint8_t>&& iData) {
   validate(iData.data(), iData.size());
 
-  const auto wDataSize = iData.size();
-  auto wInstance = Flatbush<ArrayType>(std::move(iData));
-  const auto wSize = wInstance.data().size();
+  return Flatbush<ArrayType>(std::move(iData));
+}
 
-  if (wSize != wDataSize) {
-    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
-                                ", but got buffer size " + std::to_string(wDataSize) + ".");
+template <typename ArrayType>
+Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
+  // Unlike the owning overloads, external bytes carry no alignment guarantee, so this has to
+  // clear before validate reads the header through it
+  static constexpr auto wAlignment = std::max(alignof(Box<ArrayType>), alignof(uint32_t));
+
+  if ((detail::bit_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
+    throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(wAlignment) + " bytes.");
   }
 
-  return wInstance;
+  validate(iBytes.data(), iBytes.size());
+
+  return Flatbush<ArrayType>(iBytes);
 }
 
 template <typename ArrayType>
@@ -1223,6 +1226,13 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   if (wNodeSize < gMinNodeSize) {
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
+
+  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
+  const auto wSize = Flatbush<ArrayType>::calculateDataSize(wNumItems, wNodeSize);
+  if (wSize != iSize) {
+    throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
+                                ", but got buffer size " + std::to_string(iSize) + ".");
+  }
 }
 
 template <typename ArrayType>
@@ -1249,19 +1259,22 @@ class Flatbush {
                                 const FilterCb& iFilterFn = nullptr,
                                 const DistanceCb& iDistanceFn = nullptr) const noexcept;
 
-  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(&mData[2]); }
+  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2); }
 
-  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(&mData[4]); }
+  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(mBytes.data() + 4); }
 
   inline size_t indexSize() const noexcept { return mBoxes.size(); }
 
-  inline span<const uint8_t> data() const noexcept { return { mData.data(), mData.capacity() }; }
+  inline bool isView() const noexcept { return mData.empty(); }
+
+  inline span<const uint8_t> data() const noexcept { return mBytes; }
 
   friend class FlatbushBuilder<ArrayType>;
 
  private:
-  static constexpr ArrayType cMaxValue = std::numeric_limits<ArrayType>::max();
-  static constexpr ArrayType cMinValue = std::numeric_limits<ArrayType>::lowest();
+  static constexpr ArrayType kMaxValue = std::numeric_limits<ArrayType>::max();
+  static constexpr ArrayType kMinValue = std::numeric_limits<ArrayType>::lowest();
+  static constexpr auto kIsPacked = true;
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1297,12 +1310,14 @@ class Flatbush {
            std::isnormal(iThreshold) && wDistance <= iThreshold;
   }
 
-  Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept;
-  Flatbush(const uint8_t* iData, size_t iSize) noexcept;
+  Flatbush(uint32_t iNumItems, uint16_t iNodeSize);
   explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
+  explicit Flatbush(span<const uint8_t> iBytes) noexcept;
+
+  static size_t calculateDataSize(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
-  void init(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
+  void init(bool iIsPacked) noexcept;
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   template <bool IsWideIndex>
   void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
@@ -1352,8 +1367,8 @@ class Flatbush {
     double mDistance;
   };
 
-  // views
-  std::vector<uint8_t> mData;
+  std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
+  span<const uint8_t> mBytes;
   span<Box<ArrayType>> mBoxes;
   span<uint16_t> mIndicesUint16;
   span<uint32_t> mIndicesUint32;
@@ -1366,67 +1381,79 @@ class Flatbush {
 };
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) noexcept {
+Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
-  init(iNumItems, iNodeSize);
+
+  mData.resize(calculateDataSize(iNumItems, iNodeSize), 0U);
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
   *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
+  mBytes = { mData.data(), mData.size() };
+
+  init(!kIsPacked);
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(const uint8_t* iData, size_t iSize) noexcept {
-  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
-  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
-  mData.insert(mData.begin(), iData, iData + iSize);
-  init(wNumItems, wNodeSize);
-  mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
-
-  if (mPosition > 0UL) {
-    mBounds = mBoxes[mPosition - 1UL];
-  }
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept
+    : mData(std::move(iData)), mBytes(mData.data(), mData.size()) {
+  init(kIsPacked);
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept {
-  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData.at(2));
-  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData.at(4));
-  mData = std::move(iData);
-  init(wNumItems, wNodeSize);
-  mPosition = mLevelBounds.empty() ? 0UL : mLevelBounds.back();
-
-  if (mPosition > 0UL) {
-    mBounds = mBoxes[mPosition - 1UL];
-  }
+Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept : mBytes(iBytes) {
+  init(kIsPacked);
 }
 
 template <typename ArrayType>
-void Flatbush<ArrayType>::init(uint32_t iNumItems, uint32_t iNodeSize) noexcept {
-  mBounds = { cMaxValue, cMaxValue, cMinValue, cMinValue };
+void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
+  // Const is shed only to bind the typed views; externally managed bytes are never written to
+  const auto wBase = const_cast<uint8_t*>(mBytes.data());
+  const auto wNumItems = *detail::bit_cast<const uint32_t*>(wBase + 4);
+  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(wBase + 2);
 
-  // calculate the total number of nodes in the R-tree to allocate space for
+  mBounds = { kMaxValue, kMaxValue, kMinValue, kMinValue };
+
+  // Calculate the total number of nodes in the R-tree to allocate space for
   // and the index of each tree level (used in search later)
-  size_t wCount = iNumItems;
-  size_t wNumNodes = iNumItems;
+  size_t wCount = wNumItems;
+  size_t wNumNodes = wNumItems;
   mLevelBounds.push_back(wNumNodes);
 
   do {
-    wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
+    wCount = (wCount + wNodeSize - 1UL) / wNodeSize;
     wNumNodes += wCount;
     mLevelBounds.push_back(wNumNodes);
   } while (wCount > 1UL);
 
-  // Sizes
   mIsWideIndex = wNumNodes > gMaxNumNodes;
-  const size_t wIndicesByteSize = wNumNodes * (mIsWideIndex ? sizeof(uint32_t) : sizeof(uint16_t));
+
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
-  const size_t wDataSize = gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
-  // Views
-  mData.resize(wDataSize, 0U);
-  mBoxes = { detail::bit_cast<Box<ArrayType>*>(&mData[gHeaderByteSize]), wNumNodes };
-  mIndicesUint16 = { detail::bit_cast<uint16_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes };
-  mIndicesUint32 = { detail::bit_cast<uint32_t*>(&mData[gHeaderByteSize + wNodesByteSize]), wNumNodes };
+  mBoxes = { detail::bit_cast<Box<ArrayType>*>(wBase + gHeaderByteSize), wNumNodes };
+  mIndicesUint16 = { detail::bit_cast<uint16_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+  mIndicesUint32 = { detail::bit_cast<uint32_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+
+  // Already-packed bytes leave nothing to fill in, so the tree starts out complete
+  if (iIsPacked && wNumNodes > 0UL) {
+    mPosition = wNumNodes;
+    mBounds = mBoxes[wNumNodes - 1UL];
+  }
+}
+
+template <typename ArrayType>
+size_t Flatbush<ArrayType>::calculateDataSize(uint32_t iNumItems, uint32_t iNodeSize) noexcept {
+  size_t wCount = iNumItems;
+  size_t wNumNodes = iNumItems;
+
+  do {
+    wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
+    wNumNodes += wCount;
+  } while (wCount > 1UL);
+
+  const size_t wIndicesByteSize = wNumNodes * ((wNumNodes > gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
+  const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
+
+  return gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
 }
 
 template <typename ArrayType>
