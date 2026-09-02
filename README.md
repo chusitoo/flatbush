@@ -122,7 +122,7 @@ auto second = FlatbushBuilder<double>::from(shared, view);
 ```
 
 Because the boxes are read in place, the buffer must be suitably aligned; an exception is thrown
-otherwise. `isView()` reports whether an index borrows its bytes rather than owning them.
+otherwise. The copying overloads above are just the same mechanism with a vector as the owner.
 
 ## Compiling
 This is a single header library with the aim to support C++11 and up.

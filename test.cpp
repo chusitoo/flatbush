@@ -385,6 +385,15 @@ TEST(FlatbushTest, FromOversizedBuffer) {
   EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(std::move(wVector)); }, std::invalid_argument);
 }
 
+TEST(FlatbushTest, FromMovedVectorDoesNotCopy) {
+  auto wIndex = createIndex();
+  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto* const wBefore = wVector.data();
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wVector));
+
+  EXPECT_EQ(wBefore, wIndex2.data().data());
+}
+
 TEST(FlatbushTest, FromOwnedBufferOutlivesSource) {
   auto wIndex = createIndex();
   const auto wExpected = wIndex.search({ 40, 40, 60, 60 });
@@ -395,7 +404,7 @@ TEST(FlatbushTest, FromOwnedBufferOutlivesSource) {
     const auto wBytes = flatbush::span<const uint8_t> { wVector.data(), wVector.size() };
     auto wOwning = flatbush::FlatbushBuilder<double>::from(std::move(wVector), wBytes);
 
-    EXPECT_TRUE(wOwning.isView());
+    EXPECT_EQ(wBytes.data(), wOwning.data().data());
     EXPECT_EQ(wIndex.data().size(), wOwning.data().size());
 
     auto wMoved = std::move(wOwning);
