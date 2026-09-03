@@ -1050,6 +1050,14 @@ class Flatbush {
     }
   }
 
+  inline size_t levelOf(size_t iNodeIndex) const noexcept;
+
+  void collectContained(size_t iNodeIndex,
+                        size_t iEnd,
+                        size_t iLevel,
+                        std::vector<size_t>& oResults,
+                        const FilterCb& iFilterFn) const noexcept;
+
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const noexcept;
 
   template <bool UseHeap>
@@ -1228,6 +1236,52 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
 }
 
 template <typename ArrayType>
+size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
+  size_t wLevel = 0UL;
+
+  while (wLevel + 1UL < mLevelBounds.size() && mLevelBounds[wLevel] <= iNodeIndex) {
+    ++wLevel;
+  }
+
+  return wLevel;
+}
+
+// Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
+// subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
+template <typename ArrayType>
+void Flatbush<ArrayType>::collectContained(size_t iNodeIndex,
+                                           size_t iEnd,
+                                           size_t iLevel,
+                                           std::vector<size_t>& oResults,
+                                           const FilterCb& iFilterFn) const noexcept {
+  const auto wNumItems = numItems();
+  const auto wNodeSize = nodeSize();
+  auto wPosition = iNodeIndex;
+  auto wCount = iEnd - iNodeIndex;
+
+  for (auto wDepth = iLevel; wDepth > 0UL; --wDepth) {
+    wPosition = getIndex(wPosition) >> 2U;
+    wCount = (wCount > wNumItems / wNodeSize) ? wNumItems : wCount * wNodeSize;
+  }
+
+  const auto wEnd = std::min(wPosition + wCount, wNumItems);
+
+  if (iFilterFn) {
+    for (; wPosition < wEnd; ++wPosition) {
+      const auto wIndex = getIndex(wPosition);
+
+      if (iFilterFn(wIndex, mBoxes[wPosition])) {
+        oResults.push_back(wIndex);
+      }
+    }
+  } else {
+    for (; wPosition < wEnd; ++wPosition) {
+      oResults.push_back(getIndex(wPosition));
+    }
+  }
+}
+
+template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
                                                     const FilterCb& iFilterFn) const noexcept {
   const auto wNumItems = numItems();
@@ -1247,9 +1301,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
 
       if (wContained) {
-        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-          wQueue.push_back(getIndex(wPosition) | 1UL);
-        }
+        collectContained(wNodeIndex, wEnd, levelOf(wNodeIndex), wResults, iFilterFn);
       } else {
         for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
           if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
