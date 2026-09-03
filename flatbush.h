@@ -1370,6 +1370,13 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
     wNodeIndex = wQueue.back() >> 2U;  // for binary compatibility with JS
     wQueue.pop_back();
     detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
+
+    // Whenever the node just popped is a leaf it pushes no children, so the new top is the
+    // one after it; requesting it now gives the load a whole node of work to hide behind
+    if (!wQueue.empty()) {
+      const auto wNextIndex = wQueue.back() >> 2U;
+      detail::prefetchNode(&mBoxes[wNextIndex], std::min(wNodeSize, mBoxes.size() - wNextIndex));
+    }
   }
 
   return wResults;
