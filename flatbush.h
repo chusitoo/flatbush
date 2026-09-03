@@ -618,6 +618,46 @@ inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, co
 }
 #endif  // defined(FLATBUSH_USE_SIMD)
 
+struct KeyIndex {
+  uint32_t mKey;
+  uint32_t mIndex;
+};
+
+// LSD radix over the whole 32-bit Hilbert key. Sorting the permutation keeps every pass at
+// 8 bytes per item, and each of the 256 bucket cursors advances sequentially, so the scatter
+// costs far less than the random placement a comparison sort's permutation would need.
+inline void radixSortByKey(std::vector<KeyIndex>& ioPairs, std::vector<KeyIndex>& ioScratch) noexcept {
+  static constexpr size_t kRadixBits = 8;
+  static constexpr size_t kBuckets = size_t(1) << kRadixBits;
+  static constexpr size_t kMask = kBuckets - 1;
+  static constexpr size_t kKeyBits = 32;
+  const size_t wCount = ioPairs.size();
+  auto* wSrc = ioPairs.data();
+  auto* wDst = ioScratch.data();
+
+  for (size_t wShift = 0; wShift < kKeyBits; wShift += kRadixBits) {
+    size_t wOffsets[kBuckets] = { 0 };
+
+    for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
+      ++wOffsets[(wSrc[wIdx].mKey >> wShift) & kMask];
+    }
+
+    size_t wRunning = 0;
+    for (size_t wBucket = 0; wBucket < kBuckets; ++wBucket) {
+      const auto wSize = wOffsets[wBucket];
+      wOffsets[wBucket] = wRunning;
+      wRunning += wSize;
+    }
+
+    for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
+      wDst[wOffsets[(wSrc[wIdx].mKey >> wShift) & kMask]++] = wSrc[wIdx];
+    }
+
+    std::swap(wSrc, wDst);
+  }
+  // kKeyBits / kRadixBits is even, so the sorted result lands back in ioPairs
+}
+
 template <class ArrayType>
 std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
                                            const Box<ArrayType>& iBounds,
@@ -1118,25 +1158,40 @@ size_t Flatbush<ArrayType>::calculateDataSize(uint32_t iNumItems, uint32_t iNode
 
 template <typename ArrayType>
 void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept {
-  for (auto&& wBox : iItems) {
-    setIndex(mPosition, mPosition);
-    mBoxes[mPosition] = std::move(wBox);
-    detail::updateBounds(mBounds, mBoxes[mPosition]);
-    ++mPosition;
+  for (size_t wIdx = 0UL; wIdx < iItems.size(); ++wIdx) {
+    detail::updateBounds(mBounds, iItems[wIdx]);
   }
+  mPosition = iItems.size();
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
 
   if (wNumItems <= wNodeSize) {
+    for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+      setIndex(wIdx, wIdx);
+      mBoxes[wIdx] = iItems[wIdx];
+    }
     mBoxes[mPosition++] = mBounds;
     return;
   }
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
-  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
-  // sort items by their Hilbert value (for packing later)
-  sort(wHilbertValues, 0U, wNumItems - 1U);
+  auto wItemView = span<Box<ArrayType>>(iItems.data(), iItems.size());
+  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, wItemView);
+
+  // sort a permutation by Hilbert value rather than dragging the boxes through the sort
+  std::vector<detail::KeyIndex> wPairs(wNumItems);
+  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+    wPairs[wIdx] = { wHilbertValues[wIdx], static_cast<uint32_t>(wIdx) };
+  }
+  std::vector<uint32_t>().swap(wHilbertValues);
+  std::vector<detail::KeyIndex> wScratch(wNumItems);
+  detail::radixSortByKey(wPairs, wScratch);
+
+  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+    setIndex(wIdx, wPairs[wIdx].mIndex);
+    mBoxes[wIdx] = iItems[wPairs[wIdx].mIndex];
+  }
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
