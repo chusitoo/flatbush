@@ -340,6 +340,13 @@ inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& i
            (iQuery.mMinY > iBox.mMaxY));
 }
 
+// True when the query swallows the box whole, so every descendant of it matches
+template <typename ArrayType>
+inline bool boxContains(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+  return !((iQuery.mMinX > iBox.mMinX) | (iQuery.mMinY > iBox.mMinY) | (iQuery.mMaxX < iBox.mMaxX) |
+           (iQuery.mMaxY < iBox.mMaxY));
+}
+
 template <typename ArrayType>
 inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
   // Only float and double specialize below; hand-vectorising the integer types measured no
@@ -1226,6 +1233,8 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
+  // Node offsets are stored pre-multiplied by four, so the low bit is free to carry the flag
+  auto wContained = detail::boxContains(iBounds, mBounds);
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
@@ -1236,9 +1245,17 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
     if (wNodeIndex >= wNumItems) {
       // Internal node: only here does the enclosing level have to be looked up
       const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
-      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          wQueue.push_back(getIndex(wPosition));
+
+      if (wContained) {
+        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+          wQueue.push_back(getIndex(wPosition) | 1UL);
+        }
+      } else {
+        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+          if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+            wQueue.push_back(getIndex(wPosition) |
+                             static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
+          }
         }
       }
     } else {
@@ -1247,13 +1264,17 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 
       if (iFilterFn) {
         for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-          if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          if (!wContained && !detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
             continue;
           }
           const auto wIndex = getIndex(wPosition);
           if (iFilterFn(wIndex, mBoxes[wPosition])) {
             wResults.push_back(wIndex);
           }
+        }
+      } else if (wContained) {
+        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+          wResults.push_back(getIndex(wPosition));
         }
       } else {
         for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
@@ -1268,6 +1289,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       break;
     }
 
+    wContained = (wQueue.back() & 1UL) != 0UL;
     wNodeIndex = wQueue.back() >> 2U;  // for binary compatibility with JS
     wQueue.pop_back();
     detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
