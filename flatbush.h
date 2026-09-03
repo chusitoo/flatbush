@@ -381,10 +381,6 @@ static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
 static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-static const auto kSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
-#endif
-
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
 static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
 static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
@@ -1031,9 +1027,6 @@ class Flatbush {
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
-  uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-  void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-  void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
 
   inline size_t upperBound(size_t iNodeIndex) const noexcept;
 
@@ -1214,144 +1207,6 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
 }
 
 template <typename ArrayType>
-uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues,
-                                            size_t iLeft,
-                                            size_t iRight) noexcept {
-  const auto wStart = iValues[iLeft];
-  const auto wMid = iValues[(iLeft + iRight) >> 1];
-  const auto wEnd = iValues[iRight];
-  const auto wX = std::max(wStart, wMid);
-
-  if (wEnd > wX) {
-    return wX;
-  } else if (wX == wStart) {
-    return std::max(wMid, wEnd);
-  } else if (wX == wMid) {
-    return std::max(wStart, wEnd);
-  }
-
-  return wEnd;
-}
-
-// custom quicksort that partially sorts bbox data alongside the hilbert values
-template <typename ArrayType>
-void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
-  // Depth measured at ~3 entries per log2(items), and the item count is a uint32_t header
-  // field, so this covers the largest representable index; the vector grows if a pivot goes bad
-  static constexpr size_t kStackReserve = 4 * std::numeric_limits<uint32_t>::digits;
-  const auto wNodeSize = nodeSize();
-  std::vector<std::size_t> wStack;
-  wStack.reserve(kStackReserve);
-  wStack.push_back(iLeft);
-  wStack.push_back(iRight);
-
-  while (wStack.size() > 1) {
-    const auto wRight = wStack.back();
-    wStack.pop_back();
-    const auto wLeft = wStack.back();
-    wStack.pop_back();
-
-    // Once a range lies inside one node its membership is already settled, and order within
-    // a node cannot change that node's bounding box, so there is nothing left to sort
-    if (wLeft / wNodeSize < wRight / wNodeSize) {
-      const auto wPivot = medianOfThree(iValues, wLeft, wRight);
-      auto wPivotLeft = wLeft - 1UL;
-      auto wPivotRight = wRight + 1UL;
-
-#if defined(FLATBUSH_USE_SIMD)
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-      static constexpr size_t kSortBatch = sizeof(__m512i) / sizeof(int32_t);
-      const auto wPivotVec512 = _mm512_set1_epi32(static_cast<int32_t>(wPivot));
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-      static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(int32_t);
-      const auto wPivotVecS256 = _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(wPivot)),
-                                                  detail::kSignFlip256);
-#else
-      static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(int32_t);
-      const auto wPivotVecS128 = _mm_xor_si128(_mm_set1_epi32(static_cast<int32_t>(wPivot)), detail::kOffset32);
-#endif
-#endif  // defined(FLATBUSH_USE_SIMD)
-
-      while (true) {
-#if defined(FLATBUSH_USE_SIMD)
-        // SIMD-accelerated left scan: skip batches where all values < pivot
-        for (auto wPos = wPivotLeft + 1; wPos + kSortBatch <= wPivotRight; wPos += kSortBatch, wPivotLeft = wPos - 1) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-          const auto wVals = _mm512_loadu_si512(&iValues[wPos]);
-          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_NLT);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                                 _mm256_cmpgt_epi32(wPivotVecS256, _mm256_xor_si256(wVals, detail::kSignFlip256))))) &
-                             0xFFU;
-#else
-          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
-                                 _mm_cmpgt_epi32(wPivotVecS128, _mm_xor_si128(wVals, detail::kOffset32))))) &
-                             0xFU;
-#endif
-          if (wMask) {
-#ifdef _MSC_VER
-            unsigned long wBitIdx;
-            _BitScanForward(&wBitIdx, wMask);
-            wPivotLeft = wPos + wBitIdx - 1;
-#else
-            wPivotLeft = wPos + static_cast<size_t>(__builtin_ctz(wMask)) - 1;
-#endif
-            break;
-          }
-        }
-#endif  // defined(FLATBUSH_USE_SIMD)
-        while (iValues[++wPivotLeft] < wPivot);
-
-#if defined(FLATBUSH_USE_SIMD)
-        // SIMD-accelerated right scan: skip batches where all values > pivot
-        for (auto wPos = wPivotRight - kSortBatch; wPivotRight > wPivotLeft + kSortBatch;
-             wPos -= kSortBatch, wPivotRight -= kSortBatch) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-          const auto wVals = _mm512_loadu_si512(detail::bit_cast<const __m512i*>(&iValues[wPos]));
-          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_LE);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                                 _mm256_cmpgt_epi32(_mm256_xor_si256(wVals, detail::kSignFlip256), wPivotVecS256)))) &
-                             0xFFU;
-#else
-          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
-                                 _mm_cmpgt_epi32(_mm_xor_si128(wVals, detail::kOffset32), wPivotVecS128)))) &
-                             0xFU;
-#endif
-          if (wMask) {
-#ifdef _MSC_VER
-            unsigned long wBitIdx;
-            _BitScanReverse(&wBitIdx, wMask);
-            wPivotRight = wPos + wBitIdx + 1;
-#else
-            wPivotRight = wPos + static_cast<size_t>(31 - __builtin_clz(wMask)) + 1;
-#endif
-            break;
-          }
-        }
-#endif  // defined(FLATBUSH_USE_SIMD)
-        while (iValues[--wPivotRight] > wPivot);
-
-        if (wPivotLeft >= wPivotRight) {
-          break;
-        }
-
-        swap(iValues, wPivotLeft, wPivotRight);
-      }
-
-      wStack.push_back(wLeft);
-      wStack.push_back(wPivotRight);
-      wStack.push_back(wPivotRight + 1UL);
-      wStack.push_back(wRight);
-    }
-  }
-}
-
-template <typename ArrayType>
 size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
   static constexpr auto kSmallInput = 64UL;
   decltype(mLevelBounds.cbegin()) wIt;
@@ -1363,19 +1218,6 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
   }
 
   return (mLevelBounds.cend() == wIt) ? mLevelBounds.back() : *wIt;
-}
-
-// swap two values and two corresponding boxes
-template <typename ArrayType>
-void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
-  std::swap(iValues[iLeft], iValues[iRight]);
-  std::swap(mBoxes[iLeft], mBoxes[iRight]);
-
-  if (mIsWideIndex) {
-    std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
-  } else {
-    std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
-  }
 }
 
 template <typename ArrayType>
