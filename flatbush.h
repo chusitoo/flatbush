@@ -118,7 +118,6 @@ constexpr uint16_t gMaxNodeSize = std::numeric_limits<uint16_t>::max();
 constexpr size_t gMaxNumNodes = gMaxNodeSize / 4U;
 constexpr size_t gDefaultNodeSize = 16;
 constexpr size_t gHeaderByteSize = 8;
-constexpr size_t gCacheLineSize = 64;
 constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
 
@@ -166,16 +165,16 @@ To bit_cast(From const& from) {
 template <typename BoxType>
 inline void prefetchNode(const BoxType* iBoxes, size_t iCount) noexcept {
   static constexpr size_t kCacheLine = 64;
-  static constexpr size_t kStride = kCacheLine < sizeof(BoxType) ? 1 : kCacheLine / sizeof(BoxType);
-  const auto* wBytes = bit_cast<const char*>(iBoxes);
+  static constexpr size_t kBoxSize = sizeof(BoxType);
+  static constexpr size_t kStride = (kCacheLine < kBoxSize) ? 1UL : kCacheLine / kBoxSize;
 
   for (size_t wIdx = 0; wIdx < iCount; wIdx += kStride) {
 #if defined(__GNUC__) || defined(__clang__)
-    __builtin_prefetch(wBytes + wIdx * sizeof(BoxType), 0, 3);
+    __builtin_prefetch(iBoxes + wIdx, 0, 3);
 #elif defined(_MSC_VER) && defined(FLATBUSH_USE_SIMD)
-    _mm_prefetch(wBytes + wIdx * sizeof(BoxType), _MM_HINT_T0);
+    _mm_prefetch(bit_cast<const char*>(iBoxes + wIdx), _MM_HINT_T0);
 #else
-    (void)wBytes;
+    (void)iBoxes;  // maybe unused
 #endif
   }
 }
@@ -343,6 +342,8 @@ inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& i
 
 template <typename ArrayType>
 inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
+  // Only float and double specialize below; hand-vectorising the integer types measured no
+  // faster here, and slower for 8-bit boxes, which fit in a general purpose register anyway
   ioSrc.mMinX = std::min(ioSrc.mMinX, iBox.mMinX);
   ioSrc.mMinY = std::min(ioSrc.mMinY, iBox.mMinY);
   ioSrc.mMaxX = std::max(ioSrc.mMaxX, iBox.mMaxX);
@@ -382,6 +383,12 @@ static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
 static const auto kSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
+#endif
+
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
+static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
+static const auto kPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
 #endif
 
 // True when no lane of a comparison mask is set
@@ -579,6 +586,36 @@ inline double computeDistanceSquared<float>(const Point<float>& iPoint, const Bo
 #endif
   return static_cast<double>(_mm_cvtss_f32(wResult));
 }
+
+template <>
+inline double computeDistanceSquared<int8_t>(const Point<int8_t>& iPoint, const Box<int8_t>& iBox) noexcept {
+  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+}
+
+template <>
+inline double computeDistanceSquared<uint8_t>(const Point<uint8_t>& iPoint, const Box<uint8_t>& iBox) noexcept {
+  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+}
+
+template <>
+inline double computeDistanceSquared<int16_t>(const Point<int16_t>& iPoint, const Box<int16_t>& iBox) noexcept {
+  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+}
+
+template <>
+inline double computeDistanceSquared<uint16_t>(const Point<uint16_t>& iPoint, const Box<uint16_t>& iBox) noexcept {
+  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+}
+
+template <>
+inline double computeDistanceSquared<int32_t>(const Point<int32_t>& iPoint, const Box<int32_t>& iBox) noexcept {
+  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+}
+
+template <>
+inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, const Box<uint32_t>& iBox) noexcept {
+  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+}
 #endif  // defined(FLATBUSH_USE_SIMD)
 
 template <typename ArrayType>
@@ -653,7 +690,30 @@ std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
   auto wIdx = 0UL;
 
 #if defined(FLATBUSH_USE_SIMD)
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+  const auto wHilbertWidth512 = _mm512_set1_pd(wHilbertWidth);
+  const auto wHilbertHeight512 = _mm512_set1_pd(wHilbertHeight);
+  const auto wDoubleMinX512 = _mm512_set1_pd(wDoubleMinX);
+  const auto wDoubleMinY512 = _mm512_set1_pd(wDoubleMinY);
+  const auto wWidthHeight512 = _mm512_mask_blend_pd(0xAA, wHilbertWidth512, wHilbertHeight512);
+  const auto wDoubleMinXY512 = _mm512_mask_blend_pd(0xAA, wDoubleMinX512, wDoubleMinY512);
+
+  for (; wIdx + 3 < iNumItems; wIdx += 4) {
+    const auto wBoxes01 = _mm512_loadu_pd(&iBoxes[wIdx].mMinX);
+    const auto wBoxes23 = _mm512_loadu_pd(&iBoxes[wIdx + 2].mMinX);
+    const auto wMin = _mm512_permutex2var_pd(wBoxes01, kPermuteMinXY512, wBoxes23);
+    const auto wMax = _mm512_permutex2var_pd(wBoxes01, kPermuteMaxXY512, wBoxes23);
+    const auto wResult = _mm256_permutevar8x32_epi32(_mm512_cvtpd_epi32(
+                                                         _mm512_mul_pd(wWidthHeight512,
+                                                                       _mm512_sub_pd(_mm512_add_pd(wMin, wMax),
+                                                                                     wDoubleMinXY512))),
+                                                     kPermuteXLoYHi);
+    const auto wResultX = _mm256_castsi256_si128(wResult);
+    const auto wResultY = _mm256_extracti32x4_epi32(wResult, 1);
+
+    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]), HilbertXYToIndex(wResultX, wResultY));
+  }
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
   const auto wHilbertWidth256 = _mm256_broadcast_sd(&wHilbertWidth);
   const auto wHilbertHeight256 = _mm256_broadcast_sd(&wHilbertHeight);
   const auto wDoubleMinX256 = _mm256_broadcast_sd(&wDoubleMinX);
@@ -790,10 +850,11 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
   // Unlike the owning overloads, external bytes carry no alignment guarantee, so this has to
   // clear before validate reads the header through it
-  static constexpr auto wAlignment = std::max(alignof(Box<ArrayType>), alignof(uint32_t));
+  static constexpr auto kAlignment = alignof(Box<ArrayType>) > alignof(uint32_t) ? alignof(Box<ArrayType>)
+                                                                                 : alignof(uint32_t);
 
-  if ((detail::bit_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
-    throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(wAlignment) + " bytes.");
+  if ((detail::bit_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % kAlignment != 0UL) {
+    throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(kAlignment) + " bytes.");
   }
 
   validate(iBytes.data(), iBytes.size());
@@ -937,9 +998,11 @@ class Flatbush {
 
   inline size_t upperBound(size_t iNodeIndex) const noexcept;
 
-  // The index width is fixed for the lifetime of the instance, so a branch here is far
-  // cheaper than duplicating every traversal per width. Hot read loops copy the views
-  // into locals first so the check does not sit in the innermost loop.
+  inline size_t getIndex(size_t iPosition) const noexcept {
+    return mIsWideIndex ? static_cast<size_t>(mIndicesUint32[iPosition])
+                        : static_cast<size_t>(mIndicesUint16[iPosition]);
+  }
+
   inline void setIndex(size_t iPosition, size_t iValue) noexcept {
     if (mIsWideIndex) {
       mIndicesUint32[iPosition] = static_cast<uint32_t>(iValue);
@@ -982,21 +1045,12 @@ template <typename ArrayType>
 Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
   iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
 
-  // The header pushes the box array 8 bytes into the buffer, which would leave every
-  // other Box<double> straddling a cache line and a 16-wide node covering 9 lines
-  // instead of 8. Over-allocate and slide the logical start so the boxes land on a
-  // line boundary; the serialized bytes themselves are unchanged.
-  const auto wSize = calculateDataSize(iNumItems, iNodeSize);
-  mData.assign(wSize + gCacheLineSize, 0U);
-
-  const auto wStart = detail::bit_cast<uintptr_t>(mData.data()) + gHeaderByteSize;
-  const auto wBase = mData.data() + (gCacheLineSize - (wStart % gCacheLineSize)) % gCacheLineSize;
-
-  wBase[0] = gValidityFlag;
-  wBase[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
-  *detail::bit_cast<uint16_t*>(wBase + 2) = iNodeSize;
-  *detail::bit_cast<uint32_t*>(wBase + 4) = iNumItems;
-  mBytes = { wBase, wSize };
+  mData.resize(calculateDataSize(iNumItems, iNodeSize), 0U);
+  mData[0] = gValidityFlag;
+  mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
+  *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
+  *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
+  mBytes = { mData.data(), mData.size() };
 
   init(!kIsPacked);
 }
@@ -1267,7 +1321,7 @@ void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues, size_t iLeft, siz
 
 template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
-                                                   const FilterCb& iFilterFn) const noexcept {
+                                                    const FilterCb& iFilterFn) const noexcept {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1275,14 +1329,6 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(detail::approximateResultsSize(mBounds, iBounds, wNumItems));
-  // Held in locals because the allocating push_back below would otherwise force the
-  // compiler to reload the views from *this on every hit
-  const auto* const wNarrow = mIndicesUint16.data();
-  const auto* const wWide = mIndicesUint32.data();
-  const auto wIsWide = mIsWideIndex;
-  const auto wIndexAt = [=](size_t iPosition) noexcept -> size_t {
-    return wIsWide ? wWide[iPosition] : wNarrow[iPosition];
-  };
 
   while (true) {
     // Split node-vs-leaf: the check is invariant across all children of a node
@@ -1291,7 +1337,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          wQueue.push_back(wIndexAt(wPosition));
+          wQueue.push_back(getIndex(wPosition));
         }
       }
     } else {
@@ -1303,15 +1349,15 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
           if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
             continue;
           }
-          const auto wIndex = wIndexAt(wPosition);
-          if (iFilterFn(wIndex, mBoxes[wPosition])) {
-            wResults.push_back(wIndex);
+          const auto wId = getIndex(wPosition);
+          if (iFilterFn(wId, mBoxes[wPosition])) {
+            wResults.push_back(wId);
           }
         }
       } else {
         for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
           if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-            wResults.push_back(wIndexAt(wPosition));
+            wResults.push_back(getIndex(wPosition));
           }
         }
       }
@@ -1353,14 +1399,6 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(std::min(wNumItems, iMaxResults));
-  // See searchImpl: keeping the views in locals stops the queue writes below from
-  // invalidating them on every iteration
-  const auto* const wNarrow = mIndicesUint16.data();
-  const auto* const wWide = mIndicesUint32.data();
-  const auto wIsWide = mIsWideIndex;
-  const auto wIndexAt = [=](size_t iPosition) noexcept -> size_t {
-    return wIsWide ? wWide[iPosition] : wNarrow[iPosition];
-  };
 
   while (true) {
     // find the end index of the node; leaves always end at the item count
@@ -1376,10 +1414,10 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
         continue;
       }
 
-      const auto wIndex = wIndexAt(wPosition);
+      const auto wId = getIndex(wPosition);
 
-      if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
-        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
+      if (wIsInternalNode || !iFilterFn || iFilterFn(wId, mBoxes[wPosition])) {
+        wQueue.emplace_back((wId << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
       }
     }
@@ -1433,6 +1471,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    const DistanceCb& iDistanceFn) const noexcept {
   static constexpr auto kMergeThreshold = 128UL;
   static constexpr auto kUseHeap = true;
+  const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
   static const auto wDefaultFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
     return detail::computeDistanceSquared(iQuery, iBox);
@@ -1447,7 +1486,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
     return {};
   }
 
-  if (iMaxResults > kMergeThreshold) {
+  if (wNeedHeap) {
     return neighborsImpl<kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
   }
 
