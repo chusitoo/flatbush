@@ -1325,6 +1325,10 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
+  // Wanting a single result makes the closest leaf seen so far a valid bound: nothing
+  // farther away can displace it, so anything beyond it need not be queued at all
+  const auto wTrackNearest = iMaxResults == 1UL;
+  auto wBound = iThreshold;
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
@@ -1340,7 +1344,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       const auto wDistance = iDistanceFn(iPoint, mBoxes[wPosition]);
 
-      if (wDistance > iThreshold) {
+      if (wDistance > wBound) {
         continue;
       }
 
@@ -1349,6 +1353,9 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
       if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
+        if (wTrackNearest && !wIsInternalNode && wDistance < wBound) {
+          wBound = wDistance;
+        }
       }
     }
 
