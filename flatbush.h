@@ -1182,9 +1182,12 @@ uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
 void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+  // Depth measured at ~3 entries per log2(items), and the item count is a uint32_t header
+  // field, so this covers the largest representable index; the vector grows if a pivot goes bad
+  static constexpr size_t kStackReserve = 4 * std::numeric_limits<uint32_t>::digits;
   const auto wNodeSize = nodeSize();
   std::vector<std::size_t> wStack;
-  wStack.reserve(iRight - iLeft);
+  wStack.reserve(kStackReserve);
   wStack.push_back(iLeft);
   wStack.push_back(iRight);
 
@@ -1194,7 +1197,9 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, siz
     const auto wLeft = wStack.back();
     wStack.pop_back();
 
-    if ((wRight - wLeft) > wNodeSize || wLeft < wRight) {
+    // Once a range lies inside one node its membership is already settled, and order within
+    // a node cannot change that node's bounding box, so there is nothing left to sort
+    if (wLeft / wNodeSize < wRight / wNodeSize) {
       const auto wPivot = medianOfThree(iValues, wLeft, wRight);
       auto wPivotLeft = wLeft - 1UL;
       auto wPivotRight = wRight + 1UL;
