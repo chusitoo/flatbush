@@ -618,11 +618,6 @@ inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, co
 }
 #endif  // defined(FLATBUSH_USE_SIMD)
 
-template <typename ArrayType>
-inline float sumAxis(ArrayType iMin, ArrayType iMax) noexcept {
-  return static_cast<float>(iMin) + static_cast<float>(iMax);
-}
-
 template <class ArrayType>
 std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
                                            const Box<ArrayType>& iBounds,
@@ -647,6 +642,10 @@ std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
   const auto wDoubleMinX128 = _mm_set1_ps(wDoubleMinX);
   const auto wDoubleMinY128 = _mm_set1_ps(wDoubleMinY);
 #endif
+
+  static const auto sumAxis = [](ArrayType iMin, ArrayType iMax) {
+    return static_cast<float>(iMin) + static_cast<float>(iMax);
+  };
 
   // Widening each corner one at a time keeps a single code path for every array type; the
   // Hilbert transform below is ~60 vector ops and dwarfs the cost of the gather
@@ -1354,9 +1353,9 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
           if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
             continue;
           }
-          const auto wId = getIndex(wPosition);
-          if (iFilterFn(wId, mBoxes[wPosition])) {
-            wResults.push_back(wId);
+          const auto wIndex = getIndex(wPosition);
+          if (iFilterFn(wIndex, mBoxes[wPosition])) {
+            wResults.push_back(wIndex);
           }
         }
       } else {
@@ -1426,10 +1425,10 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
         continue;
       }
 
-      const auto wId = getIndex(wPosition);
+      const auto wIndex = getIndex(wPosition);
 
-      if (wIsInternalNode || !iFilterFn || iFilterFn(wId, mBoxes[wPosition])) {
-        wQueue.emplace_back((wId << 1U) + !wIsInternalNode, wDistance);
+      if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
+        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
       }
     }
