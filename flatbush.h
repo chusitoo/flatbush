@@ -634,31 +634,39 @@ inline void radixSortByKey(std::vector<KeyIndex>& ioPairs, std::vector<KeyIndex>
   static constexpr size_t kBuckets = size_t(1) << kRadixBits;
   static constexpr size_t kMask = kBuckets - 1;
   static constexpr size_t kKeyBits = 32;
+  static constexpr size_t kPasses = kKeyBits / kRadixBits;
+  static_assert(kPasses == 4, "The histogram below is unrolled for exactly four byte lanes");
   const size_t wCount = ioPairs.size();
   auto* wSrc = ioPairs.data();
   auto* wDst = ioScratch.data();
+  size_t wOffsets[kPasses][kBuckets] = { { 0 } };
 
-  for (size_t wShift = 0; wShift < kKeyBits; wShift += kRadixBits) {
-    size_t wOffsets[kBuckets] = { 0 };
+  // One read of the array feeds every pass, and spreading the counts across four tables keeps
+  // consecutive increments off the same address
+  for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
+    const auto wKey = wSrc[wIdx].mKey;
+    ++wOffsets[0][wKey & kMask];
+    ++wOffsets[1][(wKey >> kRadixBits) & kMask];
+    ++wOffsets[2][(wKey >> (2U * kRadixBits)) & kMask];
+    ++wOffsets[3][(wKey >> (3U * kRadixBits)) & kMask];
+  }
 
-    for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-      ++wOffsets[(wSrc[wIdx].mKey >> wShift) & kMask];
-    }
-
+  for (size_t wPass = 0; wPass < kPasses; ++wPass) {
     size_t wRunning = 0;
     for (size_t wBucket = 0; wBucket < kBuckets; ++wBucket) {
-      const auto wSize = wOffsets[wBucket];
-      wOffsets[wBucket] = wRunning;
+      const auto wSize = wOffsets[wPass][wBucket];
+      wOffsets[wPass][wBucket] = wRunning;
       wRunning += wSize;
     }
 
+    const auto wShift = wPass * kRadixBits;
     for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-      wDst[wOffsets[(wSrc[wIdx].mKey >> wShift) & kMask]++] = wSrc[wIdx];
+      wDst[wOffsets[wPass][(wSrc[wIdx].mKey >> wShift) & kMask]++] = wSrc[wIdx];
     }
 
     std::swap(wSrc, wDst);
   }
-  // kKeyBits / kRadixBits is even, so the sorted result lands back in ioPairs
+  // kPasses is even, so the sorted result lands back in ioPairs
 }
 
 template <class ArrayType>
