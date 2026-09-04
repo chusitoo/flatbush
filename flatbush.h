@@ -1073,6 +1073,9 @@ class Flatbush {
                                     const DistanceCb& iDistanceFn) const noexcept;
 
   struct IndexDistance {
+    // Trivially default constructible on purpose: otherwise inplace_merge's temporary buffer
+    // move constructs every slot on each call
+    IndexDistance() noexcept = default;
     IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
 
