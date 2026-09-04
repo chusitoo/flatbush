@@ -481,10 +481,9 @@ inline bool boxesIntersect<float>(const Box<float>& iQuery, const Box<float>& iB
 template <>
 inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>& iBox) noexcept {
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wQuery = _mm256_loadu_pd(&iQuery.mMinX);
-  const auto wBox = _mm256_loadu_pd(&iBox.mMinX);
-  const auto wMax = _mm256_permute2f128_pd(wQuery, wBox, 0x31);
-  const auto wMin = _mm256_permute2f128_pd(wBox, wQuery, 0x20);
+  // Assembling the halves costs a load port instead of the lane-crossing shuffle port
+  const auto wMax = _mm256_set_m128d(_mm_loadu_pd(&iBox.mMaxX), _mm_loadu_pd(&iQuery.mMaxX));
+  const auto wMin = _mm256_set_m128d(_mm_loadu_pd(&iQuery.mMinX), _mm_loadu_pd(&iBox.mMinX));
   return _mm256_movemask_pd(_mm256_cmp_pd(wMax, wMin, _CMP_LT_OQ)) == 0;
 #else
   const auto wCmpMax = _mm_cmplt_pd(_mm_loadu_pd(&iQuery.mMaxX), _mm_loadu_pd(&iBox.mMinX));
@@ -544,14 +543,9 @@ inline void updateBounds<double>(Box<double>& ioSrc, const Box<double>& iBox) no
 
 template <>
 inline double computeDistanceSquared<double>(const Point<double>& iPoint, const Box<double>& iBox) noexcept {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wBox = _mm256_loadu_pd(&iBox.mMinX);
-  const auto wBoxMin = _mm256_castpd256_pd128(wBox);
-  const auto wBoxMax = _mm256_extractf128_pd(wBox, 1);
-#else
+  // Two half loads beat a full load plus extractf128: same cache line, and no shuffle
   const auto wBoxMin = _mm_loadu_pd(&iBox.mMinX);
   const auto wBoxMax = _mm_loadu_pd(&iBox.mMaxX);
-#endif
   const auto wPoint = _mm_loadu_pd(&iPoint.mX);
   // Compute axis distances - using max to clamp to zero
   const auto wDist = _mm_max_pd(kZeroPd, _mm_max_pd(_mm_sub_pd(wBoxMin, wPoint), _mm_sub_pd(wPoint, wBoxMax)));
