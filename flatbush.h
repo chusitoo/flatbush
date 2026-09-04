@@ -496,7 +496,7 @@ inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>&
 // Disjoint iff any lane of [bMaxX qMaxX bMaxY qMaxY] < [qMinX bMinX qMinY bMinY].
 // Narrower integers reach this through the scalar template above: their whole box fits in a
 // general purpose register, so the shuffling needed to vectorise costs more than it saves.
-inline bool boxesIntersectEpi32(__m128i iQuery, __m128i iBox) noexcept {
+inline bool boxesIntersectForIntegral(__m128i iQuery, __m128i iBox) noexcept {
   const auto wMin = _mm_unpacklo_epi32(iQuery, iBox);
   const auto wMax = _mm_unpackhi_epi32(iBox, iQuery);
   return isNoneSet(_mm_castsi128_ps(_mm_cmplt_epi32(wMax, wMin)));
@@ -504,15 +504,15 @@ inline bool boxesIntersectEpi32(__m128i iQuery, __m128i iBox) noexcept {
 
 template <>
 inline bool boxesIntersect<int32_t>(const Box<int32_t>& iQuery, const Box<int32_t>& iBox) noexcept {
-  return boxesIntersectEpi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX)),
-                             _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX)));
+  return boxesIntersectForIntegral(_mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX)),
+                                   _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX)));
 }
 
 template <>
 inline bool boxesIntersect<uint32_t>(const Box<uint32_t>& iQuery, const Box<uint32_t>& iBox) noexcept {
   // Biasing into the signed domain turns the signed compare into an unsigned one
-  return boxesIntersectEpi32(_mm_add_epi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX)), kOffset32),
-                             _mm_add_epi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX)), kOffset32));
+  return boxesIntersectForIntegral(_mm_add_epi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX)), kOffset32),
+                                   _mm_add_epi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX)), kOffset32));
 }
 
 template <>
@@ -629,22 +629,23 @@ struct KeyIndex {
 // LSD radix over the whole 32-bit Hilbert key. Sorting the permutation keeps every pass at
 // 8 bytes per item, and each of the 256 bucket cursors advances sequentially, so the scatter
 // costs far less than the random placement a comparison sort's permutation would need.
-inline void radixSortByKey(std::vector<KeyIndex>& ioPairs, std::vector<KeyIndex>& ioScratch) noexcept {
-  static constexpr size_t kRadixBits = 8;
-  static constexpr size_t kBuckets = size_t(1) << kRadixBits;
-  static constexpr size_t kMask = kBuckets - 1;
-  static constexpr size_t kKeyBits = 32;
-  static constexpr size_t kPasses = kKeyBits / kRadixBits;
+inline void radixSortByKey(std::vector<KeyIndex>& ioValues) noexcept {
+  static constexpr auto kRadixBits = 8UL;
+  static constexpr auto kBuckets = 1UL << kRadixBits;
+  static constexpr auto kMask = kBuckets - 1UL;
+  static constexpr auto kKeyBits = static_cast<size_t>(std::numeric_limits<uint32_t>::digits);
+  static constexpr auto kPasses = kKeyBits / kRadixBits;
+
   static_assert(kPasses == 4, "The histogram below is unrolled for exactly four byte lanes");
-  const size_t wCount = ioPairs.size();
-  auto* wSrc = ioPairs.data();
-  auto* wDst = ioScratch.data();
+
+  const auto wCount = ioValues.size();
+  std::vector<KeyIndex> wScratch(wCount);
   size_t wOffsets[kPasses][kBuckets] = { { 0 } };
 
   // One read of the array feeds every pass, and spreading the counts across four tables keeps
   // consecutive increments off the same address
   for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-    const auto wKey = wSrc[wIdx].mKey;
+    const auto wKey = ioValues[wIdx].mKey;
     ++wOffsets[0][wKey & kMask];
     ++wOffsets[1][(wKey >> kRadixBits) & kMask];
     ++wOffsets[2][(wKey >> (2U * kRadixBits)) & kMask];
@@ -652,7 +653,7 @@ inline void radixSortByKey(std::vector<KeyIndex>& ioPairs, std::vector<KeyIndex>
   }
 
   for (size_t wPass = 0; wPass < kPasses; ++wPass) {
-    size_t wRunning = 0;
+    size_t wRunning = 0UL;
     for (size_t wBucket = 0; wBucket < kBuckets; ++wBucket) {
       const auto wSize = wOffsets[wPass][wBucket];
       wOffsets[wPass][wBucket] = wRunning;
@@ -661,12 +662,14 @@ inline void radixSortByKey(std::vector<KeyIndex>& ioPairs, std::vector<KeyIndex>
 
     const auto wShift = wPass * kRadixBits;
     for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-      wDst[wOffsets[wPass][(wSrc[wIdx].mKey >> wShift) & kMask]++] = wSrc[wIdx];
+      wScratch[wOffsets[wPass][(ioValues[wIdx].mKey >> wShift) & kMask]++] = ioValues[wIdx];
     }
 
-    std::swap(wSrc, wDst);
+    // each pass has to consume what the previous one produced
+    std::swap(ioValues, wScratch);
   }
-  // kPasses is even, so the sorted result lands back in ioPairs
+
+  // kPasses is even, so the sorted result lands back in the caller's buffer
 }
 
 template <class ArrayType>
@@ -1063,8 +1066,8 @@ class Flatbush {
   void collectContained(size_t iNodeIndex,
                         size_t iEnd,
                         size_t iLevel,
-                        std::vector<size_t>& oResults,
-                        const FilterCb& iFilterFn) const noexcept;
+                        const FilterCb& iFilterFn,
+                        std::vector<size_t>& oResults) const noexcept;
 
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const noexcept;
 
@@ -1197,12 +1200,13 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
 
   // sort a permutation by Hilbert value rather than dragging the boxes through the sort
   std::vector<detail::KeyIndex> wPairs(wNumItems);
+
   for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
     wPairs[wIdx] = { wHilbertValues[wIdx], static_cast<uint32_t>(wIdx) };
   }
+
   std::vector<uint32_t>().swap(wHilbertValues);
-  std::vector<detail::KeyIndex> wScratch(wNumItems);
-  detail::radixSortByKey(wPairs, wScratch);
+  detail::radixSortByKey(wPairs);
 
   for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
     setIndex(wIdx, wPairs[wIdx].mIndex);
@@ -1260,8 +1264,8 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::collectContained(size_t iNodeIndex,
                                            size_t iEnd,
                                            size_t iLevel,
-                                           std::vector<size_t>& oResults,
-                                           const FilterCb& iFilterFn) const noexcept {
+                                           const FilterCb& iFilterFn,
+                                           std::vector<size_t>& oResults) const noexcept {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wPosition = iNodeIndex;
@@ -1295,12 +1299,12 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
-  // Node offsets are stored pre-multiplied by four, so the low bit is free to carry the flag
-  auto wContained = detail::boxContains(iBounds, mBounds);
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(detail::approximateResultsSize(mBounds, iBounds, wNumItems));
+  // Node offsets are stored pre-multiplied by four, so the low bit is free to carry the flag
+  auto wContained = detail::boxContains(iBounds, mBounds);
 
   while (true) {
     // Split node-vs-leaf: the check is invariant across all children of a node
@@ -1309,11 +1313,11 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
 
       if (wContained) {
-        collectContained(wNodeIndex, wEnd, levelOf(wNodeIndex), wResults, iFilterFn);
+        collectContained(wNodeIndex, wEnd, levelOf(wNodeIndex), iFilterFn, wResults);
       } else {
         for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
           if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-            wQueue.push_back(getIndex(wPosition) |
+            wQueue.push_back(getIndex(wPosition) | /* low bit carries contained flag */
                              static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
           }
         }
