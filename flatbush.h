@@ -1079,8 +1079,8 @@ class Flatbush {
     IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
 
-    size_t mId;
-    double mDistance;
+    size_t mId = 0;
+    double mDistance = 0;
   };
 
   std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
