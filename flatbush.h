@@ -1073,8 +1073,10 @@ class Flatbush {
                                     const DistanceCb& iDistanceFn) const noexcept;
 
   struct IndexDistance {
-    // Trivially default constructible on purpose: otherwise inplace_merge's temporary buffer
-    // move constructs every slot on each call
+    // Left uninitialized on purpose: a default member initializer would make the default
+    // constructor non trivial, and inplace_merge then move constructs its whole temporary
+    // buffer on every call. Nothing reads a slot before the merge writes it.
+    // cppcheck-suppress uninitMemberVar
     IndexDistance() noexcept = default;
     IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
@@ -1082,6 +1084,9 @@ class Flatbush {
     size_t mId;
     double mDistance;
   };
+
+  static_assert(std::is_trivially_default_constructible<IndexDistance>::value,
+                "A non trivial default constructor makes inplace_merge build its whole buffer");
 
   std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
   span<const uint8_t> mBytes;
