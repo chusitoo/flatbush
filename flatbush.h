@@ -1304,44 +1304,37 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   auto wContained = detail::boxContains(iBounds, mBounds);
 
   while (true) {
-    // Split node-vs-leaf: the check is invariant across all children of a node
-    if (wNodeIndex >= wNumItems) {
-      // Internal node: only here does the enclosing level have to be looked up
-      const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
+    // Leaves always end at the item count, so only an internal node needs the level looked up
+    const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wLevelEnd = wIsInternalNode ? upperBound(wNodeIndex) : wNumItems;
+    const size_t wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
 
-      if (wContained) {
-        collectContained(wNodeIndex, wEnd, levelOf(wNodeIndex), iFilterFn, wResults);
-      } else {
-        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-          if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-            wQueue.push_back(getIndex(wPosition) | /* low bit carries contained flag */
-                             static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
-          }
+    if (wContained) {
+      // A swallowed leaf is just a subtree of depth zero, so one sweep covers both
+      collectContained(wNodeIndex, wEnd, wIsInternalNode ? levelOf(wNodeIndex) : 0UL, iFilterFn, wResults);
+    } else if (wIsInternalNode) {
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          wQueue.push_back(getIndex(wPosition) | /* low bit carries contained flag */
+                           static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
+        }
+      }
+    } else if (iFilterFn) {
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          continue;
+        }
+
+        const auto wIndex = getIndex(wPosition);
+
+        if (iFilterFn(wIndex, mBoxes[wPosition])) {
+          wResults.push_back(wIndex);
         }
       }
     } else {
-      // Leaf node: the enclosing level always ends at the item count
-      const size_t wEnd = std::min(wNodeIndex + wNodeSize, wNumItems);
-
-      if (iFilterFn) {
-        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-          if (!wContained && !detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-            continue;
-          }
-          const auto wIndex = getIndex(wPosition);
-          if (iFilterFn(wIndex, mBoxes[wPosition])) {
-            wResults.push_back(wIndex);
-          }
-        }
-      } else if (wContained) {
-        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           wResults.push_back(getIndex(wPosition));
-        }
-      } else {
-        for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-          if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-            wResults.push_back(getIndex(wPosition));
-          }
         }
       }
     }
