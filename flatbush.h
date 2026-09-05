@@ -160,6 +160,25 @@ To bit_cast(From const& from) {
   return to;
 }
 
+// A node is walked start to end, but it spans several cache lines and is reached by pointer
+// chasing, so every line is requested up front rather than waiting for the stride detector
+template <typename BoxType>
+inline void prefetchNode(const BoxType* iBoxes, size_t iCount) noexcept {
+  static constexpr size_t kCacheLine = 64;
+  static constexpr size_t kBoxSize = sizeof(BoxType);
+  static constexpr size_t kStride = (kCacheLine < kBoxSize) ? 1UL : kCacheLine / kBoxSize;
+
+  for (size_t wIdx = 0; wIdx < iCount; wIdx += kStride) {
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(iBoxes + wIdx, 0, 3);
+#elif defined(_MSC_VER) && defined(FLATBUSH_USE_SIMD)
+    _mm_prefetch(bit_cast<const char*>(iBoxes + wIdx), _MM_HINT_T0);
+#else
+    (void)iBoxes;  // maybe unused
+#endif
+  }
+}
+
 inline uint32_t Interleave(uint32_t v) {
   v = (v | (v << 8U)) & 0x00FF00FF;
   v = (v | (v << 4U)) & 0x0F0F0F0F;
@@ -315,12 +334,23 @@ inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
 
 template <typename ArrayType>
 inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
-  return !(iQuery.mMaxX < iBox.mMinX || iQuery.mMaxY < iBox.mMinY || iQuery.mMinX > iBox.mMaxX ||
-           iQuery.mMinY > iBox.mMaxY);
+  // Bitwise or instead of logical or: the four comparisons are cheap and independent,
+  // so evaluating them all beats short circuiting on unpredictable data
+  return !((iQuery.mMaxX < iBox.mMinX) | (iQuery.mMaxY < iBox.mMinY) | (iQuery.mMinX > iBox.mMaxX) |
+           (iQuery.mMinY > iBox.mMaxY));
+}
+
+// True when the query swallows the box whole, so every descendant of it matches
+template <typename ArrayType>
+inline bool boxContains(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+  return !((iQuery.mMinX > iBox.mMinX) | (iQuery.mMinY > iBox.mMinY) | (iQuery.mMaxX < iBox.mMaxX) |
+           (iQuery.mMaxY < iBox.mMaxY));
 }
 
 template <typename ArrayType>
 inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
+  // Only float and double specialize below; hand-vectorising the integer types measured no
+  // faster here, and slower for 8-bit boxes, which fit in a general purpose register anyway
   ioSrc.mMinX = std::min(ioSrc.mMinX, iBox.mMinX);
   ioSrc.mMinY = std::min(ioSrc.mMinY, iBox.mMinY);
   ioSrc.mMaxX = std::max(ioSrc.mMaxX, iBox.mMaxX);
@@ -345,15 +375,10 @@ inline double computeDistanceSquared(const Point<ArrayType>& iPoint, const Box<A
 #if defined(FLATBUSH_USE_SIMD)
 static constexpr auto kShuffleUnpackLo = _MM_SHUFFLE(1, 0, 1, 0);
 static constexpr auto kShuffleUnpackHi = _MM_SHUFFLE(3, 2, 3, 2);
-static constexpr auto kShuffleBroadcast0 = _MM_SHUFFLE(0, 0, 0, 0);
 static constexpr auto kShuffleBroadcast1 = _MM_SHUFFLE(1, 1, 1, 1);
 static constexpr auto kShuffleBlendMinMax = _MM_SHUFFLE(3, 2, 1, 0);
 static constexpr auto kShuffleExchange01 = _MM_SHUFFLE2(0, 1);
-static const auto kOffset8 = _mm_set1_epi8(std::numeric_limits<int8_t>::min());
-static const auto kOffset16 = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
 static const auto kOffset32 = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
-static const auto kShuffleMin = _mm_setr_epi8(0, 1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
-static const auto kShuffleMax = _mm_setr_epi8(2, 3, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1);
 static const auto kZeroPd = _mm_setzero_pd();
 static const auto kZeroPs = _mm_setzero_ps();
 
@@ -363,15 +388,20 @@ static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
 static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-static const auto wSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
-#endif
-
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
 static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
 static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
 static const auto kPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
 #endif
+
+// True when no lane of a comparison mask is set
+inline bool isNoneSet(__m128 iMask) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+  return _mm_testz_ps(iMask, iMask) != 0;
+#else
+  return _mm_movemask_ps(iMask) == 0;
+#endif
+}
 
 inline __m128i Interleave(__m128i v) {
   v = _mm_or_si128(v, _mm_slli_epi32(v, 8));
@@ -445,139 +475,43 @@ inline bool boxesIntersect<float>(const Box<float>& iQuery, const Box<float>& iB
   const auto wBox = _mm_loadu_ps(&iBox.mMinX);
   const auto wMin = _mm_shuffle_ps(wQuery, wBox, kShuffleUnpackLo);
   const auto wMax = _mm_shuffle_ps(wBox, wQuery, kShuffleUnpackHi);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  return _mm_cmp_ps_mask(wMax, wMin, _CMP_LT_OQ) == 0;
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wCmp = _mm_cmplt_ps(wMax, wMin);
-  return _mm_testz_ps(wCmp, wCmp);
-#else
-  return _mm_movemask_ps(_mm_cmplt_ps(wMax, wMin)) == 0;
-#endif
+  return isNoneSet(_mm_cmplt_ps(wMax, wMin));
 }
 
 template <>
 inline bool boxesIntersect<double>(const Box<double>& iQuery, const Box<double>& iBox) noexcept {
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wQuery = _mm256_loadu_pd(&iQuery.mMinX);
-  const auto wBox = _mm256_loadu_pd(&iBox.mMinX);
-  const auto wMax = _mm256_permute2f128_pd(wQuery, wBox, 0x31);
-  const auto wMin = _mm256_permute2f128_pd(wBox, wQuery, 0x20);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  return _mm256_cmp_pd_mask(wMax, wMin, _CMP_LT_OQ) == 0;
-#else
+  // Assembling the halves costs a load port instead of the lane-crossing shuffle port
+  const auto wMax = _mm256_set_m128d(_mm_loadu_pd(&iBox.mMaxX), _mm_loadu_pd(&iQuery.mMaxX));
+  const auto wMin = _mm256_set_m128d(_mm_loadu_pd(&iQuery.mMinX), _mm_loadu_pd(&iBox.mMinX));
   return _mm256_movemask_pd(_mm256_cmp_pd(wMax, wMin, _CMP_LT_OQ)) == 0;
-#endif
-#else  // if FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX
-  const auto wQueryMax = _mm_loadu_pd(&iQuery.mMaxX);
-  const auto wBoxMin = _mm_loadu_pd(&iBox.mMinX);
-  const auto wCmp1 = _mm_cmplt_pd(wQueryMax, wBoxMin);
-  const auto wQueryMin = _mm_loadu_pd(&iQuery.mMinX);
-  const auto wBoxMax = _mm_loadu_pd(&iBox.mMaxX);
-  const auto wCmp2 = _mm_cmpgt_pd(wQueryMin, wBoxMax);
-  return _mm_movemask_pd(_mm_or_pd(wCmp1, wCmp2)) == 0;
+#else
+  const auto wCmpMax = _mm_cmplt_pd(_mm_loadu_pd(&iQuery.mMaxX), _mm_loadu_pd(&iBox.mMinX));
+  const auto wCmpMin = _mm_cmpgt_pd(_mm_loadu_pd(&iQuery.mMinX), _mm_loadu_pd(&iBox.mMaxX));
+  return _mm_movemask_pd(_mm_or_pd(wCmpMax, wCmpMin)) == 0;
 #endif
 }
 
-template <>
-inline bool boxesIntersect<int8_t>(const Box<int8_t>& iQuery, const Box<int8_t>& iBox) noexcept {
-  const auto wQuery = _mm_loadu_si32(&iQuery.mMinX);
-  const auto wBox = _mm_loadu_si32(&iBox.mMinX);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSSE3
-  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi8(wQuery, kShuffleMin), _mm_shuffle_epi8(wBox, kShuffleMin));
-  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi8(wBox, kShuffleMax), _mm_shuffle_epi8(wQuery, kShuffleMax));
-#else
-  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, kShuffleBroadcast0),
-                                      _mm_shufflelo_epi16(wBox, kShuffleBroadcast0));
-  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, kShuffleBroadcast1),
-                                      _mm_shufflelo_epi16(wQuery, kShuffleBroadcast1));
-#endif
-  const auto wCmp = _mm_cmplt_epi8(wMax, wMin);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  return _mm_testz_si128(wCmp, wCmp);
-#else
-  return _mm_movemask_epi8(wCmp) == 0;
-#endif
-}
-
-template <>
-inline bool boxesIntersect<uint8_t>(const Box<uint8_t>& iQuery, const Box<uint8_t>& iBox) noexcept {
-  const auto wQuery = _mm_loadu_si32(&iQuery.mMinX);
-  const auto wBox = _mm_loadu_si32(&iBox.mMinX);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSSE3
-  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi8(wQuery, kShuffleMin), _mm_shuffle_epi8(wBox, kShuffleMin));
-  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi8(wBox, kShuffleMax), _mm_shuffle_epi8(wQuery, kShuffleMax));
-#else
-  const auto wMin = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wQuery, kShuffleBroadcast0),
-                                      _mm_shufflelo_epi16(wBox, kShuffleBroadcast0));
-  const auto wMax = _mm_unpacklo_epi8(_mm_shufflelo_epi16(wBox, kShuffleBroadcast1),
-                                      _mm_shufflelo_epi16(wQuery, kShuffleBroadcast1));
-#endif
-  const auto wCmp = _mm_cmplt_epi8(_mm_add_epi8(wMax, kOffset8), _mm_add_epi8(wMin, kOffset8));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  return _mm_testz_si128(wCmp, wCmp);
-#else
-  return _mm_movemask_epi8(wCmp) == 0;
-#endif
-}
-
-template <>
-inline bool boxesIntersect<int16_t>(const Box<int16_t>& iQuery, const Box<int16_t>& iBox) noexcept {
-  const auto wQuery = _mm_loadu_si64(&iQuery.mMinX);
-  const auto wBox = _mm_loadu_si64(&iBox.mMinX);
-  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, kShuffleBroadcast0),
-                                       _mm_shuffle_epi32(wBox, kShuffleBroadcast0));
-  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, kShuffleBroadcast1),
-                                       _mm_shuffle_epi32(wQuery, kShuffleBroadcast1));
-  const auto wCmp = _mm_cmplt_epi16(wMax, wMin);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  return _mm_testz_si128(wCmp, wCmp);
-#else
-  return _mm_movemask_epi8(wCmp) == 0;
-#endif
-}
-
-template <>
-inline bool boxesIntersect<uint16_t>(const Box<uint16_t>& iQuery, const Box<uint16_t>& iBox) noexcept {
-  const auto wQuery = _mm_loadu_si64(&iQuery.mMinX);
-  const auto wBox = _mm_loadu_si64(&iBox.mMinX);
-  const auto wMin = _mm_unpacklo_epi16(_mm_shuffle_epi32(wQuery, kShuffleBroadcast0),
-                                       _mm_shuffle_epi32(wBox, kShuffleBroadcast0));
-  const auto wMax = _mm_unpacklo_epi16(_mm_shuffle_epi32(wBox, kShuffleBroadcast1),
-                                       _mm_shuffle_epi32(wQuery, kShuffleBroadcast1));
-  const auto wCmp = _mm_cmplt_epi16(_mm_add_epi16(wMax, kOffset16), _mm_add_epi16(wMin, kOffset16));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  return _mm_testz_si128(wCmp, wCmp);
-#else
-  return _mm_movemask_epi8(wCmp) == 0;
-#endif
+// Disjoint iff any lane of [bMaxX qMaxX bMaxY qMaxY] < [qMinX bMinX qMinY bMinY].
+// Narrower integers reach this through the scalar template above: their whole box fits in a
+// general purpose register, so the shuffling needed to vectorise costs more than it saves.
+inline bool boxesIntersectForIntegral(__m128i iQuery, __m128i iBox) noexcept {
+  const auto wMin = _mm_unpacklo_epi32(iQuery, iBox);
+  const auto wMax = _mm_unpackhi_epi32(iBox, iQuery);
+  return isNoneSet(_mm_castsi128_ps(_mm_cmplt_epi32(wMax, wMin)));
 }
 
 template <>
 inline bool boxesIntersect<int32_t>(const Box<int32_t>& iQuery, const Box<int32_t>& iBox) noexcept {
-  const auto wQuery = _mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX));
-  const auto wBox = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wMin = _mm_unpacklo_epi32(wQuery, wBox);
-  const auto wMax = _mm_unpackhi_epi32(wBox, wQuery);
-  const auto wCmp = _mm_cmplt_epi32(wMax, wMin);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  return _mm_testz_si128(wCmp, wCmp);
-#else
-  return _mm_movemask_epi8(wCmp) == 0;
-#endif
+  return boxesIntersectForIntegral(_mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX)),
+                                   _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX)));
 }
 
 template <>
 inline bool boxesIntersect<uint32_t>(const Box<uint32_t>& iQuery, const Box<uint32_t>& iBox) noexcept {
-  const auto wQuery = _mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX));
-  const auto wBox = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wMin = _mm_unpacklo_epi32(wQuery, wBox);
-  const auto wMax = _mm_unpackhi_epi32(wBox, wQuery);
-  const auto wCmp = _mm_cmplt_epi32(_mm_add_epi32(wMax, kOffset32), _mm_add_epi32(wMin, kOffset32));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  return _mm_testz_si128(wCmp, wCmp);
-#else
-  return _mm_movemask_epi8(wCmp) == 0;
-#endif
+  // Biasing into the signed domain turns the signed compare into an unsigned one
+  return boxesIntersectForIntegral(_mm_add_epi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iQuery.mMinX)), kOffset32),
+                                   _mm_add_epi32(_mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX)), kOffset32));
 }
 
 template <>
@@ -608,105 +542,10 @@ inline void updateBounds<double>(Box<double>& ioSrc, const Box<double>& iBox) no
 }
 
 template <>
-inline void updateBounds<int8_t>(Box<int8_t>& ioSrc, const Box<int8_t>& iBox) noexcept {
-  const auto wCur = _mm_loadu_si32(&ioSrc.mMinX);
-  const auto wNew = _mm_loadu_si32(&iBox.mMinX);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wMins = _mm_min_epi8(wCur, wNew);
-  const auto wMaxs = _mm_max_epi8(wCur, wNew);
-#else
-  const auto wCmpMin = _mm_cmplt_epi8(wCur, wNew);
-  const auto wCmpMax = _mm_cmpgt_epi8(wCur, wNew);
-  const auto wMins = _mm_or_si128(_mm_and_si128(wCmpMin, wCur), _mm_andnot_si128(wCmpMin, wNew));
-  const auto wMaxs = _mm_or_si128(_mm_and_si128(wCmpMax, wCur), _mm_andnot_si128(wCmpMax, wNew));
-#endif
-  _mm_storeu_si32(&ioSrc.mMinX, _mm_unpacklo_epi16(wMins, _mm_srli_si128(wMaxs, 2)));
-}
-
-template <>
-inline void updateBounds<uint8_t>(Box<uint8_t>& ioSrc, const Box<uint8_t>& iBox) noexcept {
-  const auto wCur = _mm_loadu_si32(&ioSrc.mMinX);
-  const auto wNew = _mm_loadu_si32(&iBox.mMinX);
-  const auto wMins = _mm_min_epu8(wCur, wNew);
-  const auto wMaxs = _mm_max_epu8(wCur, wNew);
-  _mm_storeu_si32(&ioSrc.mMinX, _mm_unpacklo_epi16(wMins, _mm_srli_si128(wMaxs, 2)));
-}
-
-template <>
-inline void updateBounds<int16_t>(Box<int16_t>& ioSrc, const Box<int16_t>& iBox) noexcept {
-  const auto wCur = _mm_loadu_si64(&ioSrc.mMinX);
-  const auto wNew = _mm_loadu_si64(&iBox.mMinX);
-  const auto wMins = _mm_min_epi16(wCur, wNew);
-  const auto wMaxs = _mm_max_epi16(wCur, wNew);
-  _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, _mm_srli_si128(wMaxs, 4)));
-}
-
-template <>
-inline void updateBounds<uint16_t>(Box<uint16_t>& ioSrc, const Box<uint16_t>& iBox) noexcept {
-  const auto wCur = _mm_loadu_si64(&ioSrc.mMinX);
-  const auto wNew = _mm_loadu_si64(&iBox.mMinX);
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wMins = _mm_min_epu16(wCur, wNew);
-  const auto wMaxs = _mm_max_epu16(wCur, wNew);
-#else
-  const auto wCurOff = _mm_add_epi16(wCur, kOffset16);
-  const auto wNewOff = _mm_add_epi16(wNew, kOffset16);
-  const auto wMins = _mm_sub_epi16(_mm_min_epi16(wCurOff, wNewOff), kOffset16);
-  const auto wMaxs = _mm_sub_epi16(_mm_max_epi16(wCurOff, wNewOff), kOffset16);
-#endif
-  _mm_storeu_si64(&ioSrc.mMinX, _mm_unpacklo_epi32(wMins, _mm_srli_si128(wMaxs, 4)));
-}
-
-template <>
-inline void updateBounds<int32_t>(Box<int32_t>& ioSrc, const Box<int32_t>& iBox) noexcept {
-  const auto wCurrent = _mm_loadu_si128(bit_cast<const __m128i*>(&ioSrc.mMinX));
-  const auto wNewVals = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wMins = _mm_min_epi32(wCurrent, wNewVals);
-  const auto wMaxs = _mm_max_epi32(wCurrent, wNewVals);
-#else
-  const auto wCmpMin = _mm_cmplt_epi32(wCurrent, wNewVals);
-  const auto wCmpMax = _mm_cmpgt_epi32(wCurrent, wNewVals);
-  const auto wMins = _mm_or_si128(_mm_and_si128(wCmpMin, wCurrent), _mm_andnot_si128(wCmpMin, wNewVals));
-  const auto wMaxs = _mm_or_si128(_mm_and_si128(wCmpMax, wCurrent), _mm_andnot_si128(wCmpMax, wNewVals));
-#endif
-  _mm_storeu_si128(bit_cast<__m128i*>(&ioSrc.mMinX),
-                   _mm_castps_si128(
-                       _mm_shuffle_ps(_mm_castsi128_ps(wMins), _mm_castsi128_ps(wMaxs), kShuffleBlendMinMax)));
-}
-
-template <>
-inline void updateBounds<uint32_t>(Box<uint32_t>& ioSrc, const Box<uint32_t>& iBox) noexcept {
-  const auto wCur = _mm_loadu_si128(bit_cast<const __m128i*>(&ioSrc.mMinX));
-  const auto wNew = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wMins = _mm_min_epu32(wCur, wNew);
-  const auto wMaxs = _mm_max_epu32(wCur, wNew);
-#else
-  const auto wCurOff = _mm_add_epi32(wCur, kOffset32);
-  const auto wNewOff = _mm_add_epi32(wNew, kOffset32);
-  const auto wCmpMin = _mm_cmplt_epi32(wCurOff, wNewOff);
-  const auto wCmpMax = _mm_cmpgt_epi32(wCurOff, wNewOff);
-  const auto wMins = _mm_sub_epi32(_mm_or_si128(_mm_and_si128(wCmpMin, wCurOff), _mm_andnot_si128(wCmpMin, wNewOff)),
-                                   kOffset32);
-  const auto wMaxs = _mm_sub_epi32(_mm_or_si128(_mm_and_si128(wCmpMax, wCurOff), _mm_andnot_si128(wCmpMax, wNewOff)),
-                                   kOffset32);
-#endif
-  _mm_storeu_si128(bit_cast<__m128i*>(&ioSrc.mMinX),
-                   _mm_castps_si128(
-                       _mm_shuffle_ps(_mm_castsi128_ps(wMins), _mm_castsi128_ps(wMaxs), kShuffleBlendMinMax)));
-}
-
-template <>
 inline double computeDistanceSquared<double>(const Point<double>& iPoint, const Box<double>& iBox) noexcept {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wBox = _mm256_loadu_pd(&iBox.mMinX);
-  const auto wBoxMin = _mm256_castpd256_pd128(wBox);
-  const auto wBoxMax = _mm256_extractf128_pd(wBox, 1);
-#else
+  // Two half loads beat a full load plus extractf128: same cache line, and no shuffle
   const auto wBoxMin = _mm_loadu_pd(&iBox.mMinX);
   const auto wBoxMax = _mm_loadu_pd(&iBox.mMaxX);
-#endif
   const auto wPoint = _mm_loadu_pd(&iPoint.mX);
   // Compute axis distances - using max to clamp to zero
   const auto wDist = _mm_max_pd(kZeroPd, _mm_max_pd(_mm_sub_pd(wBoxMin, wPoint), _mm_sub_pd(wPoint, wBoxMax)));
@@ -774,183 +613,58 @@ template <>
 inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, const Box<uint32_t>& iBox) noexcept {
   return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
 }
-
-void loadBoxValuesAsFloat(const Box<float>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  const auto wData = _mm512_loadu_ps(&iBox.mMinX);
-  oMinX = _mm512_castps512_ps128(wData);
-  oMinY = _mm512_extractf32x4_ps(wData, 1);
-  oMaxX = _mm512_extractf32x4_ps(wData, 2);
-  oMaxY = _mm512_extractf32x4_ps(wData, 3);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wData1 = _mm256_loadu_ps(&iBox.mMinX);
-  const auto wData2 = _mm256_loadu_ps(&iBox.mMinX + 8);
-  oMinX = _mm256_castps256_ps128(wData1);
-  oMinY = _mm256_extractf128_ps(wData1, 1);
-  oMaxX = _mm256_castps256_ps128(wData2);
-  oMaxY = _mm256_extractf128_ps(wData2, 1);
-#else
-  oMinX = _mm_loadu_ps(&iBox.mMinX);
-  oMinY = _mm_loadu_ps(&iBox.mMinX + 4);
-  oMaxX = _mm_loadu_ps(&iBox.mMinX + 8);
-  oMaxY = _mm_loadu_ps(&iBox.mMinX + 12);
-#endif
-}
-
-void loadBoxValuesAsFloat(const Box<int8_t>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-  const auto wData = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wBox0 = _mm_cvtepi8_epi32(wData);
-  const auto wBox1 = _mm_cvtepi8_epi32(_mm_srli_si128(wData, 4));
-  const auto wBox2 = _mm_cvtepi8_epi32(_mm_srli_si128(wData, 8));
-  const auto wBox3 = _mm_cvtepi8_epi32(_mm_srli_si128(wData, 12));
-#else
-  const auto wData16LoSigned = _mm_srai_epi16(_mm_unpacklo_epi8(wData, wData), 8);
-  const auto wBox0 = _mm_srai_epi32(_mm_unpacklo_epi16(wData16LoSigned, wData16LoSigned), 16);
-  const auto wBox1 = _mm_srai_epi32(_mm_unpackhi_epi16(wData16LoSigned, wData16LoSigned), 16);
-  const auto wData16HiSigned = _mm_srai_epi16(_mm_unpackhi_epi8(wData, wData), 8);
-  const auto wBox2 = _mm_srai_epi32(_mm_unpacklo_epi16(wData16HiSigned, wData16HiSigned), 16);
-  const auto wBox3 = _mm_srai_epi32(_mm_unpackhi_epi16(wData16HiSigned, wData16HiSigned), 16);
-#endif
-  oMinX = _mm_cvtepi32_ps(wBox0);
-  oMinY = _mm_cvtepi32_ps(wBox1);
-  oMaxX = _mm_cvtepi32_ps(wBox2);
-  oMaxY = _mm_cvtepi32_ps(wBox3);
-}
-
-void loadBoxValuesAsFloat(const Box<uint8_t>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-  const auto wData = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wBox0 = _mm_cvtepi8_epi32(wData);
-  const auto wBox1 = _mm_cvtepi8_epi32(_mm_srli_si128(wData, 4));
-  const auto wBox2 = _mm_cvtepi8_epi32(_mm_srli_si128(wData, 8));
-  const auto wBox3 = _mm_cvtepi8_epi32(_mm_srli_si128(wData, 12));
-#else
-  const auto wData16LoSigned = _mm_srai_epi16(_mm_unpacklo_epi8(wData, wData), 8);
-  const auto wBox0 = _mm_srai_epi32(_mm_unpacklo_epi16(wData16LoSigned, wData16LoSigned), 16);
-  const auto wBox1 = _mm_srai_epi32(_mm_unpackhi_epi16(wData16LoSigned, wData16LoSigned), 16);
-  const auto wData16HiSigned = _mm_srai_epi16(_mm_unpackhi_epi8(wData, wData), 8);
-  const auto wBox2 = _mm_srai_epi32(_mm_unpacklo_epi16(wData16HiSigned, wData16HiSigned), 16);
-  const auto wBox3 = _mm_srai_epi32(_mm_unpackhi_epi16(wData16HiSigned, wData16HiSigned), 16);
-#endif
-  oMinX = _mm_cvtepi32_ps(wBox0);
-  oMinY = _mm_cvtepi32_ps(wBox1);
-  oMaxX = _mm_cvtepi32_ps(wBox2);
-  oMaxY = _mm_cvtepi32_ps(wBox3);
-}
-
-void loadBoxValuesAsFloat(const Box<int16_t>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-  const auto wData = _mm256_loadu_si256(bit_cast<const __m256i*>(&iBox.mMinX));
-  const auto wData32Lo = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(wData));
-  const auto wData32Hi = _mm256_cvtepi16_epi32(_mm256_extracti128_si256(wData, 1));
-  const auto wBox0 = _mm256_castsi256_si128(wData32Lo);
-  const auto wBox1 = _mm256_extracti128_si256(wData32Lo, 1);
-  const auto wBox2 = _mm256_castsi256_si128(wData32Hi);
-  const auto wBox3 = _mm256_extracti128_si256(wData32Hi, 1);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wDataLo = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wDataHi = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 8));
-  const auto wBox0 = _mm_cvtepi16_epi32(wDataLo);
-  const auto wBox1 = _mm_cvtepi16_epi32(_mm_srli_si128(wDataLo, 8));
-  const auto wBox2 = _mm_cvtepi16_epi32(wDataHi);
-  const auto wBox3 = _mm_cvtepi16_epi32(_mm_srli_si128(wDataHi, 8));
-#else
-  const auto wDataLo = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wDataHi = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 8));
-  const auto wBox0 = _mm_srai_epi32(_mm_unpacklo_epi16(wDataLo, wDataLo), 16);
-  const auto wBox1 = _mm_srai_epi32(_mm_unpackhi_epi16(wDataLo, wDataLo), 16);
-  const auto wBox2 = _mm_srai_epi32(_mm_unpacklo_epi16(wDataHi, wDataHi), 16);
-  const auto wBox3 = _mm_srai_epi32(_mm_unpackhi_epi16(wDataHi, wDataHi), 16);
-#endif
-  oMinX = _mm_cvtepi32_ps(wBox0);
-  oMinY = _mm_cvtepi32_ps(wBox1);
-  oMaxX = _mm_cvtepi32_ps(wBox2);
-  oMaxY = _mm_cvtepi32_ps(wBox3);
-}
-
-void loadBoxValuesAsFloat(const Box<uint16_t>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-  const auto wData = _mm256_loadu_si256(bit_cast<const __m256i*>(&iBox.mMinX));
-  const auto wData32Lo = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(wData));
-  const auto wData32Hi = _mm256_cvtepi16_epi32(_mm256_extracti128_si256(wData, 1));
-  const auto wBox0 = _mm256_castsi256_si128(wData32Lo);
-  const auto wBox1 = _mm256_extracti128_si256(wData32Lo, 1);
-  const auto wBox2 = _mm256_castsi256_si128(wData32Hi);
-  const auto wBox3 = _mm256_extracti128_si256(wData32Hi, 1);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wDataLo = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wDataHi = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 8));
-  const auto wBox0 = _mm_cvtepi16_epi32(wDataLo);
-  const auto wBox1 = _mm_cvtepi16_epi32(_mm_srli_si128(wDataLo, 8));
-  const auto wBox2 = _mm_cvtepi16_epi32(wDataHi);
-  const auto wBox3 = _mm_cvtepi16_epi32(_mm_srli_si128(wDataHi, 8));
-#else
-  const auto wDataLo = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wDataHi = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 8));
-  const auto wBox0 = _mm_srai_epi32(_mm_unpacklo_epi16(wDataLo, wDataLo), 16);
-  const auto wBox1 = _mm_srai_epi32(_mm_unpackhi_epi16(wDataLo, wDataLo), 16);
-  const auto wBox2 = _mm_srai_epi32(_mm_unpacklo_epi16(wDataHi, wDataHi), 16);
-  const auto wBox3 = _mm_srai_epi32(_mm_unpackhi_epi16(wDataHi, wDataHi), 16);
-#endif
-  oMinX = _mm_cvtepi32_ps(wBox0);
-  oMinY = _mm_cvtepi32_ps(wBox1);
-  oMaxX = _mm_cvtepi32_ps(wBox2);
-  oMaxY = _mm_cvtepi32_ps(wBox3);
-}
-
-void loadBoxValuesAsFloat(const Box<int32_t>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  const auto wData = _mm512_loadu_si512(bit_cast<const __m512i*>(&iBox.mMinX));
-  const auto wBox0 = _mm512_castsi512_si128(wData);
-  const auto wBox1 = _mm512_extracti32x4_epi32(wData, 1);
-  const auto wBox2 = _mm512_extracti32x4_epi32(wData, 2);
-  const auto wBox3 = _mm512_extracti32x4_epi32(wData, 3);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-  const auto wDataLo = _mm256_loadu_si256(bit_cast<const __m256i*>(&iBox.mMinX));
-  const auto wDataHi = _mm256_loadu_si256(bit_cast<const __m256i*>(&iBox.mMinX + 8));
-  const auto wBox0 = _mm256_castsi256_si128(wDataLo);
-  const auto wBox1 = _mm256_extracti128_si256(wDataLo, 1);
-  const auto wBox2 = _mm256_castsi256_si128(wDataHi);
-  const auto wBox3 = _mm256_extracti128_si256(wDataHi, 1);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
-  const auto wBox0 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wBox1 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 4));
-  const auto wBox2 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 8));
-  const auto wBox3 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 12));
-#endif
-  oMinX = _mm_cvtepi32_ps(wBox0);
-  oMinY = _mm_cvtepi32_ps(wBox1);
-  oMaxX = _mm_cvtepi32_ps(wBox2);
-  oMaxY = _mm_cvtepi32_ps(wBox3);
-}
-
-void loadBoxValuesAsFloat(const Box<uint32_t>& iBox, __m128& oMinX, __m128& oMinY, __m128& oMaxX, __m128& oMaxY) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  const auto wData = _mm512_loadu_si512(bit_cast<const __m512i*>(&iBox.mMinX));
-  const auto wBox0 = _mm512_castsi512_si128(wData);
-  const auto wBox1 = _mm512_extracti32x4_epi32(wData, 1);
-  const auto wBox2 = _mm512_extracti32x4_epi32(wData, 2);
-  const auto wBox3 = _mm512_extracti32x4_epi32(wData, 3);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-  const auto wDataLo = _mm256_loadu_si256(bit_cast<const __m256i*>(&iBox.mMinX));
-  const auto wDataHi = _mm256_loadu_si256(bit_cast<const __m256i*>(&iBox.mMinX + 8));
-  const auto wBox0 = _mm256_castsi256_si128(wDataLo);
-  const auto wBox1 = _mm256_extracti128_si256(wDataLo, 1);
-  const auto wBox2 = _mm256_castsi256_si128(wDataHi);
-  const auto wBox3 = _mm256_extracti128_si256(wDataHi, 1);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
-  const auto wBox0 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
-  const auto wBox1 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 4));
-  const auto wBox2 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 8));
-  const auto wBox3 = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX + 12));
-#endif
-  oMinX = _mm_cvtepi32_ps(wBox0);
-  oMinY = _mm_cvtepi32_ps(wBox1);
-  oMaxX = _mm_cvtepi32_ps(wBox2);
-  oMaxY = _mm_cvtepi32_ps(wBox3);
-}
 #endif  // defined(FLATBUSH_USE_SIMD)
+
+struct KeyIndex {
+  uint32_t mKey;
+  uint32_t mIndex;
+};
+
+// LSD radix over the whole 32-bit Hilbert key. Sorting the permutation keeps every pass at
+// 8 bytes per item, and each of the 256 bucket cursors advances sequentially, so the scatter
+// costs far less than the random placement a comparison sort's permutation would need.
+inline void radixSortByKey(std::vector<KeyIndex>& ioValues) noexcept {
+  static constexpr auto kRadixBits = 8UL;
+  static constexpr auto kBuckets = 1UL << kRadixBits;
+  static constexpr auto kMask = kBuckets - 1UL;
+  static constexpr auto kKeyBits = static_cast<size_t>(std::numeric_limits<uint32_t>::digits);
+  static constexpr auto kPasses = kKeyBits / kRadixBits;
+
+  static_assert(kPasses == 4, "The histogram below is unrolled for exactly four byte lanes");
+
+  const auto wCount = ioValues.size();
+  std::vector<KeyIndex> wScratch(wCount);
+  size_t wOffsets[kPasses][kBuckets] = { { 0 } };
+
+  // One read of the array feeds every pass, and spreading the counts across four tables keeps
+  // consecutive increments off the same address
+  for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
+    const auto wKey = ioValues[wIdx].mKey;
+    ++wOffsets[0][wKey & kMask];
+    ++wOffsets[1][(wKey >> kRadixBits) & kMask];
+    ++wOffsets[2][(wKey >> (2U * kRadixBits)) & kMask];
+    ++wOffsets[3][(wKey >> (3U * kRadixBits)) & kMask];
+  }
+
+  for (size_t wPass = 0; wPass < kPasses; ++wPass) {
+    size_t wRunning = 0UL;
+    for (size_t wBucket = 0; wBucket < kBuckets; ++wBucket) {
+      const auto wSize = wOffsets[wPass][wBucket];
+      wOffsets[wPass][wBucket] = wRunning;
+      wRunning += wSize;
+    }
+
+    const auto wShift = wPass * kRadixBits;
+    for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
+      wScratch[wOffsets[wPass][(ioValues[wIdx].mKey >> wShift) & kMask]++] = ioValues[wIdx];
+    }
+
+    // each pass has to consume what the previous one produced
+    std::swap(ioValues, wScratch);
+  }
+
+  // kPasses is even, so the sorted result lands back in the caller's buffer
+}
 
 template <class ArrayType>
 std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
@@ -977,15 +691,21 @@ std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
   const auto wDoubleMinY128 = _mm_set1_ps(wDoubleMinY);
 #endif
 
+  static const auto sumAxis = [](ArrayType iMin, ArrayType iMax) {
+    return static_cast<float>(iMin) + static_cast<float>(iMax);
+  };
+
+  // Widening each corner one at a time keeps a single code path for every array type; the
+  // Hilbert transform below is ~60 vector ops and dwarfs the cost of the gather
   for (; wIdx + 3 < iNumItems; wIdx += 4) {
-    __m128 wMinX;
-    __m128 wMinY;
-    __m128 wMaxX;
-    __m128 wMaxY;
-    loadBoxValuesAsFloat(iBoxes[wIdx], wMinX, wMinY, wMaxX, wMaxY);
-    _MM_TRANSPOSE4_PS(wMinX, wMinY, wMaxX, wMaxY);
-    const auto wSumX = _mm_add_ps(wMinX, wMaxX);
-    const auto wSumY = _mm_add_ps(wMinY, wMaxY);
+    const auto wSumX = _mm_setr_ps(sumAxis(iBoxes[wIdx].mMinX, iBoxes[wIdx].mMaxX),
+                                   sumAxis(iBoxes[wIdx + 1].mMinX, iBoxes[wIdx + 1].mMaxX),
+                                   sumAxis(iBoxes[wIdx + 2].mMinX, iBoxes[wIdx + 2].mMaxX),
+                                   sumAxis(iBoxes[wIdx + 3].mMinX, iBoxes[wIdx + 3].mMaxX));
+    const auto wSumY = _mm_setr_ps(sumAxis(iBoxes[wIdx].mMinY, iBoxes[wIdx].mMaxY),
+                                   sumAxis(iBoxes[wIdx + 1].mMinY, iBoxes[wIdx + 1].mMaxY),
+                                   sumAxis(iBoxes[wIdx + 2].mMinY, iBoxes[wIdx + 2].mMaxY),
+                                   sumAxis(iBoxes[wIdx + 3].mMinY, iBoxes[wIdx + 3].mMaxY));
     const auto wResultX = _mm_mul_ps(wHilbertWidth128, _mm_sub_ps(wSumX, wDoubleMinX128));
     const auto wResultY = _mm_mul_ps(wHilbertHeight128, _mm_sub_ps(wSumY, wDoubleMinY128));
     _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
@@ -1177,10 +897,11 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
   // Unlike the owning overloads, external bytes carry no alignment guarantee, so this has to
   // clear before validate reads the header through it
-  static constexpr auto wAlignment = std::max(alignof(Box<ArrayType>), alignof(uint32_t));
+  static constexpr auto kAlignment = alignof(Box<ArrayType>) > alignof(uint32_t) ? alignof(Box<ArrayType>)
+                                                                                 : alignof(uint32_t);
 
-  if ((detail::bit_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % wAlignment != 0UL) {
-    throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(wAlignment) + " bytes.");
+  if ((detail::bit_cast<uintptr_t>(iBytes.data()) + gHeaderByteSize) % kAlignment != 0UL) {
+    throw std::invalid_argument("Data buffer must be aligned to " + std::to_string(kAlignment) + " bytes.");
   }
 
   validate(iBytes.data(), iBytes.size());
@@ -1318,41 +1039,33 @@ class Flatbush {
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
-  uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-  template <bool IsWideIndex>
-  void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-
-  template <bool IsWideIndex>
-  typename std::enable_if<IsWideIndex, void>::type swap(std::vector<uint32_t>& iValues,
-                                                        size_t iLeft,
-                                                        size_t iRight) noexcept;
-
-  template <bool IsWideIndex>
-  typename std::enable_if<!IsWideIndex, void>::type swap(std::vector<uint32_t>& iValues,
-                                                         size_t iLeft,
-                                                         size_t iRight) noexcept;
 
   inline size_t upperBound(size_t iNodeIndex) const noexcept;
 
-  template <bool IsWideIndex>
-  inline typename std::enable_if<IsWideIndex, size_t>::type getIndex(size_t iPosition) const noexcept;
+  inline size_t getIndex(size_t iPosition) const noexcept {
+    return mIsWideIndex ? static_cast<size_t>(mIndicesUint32[iPosition])
+                        : static_cast<size_t>(mIndicesUint16[iPosition]);
+  }
 
-  template <bool IsWideIndex>
-  inline typename std::enable_if<!IsWideIndex, size_t>::type getIndex(size_t iPosition) const noexcept;
+  inline void setIndex(size_t iPosition, size_t iValue) noexcept {
+    if (mIsWideIndex) {
+      mIndicesUint32[iPosition] = static_cast<uint32_t>(iValue);
+    } else {
+      mIndicesUint16[iPosition] = static_cast<uint16_t>(iValue);
+    }
+  }
 
-  template <bool IsWideIndex>
-  inline typename std::enable_if<IsWideIndex, void>::type setIndex(size_t iPosition, size_t iValue) noexcept;
+  inline size_t levelOf(size_t iNodeIndex) const noexcept;
 
-  template <bool IsWideIndex>
-  inline typename std::enable_if<!IsWideIndex, void>::type setIndex(size_t iPosition, size_t iValue) noexcept;
+  void collectContained(size_t iNodeIndex,
+                        size_t iEnd,
+                        size_t iLevel,
+                        const FilterCb& iFilterFn,
+                        std::vector<size_t>& oResults) const noexcept;
 
-  template <bool IsWideIndex>
-  void createImpl(std::vector<Box<ArrayType>>&& iItems) noexcept;
-
-  template <bool IsWideIndex>
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const noexcept;
 
-  template <bool IsWideIndex, bool UseHeap>
+  template <bool UseHeap>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iThreshold,
@@ -1360,11 +1073,14 @@ class Flatbush {
                                     const DistanceCb& iDistanceFn) const noexcept;
 
   struct IndexDistance {
+    // Trivially default constructible on purpose: otherwise inplace_merge's temporary buffer
+    // move constructs every slot on each call
+    IndexDistance() noexcept = default;
     IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
     bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
 
-    size_t mId;
-    double mDistance;
+    size_t mId = 0;
+    double mDistance = 0;
   };
 
   std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
@@ -1457,27 +1173,42 @@ size_t Flatbush<ArrayType>::calculateDataSize(uint32_t iNumItems, uint32_t iNode
 }
 
 template <typename ArrayType>
-template <bool IsWideIndex>
-void Flatbush<ArrayType>::createImpl(std::vector<Box<ArrayType>>&& iItems) noexcept {
-  for (auto&& wBox : iItems) {
-    setIndex<IsWideIndex>(mPosition, mPosition);
-    mBoxes[mPosition] = std::move(wBox);
-    detail::updateBounds(mBounds, mBoxes[mPosition]);
-    ++mPosition;
+void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept {
+  for (size_t wIdx = 0UL; wIdx < iItems.size(); ++wIdx) {
+    detail::updateBounds(mBounds, iItems[wIdx]);
   }
+  mPosition = iItems.size();
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
 
   if (wNumItems <= wNodeSize) {
+    for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+      setIndex(wIdx, wIdx);
+      mBoxes[wIdx] = iItems[wIdx];
+    }
     mBoxes[mPosition++] = mBounds;
     return;
   }
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
-  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
-  // sort items by their Hilbert value (for packing later)
-  sort<IsWideIndex>(wHilbertValues, 0U, wNumItems - 1U);
+  auto wItemView = span<Box<ArrayType>>(iItems.data(), iItems.size());
+  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, wItemView);
+
+  // sort a permutation by Hilbert value rather than dragging the boxes through the sort
+  std::vector<detail::KeyIndex> wPairs(wNumItems);
+
+  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+    wPairs[wIdx] = { wHilbertValues[wIdx], static_cast<uint32_t>(wIdx) };
+  }
+
+  std::vector<uint32_t>().swap(wHilbertValues);
+  detail::radixSortByKey(wPairs);
+
+  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
+    setIndex(wIdx, wPairs[wIdx].mIndex);
+    mBoxes[wIdx] = iItems[wPairs[wIdx].mIndex];
+  }
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
@@ -1493,151 +1224,8 @@ void Flatbush<ArrayType>::createImpl(std::vector<Box<ArrayType>>&& iItems) noexc
       }
 
       // add the new node to the tree data
-      setIndex<IsWideIndex>(mPosition, wNodeIndex);
+      setIndex(mPosition, wNodeIndex);
       mBoxes[mPosition++] = wNodeBox;
-    }
-  }
-}
-
-template <typename ArrayType>
-void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept {
-  if (mIsWideIndex) {
-    createImpl<true>(std::move(iItems));
-  } else {
-    createImpl<false>(std::move(iItems));
-  }
-}
-
-template <typename ArrayType>
-uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues,
-                                            size_t iLeft,
-                                            size_t iRight) noexcept {
-  const auto wStart = iValues[iLeft];
-  const auto wMid = iValues[(iLeft + iRight) >> 1];
-  const auto wEnd = iValues[iRight];
-  const auto wX = std::max(wStart, wMid);
-
-  if (wEnd > wX) {
-    return wX;
-  } else if (wX == wStart) {
-    return std::max(wMid, wEnd);
-  } else if (wX == wMid) {
-    return std::max(wStart, wEnd);
-  }
-
-  return wEnd;
-}
-
-// custom quicksort that partially sorts bbox data alongside the hilbert values
-template <typename ArrayType>
-template <bool IsWideIndex>
-void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
-  const auto wNodeSize = nodeSize();
-  std::vector<std::size_t> wStack;
-  wStack.reserve(iRight - iLeft);
-  wStack.push_back(iLeft);
-  wStack.push_back(iRight);
-
-  while (wStack.size() > 1) {
-    const auto wRight = wStack.back();
-    wStack.pop_back();
-    const auto wLeft = wStack.back();
-    wStack.pop_back();
-
-    if ((wRight - wLeft) > wNodeSize || wLeft < wRight) {
-      const auto wPivot = medianOfThree(iValues, wLeft, wRight);
-      auto wPivotLeft = wLeft - 1UL;
-      auto wPivotRight = wRight + 1UL;
-
-#if defined(FLATBUSH_USE_SIMD)
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-      static constexpr size_t kSortBatch = sizeof(__m512i) / sizeof(int32_t);
-      const auto wPivotVec512 = _mm512_set1_epi32(static_cast<int32_t>(wPivot));
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-      static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(int32_t);
-      const auto wPivotVecS256 = _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(wPivot)),
-                                                  detail::wSignFlip256);
-#else
-      static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(int32_t);
-      const auto wPivotVecS128 = _mm_xor_si128(_mm_set1_epi32(static_cast<int32_t>(wPivot)), detail::kOffset32);
-#endif
-#endif  // defined(FLATBUSH_USE_SIMD)
-
-      while (true) {
-#if defined(FLATBUSH_USE_SIMD)
-        // SIMD-accelerated left scan: skip batches where all values < pivot
-        for (auto wPos = wPivotLeft + 1; wPos + kSortBatch <= wPivotRight; wPos += kSortBatch, wPivotLeft = wPos - 1) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-          const auto wVals = _mm512_loadu_si512(&iValues[wPos]);
-          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_NLT);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                                 _mm256_cmpgt_epi32(wPivotVecS256, _mm256_xor_si256(wVals, detail::wSignFlip256))))) &
-                             0xFFU;
-#else
-          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
-                                 _mm_cmpgt_epi32(wPivotVecS128, _mm_xor_si128(wVals, detail::kOffset32))))) &
-                             0xFU;
-#endif
-          if (wMask) {
-#ifdef _MSC_VER
-            unsigned long wBitIdx;
-            _BitScanForward(&wBitIdx, wMask);
-            wPivotLeft = wPos + wBitIdx - 1;
-#else
-            wPivotLeft = wPos + static_cast<size_t>(__builtin_ctz(wMask)) - 1;
-#endif
-            break;
-          }
-        }
-#endif  // defined(FLATBUSH_USE_SIMD)
-        while (iValues[++wPivotLeft] < wPivot);
-
-#if defined(FLATBUSH_USE_SIMD)
-        // SIMD-accelerated right scan: skip batches where all values > pivot
-        for (auto wPos = wPivotRight - kSortBatch; wPivotRight > wPivotLeft + kSortBatch;
-             wPos -= kSortBatch, wPivotRight -= kSortBatch) {
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-          const auto wVals = _mm512_loadu_si512(detail::bit_cast<const __m512i*>(&iValues[wPos]));
-          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_LE);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                                 _mm256_cmpgt_epi32(_mm256_xor_si256(wVals, detail::wSignFlip256), wPivotVecS256)))) &
-                             0xFFU;
-#else
-          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
-          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
-                                 _mm_cmpgt_epi32(_mm_xor_si128(wVals, detail::kOffset32), wPivotVecS128)))) &
-                             0xFU;
-#endif
-          if (wMask) {
-#ifdef _MSC_VER
-            unsigned long wBitIdx;
-            _BitScanReverse(&wBitIdx, wMask);
-            wPivotRight = wPos + wBitIdx + 1;
-#else
-            wPivotRight = wPos + static_cast<size_t>(31 - __builtin_clz(wMask)) + 1;
-#endif
-            break;
-          }
-        }
-#endif  // defined(FLATBUSH_USE_SIMD)
-        while (iValues[--wPivotRight] > wPivot);
-
-        if (wPivotLeft >= wPivotRight) {
-          break;
-        }
-
-        swap<IsWideIndex>(iValues, wPivotLeft, wPivotRight);
-      }
-
-      wStack.push_back(wLeft);
-      wStack.push_back(wPivotRight);
-      wStack.push_back(wPivotRight + 1UL);
-      wStack.push_back(wRight);
     }
   }
 }
@@ -1656,57 +1244,53 @@ size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
   return (mLevelBounds.cend() == wIt) ? mLevelBounds.back() : *wIt;
 }
 
-// swap two values and two corresponding boxes
 template <typename ArrayType>
-template <bool IsWideIndex>
-typename std::enable_if<IsWideIndex, void>::type Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues,
-                                                                           size_t iLeft,
-                                                                           size_t iRight) noexcept {
-  std::swap(iValues[iLeft], iValues[iRight]);
-  std::swap(mBoxes[iLeft], mBoxes[iRight]);
-  std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
+size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
+  size_t wLevel = 0UL;
+
+  while (wLevel + 1UL < mLevelBounds.size() && mLevelBounds[wLevel] <= iNodeIndex) {
+    ++wLevel;
+  }
+
+  return wLevel;
+}
+
+// Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
+// subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
+template <typename ArrayType>
+void Flatbush<ArrayType>::collectContained(size_t iNodeIndex,
+                                           size_t iEnd,
+                                           size_t iLevel,
+                                           const FilterCb& iFilterFn,
+                                           std::vector<size_t>& oResults) const noexcept {
+  const auto wNumItems = numItems();
+  const auto wNodeSize = nodeSize();
+  auto wPosition = iNodeIndex;
+  auto wCount = iEnd - iNodeIndex;
+
+  for (auto wDepth = iLevel; wDepth > 0UL; --wDepth) {
+    wPosition = getIndex(wPosition) >> 2U;
+    wCount = (wCount > wNumItems / wNodeSize) ? wNumItems : wCount * wNodeSize;
+  }
+
+  const auto wEnd = std::min(wPosition + wCount, wNumItems);
+
+  if (iFilterFn) {
+    for (; wPosition < wEnd; ++wPosition) {
+      const auto wIndex = getIndex(wPosition);
+
+      if (iFilterFn(wIndex, mBoxes[wPosition])) {
+        oResults.push_back(wIndex);
+      }
+    }
+  } else {
+    for (; wPosition < wEnd; ++wPosition) {
+      oResults.push_back(getIndex(wPosition));
+    }
+  }
 }
 
 template <typename ArrayType>
-template <bool IsWideIndex>
-typename std::enable_if<!IsWideIndex, void>::type Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues,
-                                                                            size_t iLeft,
-                                                                            size_t iRight) noexcept {
-  std::swap(iValues[iLeft], iValues[iRight]);
-  std::swap(mBoxes[iLeft], mBoxes[iRight]);
-  std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
-}
-
-template <typename ArrayType>
-template <bool IsWideIndex>
-inline typename std::enable_if<IsWideIndex, size_t>::type Flatbush<ArrayType>::getIndex(
-    size_t iPosition) const noexcept {
-  return mIndicesUint32[iPosition];
-}
-
-template <typename ArrayType>
-template <bool IsWideIndex>
-inline typename std::enable_if<!IsWideIndex, size_t>::type Flatbush<ArrayType>::getIndex(
-    size_t iPosition) const noexcept {
-  return mIndicesUint16[iPosition];
-}
-
-template <typename ArrayType>
-template <bool IsWideIndex>
-inline typename std::enable_if<IsWideIndex, void>::type Flatbush<ArrayType>::setIndex(size_t iPosition,
-                                                                                      size_t iValue) noexcept {
-  mIndicesUint32[iPosition] = static_cast<uint32_t>(iValue);
-}
-
-template <typename ArrayType>
-template <bool IsWideIndex>
-inline typename std::enable_if<!IsWideIndex, void>::type Flatbush<ArrayType>::setIndex(size_t iPosition,
-                                                                                       size_t iValue) noexcept {
-  mIndicesUint16[iPosition] = static_cast<uint16_t>(iValue);
-}
-
-template <typename ArrayType>
-template <bool IsWideIndex>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
                                                     const FilterCb& iFilterFn) const noexcept {
   const auto wNumItems = numItems();
@@ -1716,35 +1300,41 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(detail::approximateResultsSize(mBounds, iBounds, wNumItems));
+  // Node offsets are stored pre-multiplied by four, so the low bit is free to carry the flag
+  auto wContained = detail::boxContains(iBounds, mBounds);
 
   while (true) {
-    // find the end index of the node
-    const size_t wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
+    // Leaves always end at the item count, so only an internal node needs the level looked up
+    const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wLevelEnd = wIsInternalNode ? upperBound(wNodeIndex) : wNumItems;
+    const size_t wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
 
-    // Split node-vs-leaf: the check is invariant across all children of a node
-    if (wNodeIndex >= wNumItems) {
-      // Internal node: just collect intersecting child node indices
+    if (wContained) {
+      // A swallowed leaf is just a subtree of depth zero, so one sweep covers both
+      collectContained(wNodeIndex, wEnd, wIsInternalNode ? levelOf(wNodeIndex) : 0UL, iFilterFn, wResults);
+    } else if (wIsInternalNode) {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          wQueue.push_back(getIndex<IsWideIndex>(wPosition));
+          wQueue.push_back(getIndex(wPosition) | /* low bit carries contained flag */
+                           static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
         }
       }
     } else if (iFilterFn) {
-      // Leaf node with filter
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           continue;
         }
-        const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+        const auto wIndex = getIndex(wPosition);
+
         if (iFilterFn(wIndex, mBoxes[wPosition])) {
           wResults.push_back(wIndex);
         }
       }
     } else {
-      // Leaf node without filter
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          wResults.push_back(getIndex<IsWideIndex>(wPosition));
+          wResults.push_back(getIndex(wPosition));
         }
       }
     }
@@ -1753,14 +1343,17 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       break;
     }
 
+    wContained = (wQueue.back() & 1UL) != 0UL;
     wNodeIndex = wQueue.back() >> 2U;  // for binary compatibility with JS
     wQueue.pop_back();
+    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
 
-#ifdef __GNUC__
-    __builtin_prefetch(&mBoxes[wNodeIndex], 0, 3);
-#elif defined(_MSC_VER)
-    _mm_prefetch(detail::bit_cast<const char*>(&mBoxes[wNodeIndex]), _MM_HINT_T0);
-#endif
+    // Whenever the node just popped is a leaf it pushes no children, so the new top is the
+    // one after it; requesting it now gives the load a whole node of work to hide behind
+    if (!wQueue.empty()) {
+      const auto wNextIndex = wQueue.back() >> 2U;
+      detail::prefetchNode(&mBoxes[wNextIndex], std::min(wNodeSize, mBoxes.size() - wNextIndex));
+    }
   }
 
   return wResults;
@@ -1773,15 +1366,11 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
     return {};
   }
 
-  if (mIsWideIndex) {
-    return searchImpl<true>(iBounds, iFilterFn);
-  }
-
-  return searchImpl<false>(iBounds, iFilterFn);
+  return searchImpl(iBounds, iFilterFn);
 }
 
 template <typename ArrayType>
-template <bool IsWideIndex, bool UseHeap>
+template <bool UseHeap>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
                                                        double iThreshold,
@@ -1790,29 +1379,37 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
+  // Wanting a single result makes the closest leaf seen so far a valid bound: nothing
+  // farther away can displace it, so anything beyond it need not be queued at all
+  const auto wTrackNearest = iMaxResults == 1UL;
+  auto wBound = iThreshold;
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(std::min(wNumItems, iMaxResults));
 
   while (true) {
-    // find the end index of the node
-    const auto wEnd = std::min(wNodeIndex + wNodeSize, upperBound(wNodeIndex));
+    // find the end index of the node; leaves always end at the item count
     const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wLevelEnd = wIsInternalNode ? upperBound(wNodeIndex) : wNumItems;
+    const auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
     const auto wQueueSize = wQueue.size();
 
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       const auto wDistance = iDistanceFn(iPoint, mBoxes[wPosition]);
 
-      if (wDistance > iThreshold) {
+      if (wDistance > wBound) {
         continue;
       }
 
-      const auto wIndex = getIndex<IsWideIndex>(wPosition);
+      const auto wIndex = getIndex(wPosition);
 
       if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
+        if (wTrackNearest && !wIsInternalNode && wDistance < wBound) {
+          wBound = wDistance;
+        }
       }
     }
 
@@ -1851,12 +1448,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
     wNodeIndex = wQueue.back().mId >> 3U;  // 1 undo indexing + 2 for binary compatibility with JS
     wQueue.pop_back();
-
-#ifdef __GNUC__
-    __builtin_prefetch(&mBoxes[wNodeIndex], 0, 3);
-#elif defined(_MSC_VER)
-    _mm_prefetch(detail::bit_cast<const char*>(&mBoxes[wNodeIndex]), _MM_HINT_T0);
-#endif
+    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
   }
 
   return wResults;
@@ -1869,7 +1461,6 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    const FilterCb& iFilterFn,
                                                    const DistanceCb& iDistanceFn) const noexcept {
   static constexpr auto kMergeThreshold = 128UL;
-  static constexpr auto kWideIndex = true;
   static constexpr auto kUseHeap = true;
   const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
@@ -1886,19 +1477,11 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
     return {};
   }
 
-  if (mIsWideIndex) {
-    if (wNeedHeap) {
-      return neighborsImpl<kWideIndex, kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
-    }
-
-    return neighborsImpl<kWideIndex, !kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
-  }
-
   if (wNeedHeap) {
-    return neighborsImpl<!kWideIndex, kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
+    return neighborsImpl<kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
   }
 
-  return neighborsImpl<!kWideIndex, !kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
+  return neighborsImpl<!kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
 }
 }  // namespace flatbush
 
