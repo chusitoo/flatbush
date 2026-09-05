@@ -25,7 +25,7 @@ SOFTWARE.
 #ifndef FLATBUSH_FLATBUSH_H
 #define FLATBUSH_FLATBUSH_H
 
-#include <algorithm>    // for max, min, upper_bound
+#include <algorithm>    // for max, min, sort, inplace_merge
 #include <array>        // for array
 #include <cmath>        // for isnan
 #include <cstdint>      // for uint32_t, uint8_t, uint16_t, int16_t, int32_t, int8_t
@@ -369,6 +369,16 @@ template <typename ArrayType>
 inline double computeDistanceSquared(const Point<ArrayType>& iPoint, const Box<ArrayType>& iBox) noexcept {
   const auto wDistX = axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX);
   const auto wDistY = axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
+  return wDistX * wDistX + wDistY * wDistY;
+}
+
+// Distance to the farthest corner, so an upper bound on the distance to anything inside the box
+template <typename ArrayType>
+inline double computeMaxDistanceSquared(const Point<ArrayType>& iPoint, const Box<ArrayType>& iBox) noexcept {
+  const auto wX = static_cast<double>(iPoint.mX);
+  const auto wY = static_cast<double>(iPoint.mY);
+  const auto wDistX = std::max(wX - static_cast<double>(iBox.mMinX), static_cast<double>(iBox.mMaxX) - wX);
+  const auto wDistY = std::max(wY - static_cast<double>(iBox.mMinY), static_cast<double>(iBox.mMaxY) - wY);
   return wDistX * wDistX + wDistY * wDistY;
 }
 
@@ -1040,8 +1050,6 @@ class Flatbush {
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
 
-  inline size_t upperBound(size_t iNodeIndex) const noexcept;
-
   inline size_t getIndex(size_t iPosition) const noexcept {
     return mIsWideIndex ? static_cast<size_t>(mIndicesUint32[iPosition])
                         : static_cast<size_t>(mIndicesUint16[iPosition]);
@@ -1065,7 +1073,7 @@ class Flatbush {
 
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const noexcept;
 
-  template <bool UseHeap>
+  template <bool UseHeap, bool CanBound>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iThreshold,
@@ -1236,20 +1244,6 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
 }
 
 template <typename ArrayType>
-size_t Flatbush<ArrayType>::upperBound(size_t iNodeIndex) const noexcept {
-  static constexpr auto kSmallInput = 64UL;
-  decltype(mLevelBounds.cbegin()) wIt;
-
-  if (mLevelBounds.size() < kSmallInput) {
-    for (wIt = mLevelBounds.cbegin(); wIt != mLevelBounds.cend() && *wIt <= iNodeIndex; ++wIt);
-  } else {
-    wIt = std::upper_bound(mLevelBounds.cbegin(), mLevelBounds.cend(), iNodeIndex);
-  }
-
-  return (mLevelBounds.cend() == wIt) ? mLevelBounds.back() : *wIt;
-}
-
-template <typename ArrayType>
 size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
   size_t wLevel = 0UL;
 
@@ -1309,14 +1303,14 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   auto wContained = detail::boxContains(iBounds, mBounds);
 
   while (true) {
-    // Leaves always end at the item count, so only an internal node needs the level looked up
+    // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
     const auto wIsInternalNode = wNodeIndex >= wNumItems;
-    const auto wLevelEnd = wIsInternalNode ? upperBound(wNodeIndex) : wNumItems;
-    const size_t wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
+    const auto wLevel = levelOf(wNodeIndex);
+    const size_t wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
 
     if (wContained) {
       // A swallowed leaf is just a subtree of depth zero, so one sweep covers both
-      collectContained(wNodeIndex, wEnd, wIsInternalNode ? levelOf(wNodeIndex) : 0UL, iFilterFn, wResults);
+      collectContained(wNodeIndex, wEnd, wLevel, iFilterFn, wResults);
     } else if (wIsInternalNode) {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
@@ -1375,7 +1369,7 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
 }
 
 template <typename ArrayType>
-template <bool UseHeap>
+template <bool UseHeap, bool CanBound>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
                                                        double iThreshold,
@@ -1384,21 +1378,32 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
-  // Wanting a single result makes the closest leaf seen so far a valid bound: nothing
-  // farther away can displace it, so anything beyond it need not be queued at all
-  const auto wTrackNearest = iMaxResults == 1UL;
-  auto wBound = iThreshold;
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(std::min(wNumItems, iMaxResults));
+  // Wanting a single result makes the closest leaf seen so far a valid bound: nothing
+  // farther away can displace it, so anything beyond it need not be queued at all
+  const auto wTrackNearest = iMaxResults == 1UL;
+  auto wBound = iThreshold;
+  // Every item under a node sits inside that node's box, so once a subtree is known to hold at
+  // least iMaxResults of them its farthest corner is an upper bound on the k-th distance
+  size_t wBoundLevel = 0UL;
+
+  for (size_t wItems = 1UL; wItems < iMaxResults && wBoundLevel + 1UL < mLevelBounds.size(); ++wBoundLevel) {
+    wItems = (wItems > wNumItems / wNodeSize) ? wNumItems : wItems * wNodeSize;
+  }
 
   while (true) {
-    // find the end index of the node; leaves always end at the item count
+    // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
     const auto wIsInternalNode = wNodeIndex >= wNumItems;
-    const auto wLevelEnd = wIsInternalNode ? upperBound(wNodeIndex) : wNumItems;
+    const auto wLevel = levelOf(wNodeIndex);
+    const auto wLevelEnd = mLevelBounds[wLevel];
     const auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
     const auto wQueueSize = wQueue.size();
+    const auto wCanTighten = CanBound && wIsInternalNode && wLevel >= wBoundLevel;
+    // only a full node carries the count guarantee, and just the last of a level can be short
+    const auto wLastAtLevel = wLevelEnd - 1UL;
 
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       const auto wDistance = iDistanceFn(iPoint, mBoxes[wPosition]);
@@ -1412,8 +1417,13 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
       if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
         wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
+
         if (wTrackNearest && !wIsInternalNode && wDistance < wBound) {
           wBound = wDistance;
+        }
+
+        if (wCanTighten && wPosition != wLastAtLevel) {
+          wBound = std::min(wBound, detail::computeMaxDistanceSquared(iPoint, mBoxes[wPosition]));
         }
       }
     }
@@ -1467,6 +1477,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    const DistanceCb& iDistanceFn) const noexcept {
   static constexpr auto kMergeThreshold = 128UL;
   static constexpr auto kUseHeap = true;
+  static constexpr auto kCanBound = true;
   const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
   static const auto wDefaultFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
@@ -1482,11 +1493,17 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
     return {};
   }
 
+  // The bound inside counts every item under a node, so a filter that rejects some of them, or
+  // a metric that cannot say where a box ends, both invalidate it
+  const auto wCanBound = !iFilterFn && !iDistanceFn;
+
   if (wNeedHeap) {
-    return neighborsImpl<kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
+    return wCanBound ? neighborsImpl<kUseHeap, kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn)
+                     : neighborsImpl<kUseHeap, !kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
   }
 
-  return neighborsImpl<!kUseHeap>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
+  return wCanBound ? neighborsImpl<!kUseHeap, kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn)
+                   : neighborsImpl<!kUseHeap, !kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
 }
 }  // namespace flatbush
 
