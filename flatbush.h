@@ -959,6 +959,9 @@ class Flatbush {
   static constexpr ArrayType kMaxValue = std::numeric_limits<ArrayType>::max();
   static constexpr ArrayType kMinValue = std::numeric_limits<ArrayType>::lowest();
   static constexpr auto kIsPacked = true;
+  static constexpr unsigned kRadixBits = 8;
+  // Below this a histogram costs more than the comparison sort it would replace
+  static constexpr size_t kRadixCutoff = 512;
 
   inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1003,7 +1006,12 @@ class Flatbush {
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
   uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
-  void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+  void radixSortInPlace(std::vector<uint32_t>& iValues,
+                        size_t iLeft,
+                        size_t iRight,
+                        unsigned iShift,
+                        std::vector<size_t>& ioStack) noexcept;
+  void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight, std::vector<size_t>& ioStack) noexcept;
   void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
 
   inline size_t getIndex(size_t iPosition) const noexcept {
@@ -1160,8 +1168,10 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
   auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
-  // sort items by their Hilbert value (for packing later)
-  sort(wHilbertValues, 0U, wNumItems - 1U);
+  // sort items by their Hilbert value (for packing later); one buffer serves every range the
+  // radix hands down to the comparison sort, and dies with the build rather than the index
+  std::vector<size_t> wSortStack;
+  radixSortInPlace(wHilbertValues, 0U, wNumItems - 1U, 32U - kRadixBits, wSortStack);
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
@@ -1203,14 +1213,88 @@ uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues
   return wEnd;
 }
 
+// MSD radix that permutes the boxes in place by cycle following, so it needs a histogram
+// but no scratch copy. The node granularity cutoff usually stops it after two passes: one
+// byte splits a million items 256 ways, and a second lands every bucket inside a node.
+template <typename ArrayType>
+void Flatbush<ArrayType>::radixSortInPlace(std::vector<uint32_t>& iValues,
+                                           size_t iLeft,
+                                           size_t iRight,
+                                           unsigned iShift,
+                                           std::vector<size_t>& ioStack) noexcept {
+  static constexpr size_t kDigits = 1UL << kRadixBits;
+  static constexpr uint32_t kDigitMask = kDigits - 1UL;
+  const auto wNodeSize = nodeSize();
+
+  // Membership is settled once a range lies inside one node, exactly as the quicksort has it
+  if (iLeft / wNodeSize >= iRight / wNodeSize) {
+    return;
+  }
+
+  // A short range cannot repay a whole histogram, so hand it to the comparison sort
+  if (iRight - iLeft < kRadixCutoff) {
+    sort(iValues, iLeft, iRight, ioStack);
+    return;
+  }
+
+  // Positions are bounded by the uint32_t item count, so the cursors need no more width
+  uint32_t wBucketEnd[kDigits] = { 0 };
+  uint32_t wCursor[kDigits];
+
+  for (auto wIdx = iLeft; wIdx <= iRight; ++wIdx) {
+    ++wBucketEnd[(iValues[wIdx] >> iShift) & kDigitMask];
+  }
+
+  auto wRunning = static_cast<uint32_t>(iLeft);
+
+  for (size_t wDigit = 0UL; wDigit < kDigits; ++wDigit) {
+    wCursor[wDigit] = wRunning;
+    wRunning += wBucketEnd[wDigit];
+    wBucketEnd[wDigit] = wRunning;
+  }
+
+  // Each misplaced element is thrown straight at its own bucket's cursor, which drags another
+  // one back in return, so every swap settles at least one element and the cycles terminate
+  for (size_t wDigit = 0UL; wDigit < kDigits; ++wDigit) {
+    while (wCursor[wDigit] < wBucketEnd[wDigit]) {
+      const auto wTarget = (iValues[wCursor[wDigit]] >> iShift) & kDigitMask;
+
+      if (wTarget == wDigit) {
+        ++wCursor[wDigit];
+        continue;
+      }
+
+      swap(iValues, wCursor[wDigit], wCursor[wTarget]++);
+    }
+  }
+
+  if (iShift == 0U) {
+    return;
+  }
+
+  auto wStart = static_cast<uint32_t>(iLeft);
+
+  for (size_t wDigit = 0UL; wDigit < kDigits; ++wDigit) {
+    if (wBucketEnd[wDigit] > wStart + 1U) {
+      radixSortInPlace(iValues, wStart, wBucketEnd[wDigit] - 1U, iShift - kRadixBits, ioStack);
+    }
+
+    wStart = wBucketEnd[wDigit];
+  }
+}
+
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
-void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
+                               size_t iLeft,
+                               size_t iRight,
+                               std::vector<size_t>& ioStack) noexcept {
   // Depth measured at ~3 entries per log2(items), and the item count is a uint32_t header
   // field, so this covers the largest representable index; the vector grows if a pivot goes bad
   static constexpr size_t kStackReserve = 4 * std::numeric_limits<uint32_t>::digits;
   const auto wNodeSize = nodeSize();
-  std::vector<std::size_t> wStack;
+  auto& wStack = ioStack;
+  wStack.clear();
   wStack.reserve(kStackReserve);
   wStack.push_back(iLeft);
   wStack.push_back(iRight);
