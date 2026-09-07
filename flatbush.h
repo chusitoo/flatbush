@@ -1005,7 +1005,7 @@ class Flatbush {
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
-  uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+  uint32_t getPivot(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   void radixSortInPlace(std::vector<uint32_t>& iValues,
                         size_t iLeft,
                         size_t iRight,
@@ -1194,23 +1194,11 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
 }
 
 template <typename ArrayType>
-uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues,
-                                            size_t iLeft,
-                                            size_t iRight) noexcept {
+uint32_t Flatbush<ArrayType>::getPivot(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
   const auto wStart = iValues[iLeft];
   const auto wMid = iValues[(iLeft + iRight) >> 1];
   const auto wEnd = iValues[iRight];
-  const auto wX = std::max(wStart, wMid);
-
-  if (wEnd > wX) {
-    return wX;
-  } else if (wX == wStart) {
-    return std::max(wMid, wEnd);
-  } else if (wX == wMid) {
-    return std::max(wStart, wEnd);
-  }
-
-  return wEnd;
+  return ((wStart > wMid) != (wStart > wEnd)) ? wStart : ((wMid < wStart) != (wMid < wEnd)) ? wMid : wEnd;
 }
 
 // MSD radix that permutes the boxes in place by cycle following, so it needs a histogram
@@ -1308,7 +1296,7 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
     // Once a range lies inside one node its membership is already settled, and order within
     // a node cannot change that node's bounding box, so there is nothing left to sort
     if (wLeft / wNodeSize < wRight / wNodeSize) {
-      const auto wPivot = medianOfThree(iValues, wLeft, wRight);
+      const auto wPivot = getPivot(iValues, wLeft, wRight);
       auto wPivotLeft = wLeft - 1UL;
       auto wPivotRight = wRight + 1UL;
 
