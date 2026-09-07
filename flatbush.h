@@ -398,6 +398,10 @@ static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
 static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+static const auto kSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
+#endif
+
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
 static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
 static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
@@ -624,57 +628,6 @@ inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, co
   return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
 }
 #endif  // defined(FLATBUSH_USE_SIMD)
-
-struct KeyIndex {
-  uint32_t mKey;
-  uint32_t mIndex;
-};
-
-// LSD radix over the whole 32-bit Hilbert key. Sorting the permutation keeps every pass at
-// 8 bytes per item, and each of the 256 bucket cursors advances sequentially, so the scatter
-// costs far less than the random placement a comparison sort's permutation would need.
-inline void radixSortByKey(std::vector<KeyIndex>& ioValues) noexcept {
-  static constexpr auto kRadixBits = 8UL;
-  static constexpr auto kBuckets = 1UL << kRadixBits;
-  static constexpr auto kMask = kBuckets - 1UL;
-  static constexpr auto kKeyBits = static_cast<size_t>(std::numeric_limits<uint32_t>::digits);
-  static constexpr auto kPasses = kKeyBits / kRadixBits;
-
-  static_assert(kPasses == 4, "The histogram below is unrolled for exactly four byte lanes");
-
-  const auto wCount = ioValues.size();
-  std::vector<KeyIndex> wScratch(wCount);
-  size_t wOffsets[kPasses][kBuckets] = { { 0 } };
-
-  // One read of the array feeds every pass, and spreading the counts across four tables keeps
-  // consecutive increments off the same address
-  for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-    const auto wKey = ioValues[wIdx].mKey;
-    ++wOffsets[0][wKey & kMask];
-    ++wOffsets[1][(wKey >> kRadixBits) & kMask];
-    ++wOffsets[2][(wKey >> (2U * kRadixBits)) & kMask];
-    ++wOffsets[3][(wKey >> (3U * kRadixBits)) & kMask];
-  }
-
-  for (size_t wPass = 0; wPass < kPasses; ++wPass) {
-    size_t wRunning = 0UL;
-    for (size_t wBucket = 0; wBucket < kBuckets; ++wBucket) {
-      const auto wSize = wOffsets[wPass][wBucket];
-      wOffsets[wPass][wBucket] = wRunning;
-      wRunning += wSize;
-    }
-
-    const auto wShift = wPass * kRadixBits;
-    for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
-      wScratch[wOffsets[wPass][(ioValues[wIdx].mKey >> wShift) & kMask]++] = ioValues[wIdx];
-    }
-
-    // each pass has to consume what the previous one produced
-    std::swap(ioValues, wScratch);
-  }
-
-  // kPasses is even, so the sorted result lands back in the caller's buffer
-}
 
 template <class ArrayType>
 std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
@@ -1049,6 +1002,9 @@ class Flatbush {
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
+  uint32_t medianOfThree(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+  void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+  void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
 
   inline size_t getIndex(size_t iPosition) const noexcept {
     return mIsWideIndex ? static_cast<size_t>(mIndicesUint32[iPosition])
@@ -1187,41 +1143,25 @@ size_t Flatbush<ArrayType>::calculateDataSize(uint32_t iNumItems, uint32_t iNode
 
 template <typename ArrayType>
 void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept {
-  for (size_t wIdx = 0UL; wIdx < iItems.size(); ++wIdx) {
-    detail::updateBounds(mBounds, iItems[wIdx]);
+  for (auto&& wBox : iItems) {
+    setIndex(mPosition, mPosition);
+    mBoxes[mPosition] = std::move(wBox);
+    detail::updateBounds(mBounds, mBoxes[mPosition]);
+    ++mPosition;
   }
-  mPosition = iItems.size();
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
 
   if (wNumItems <= wNodeSize) {
-    for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
-      setIndex(wIdx, wIdx);
-      mBoxes[wIdx] = iItems[wIdx];
-    }
     mBoxes[mPosition++] = mBounds;
     return;
   }
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
-  auto wItemView = span<Box<ArrayType>>(iItems.data(), iItems.size());
-  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, wItemView);
-
-  // sort a permutation by Hilbert value rather than dragging the boxes through the sort
-  std::vector<detail::KeyIndex> wPairs(wNumItems);
-
-  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
-    wPairs[wIdx] = { wHilbertValues[wIdx], static_cast<uint32_t>(wIdx) };
-  }
-
-  std::vector<uint32_t>().swap(wHilbertValues);
-  detail::radixSortByKey(wPairs);
-
-  for (size_t wIdx = 0UL; wIdx < wNumItems; ++wIdx) {
-    setIndex(wIdx, wPairs[wIdx].mIndex);
-    mBoxes[wIdx] = iItems[wPairs[wIdx].mIndex];
-  }
+  auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
+  // sort items by their Hilbert value (for packing later)
+  sort(wHilbertValues, 0U, wNumItems - 1U);
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
@@ -1240,6 +1180,157 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
       setIndex(mPosition, wNodeIndex);
       mBoxes[mPosition++] = wNodeBox;
     }
+  }
+}
+
+template <typename ArrayType>
+uint32_t Flatbush<ArrayType>::medianOfThree(const std::vector<uint32_t>& iValues,
+                                            size_t iLeft,
+                                            size_t iRight) noexcept {
+  const auto wStart = iValues[iLeft];
+  const auto wMid = iValues[(iLeft + iRight) >> 1];
+  const auto wEnd = iValues[iRight];
+  const auto wX = std::max(wStart, wMid);
+
+  if (wEnd > wX) {
+    return wX;
+  } else if (wX == wStart) {
+    return std::max(wMid, wEnd);
+  } else if (wX == wMid) {
+    return std::max(wStart, wEnd);
+  }
+
+  return wEnd;
+}
+
+// custom quicksort that partially sorts bbox data alongside the hilbert values
+template <typename ArrayType>
+void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+  // Depth measured at ~3 entries per log2(items), and the item count is a uint32_t header
+  // field, so this covers the largest representable index; the vector grows if a pivot goes bad
+  static constexpr size_t kStackReserve = 4 * std::numeric_limits<uint32_t>::digits;
+  const auto wNodeSize = nodeSize();
+  std::vector<std::size_t> wStack;
+  wStack.reserve(kStackReserve);
+  wStack.push_back(iLeft);
+  wStack.push_back(iRight);
+
+  while (wStack.size() > 1) {
+    const auto wRight = wStack.back();
+    wStack.pop_back();
+    const auto wLeft = wStack.back();
+    wStack.pop_back();
+
+    // Once a range lies inside one node its membership is already settled, and order within
+    // a node cannot change that node's bounding box, so there is nothing left to sort
+    if (wLeft / wNodeSize < wRight / wNodeSize) {
+      const auto wPivot = medianOfThree(iValues, wLeft, wRight);
+      auto wPivotLeft = wLeft - 1UL;
+      auto wPivotRight = wRight + 1UL;
+
+#if defined(FLATBUSH_USE_SIMD)
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+      static constexpr size_t kSortBatch = sizeof(__m512i) / sizeof(int32_t);
+      const auto wPivotVec512 = _mm512_set1_epi32(static_cast<int32_t>(wPivot));
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+      static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(int32_t);
+      const auto wPivotVecS256 = _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(wPivot)),
+                                                  detail::kSignFlip256);
+#else
+      static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(int32_t);
+      const auto wPivotVecS128 = _mm_xor_si128(_mm_set1_epi32(static_cast<int32_t>(wPivot)), detail::kOffset32);
+#endif
+#endif  // defined(FLATBUSH_USE_SIMD)
+
+      while (true) {
+#if defined(FLATBUSH_USE_SIMD)
+        // SIMD-accelerated left scan: skip batches where all values < pivot
+        for (auto wPos = wPivotLeft + 1; wPos + kSortBatch <= wPivotRight; wPos += kSortBatch, wPivotLeft = wPos - 1) {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+          const auto wVals = _mm512_loadu_si512(&iValues[wPos]);
+          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_NLT);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
+          const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
+                                 _mm256_cmpgt_epi32(wPivotVecS256, _mm256_xor_si256(wVals, detail::kSignFlip256))))) &
+                             0xFFU;
+#else
+          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
+          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
+                                 _mm_cmpgt_epi32(wPivotVecS128, _mm_xor_si128(wVals, detail::kOffset32))))) &
+                             0xFU;
+#endif
+          if (wMask) {
+#ifdef _MSC_VER
+            unsigned long wBitIdx;
+            _BitScanForward(&wBitIdx, wMask);
+            wPivotLeft = wPos + wBitIdx - 1;
+#else
+            wPivotLeft = wPos + static_cast<size_t>(__builtin_ctz(wMask)) - 1;
+#endif
+            break;
+          }
+        }
+#endif  // defined(FLATBUSH_USE_SIMD)
+        while (iValues[++wPivotLeft] < wPivot);
+
+#if defined(FLATBUSH_USE_SIMD)
+        // SIMD-accelerated right scan: skip batches where all values > pivot
+        for (auto wPos = wPivotRight - kSortBatch; wPivotRight > wPivotLeft + kSortBatch;
+             wPos -= kSortBatch, wPivotRight -= kSortBatch) {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+          const auto wVals = _mm512_loadu_si512(detail::bit_cast<const __m512i*>(&iValues[wPos]));
+          const auto wMask = _mm512_cmp_epu32_mask(wVals, wPivotVec512, _MM_CMPINT_LE);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+          const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
+          const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
+                                 _mm256_cmpgt_epi32(_mm256_xor_si256(wVals, detail::kSignFlip256), wPivotVecS256)))) &
+                             0xFFU;
+#else
+          const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
+          const auto wMask = ~static_cast<unsigned>(_mm_movemask_ps(_mm_castsi128_ps(
+                                 _mm_cmpgt_epi32(_mm_xor_si128(wVals, detail::kOffset32), wPivotVecS128)))) &
+                             0xFU;
+#endif
+          if (wMask) {
+#ifdef _MSC_VER
+            unsigned long wBitIdx;
+            _BitScanReverse(&wBitIdx, wMask);
+            wPivotRight = wPos + wBitIdx + 1;
+#else
+            wPivotRight = wPos + static_cast<size_t>(31 - __builtin_clz(wMask)) + 1;
+#endif
+            break;
+          }
+        }
+#endif  // defined(FLATBUSH_USE_SIMD)
+        while (iValues[--wPivotRight] > wPivot);
+
+        if (wPivotLeft >= wPivotRight) {
+          break;
+        }
+
+        swap(iValues, wPivotLeft, wPivotRight);
+      }
+
+      wStack.push_back(wLeft);
+      wStack.push_back(wPivotRight);
+      wStack.push_back(wPivotRight + 1UL);
+      wStack.push_back(wRight);
+    }
+  }
+}
+
+// swap two values and two corresponding boxes
+template <typename ArrayType>
+void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+  std::swap(iValues[iLeft], iValues[iRight]);
+  std::swap(mBoxes[iLeft], mBoxes[iRight]);
+
+  if (mIsWideIndex) {
+    std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
+  } else {
+    std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
   }
 }
 
