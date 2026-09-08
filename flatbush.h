@@ -1002,7 +1002,6 @@ class Flatbush {
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
-  uint32_t getPivot(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
   void sort(std::vector<uint32_t>& iValues,
             size_t iLeft,
             size_t iRight,
@@ -1190,14 +1189,6 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
   }
 }
 
-template <typename ArrayType>
-uint32_t Flatbush<ArrayType>::getPivot(const std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
-  const auto wStart = iValues[iLeft];
-  const auto wMid = iValues[(iLeft + iRight) >> 1];
-  const auto wEnd = iValues[iRight];
-  return ((wStart > wMid) != (wStart > wEnd)) ? wStart : ((wMid < wStart) != (wMid < wEnd)) ? wMid : wEnd;
-}
-
 // MSD radix that permutes the boxes in place by cycle following, so it needs a histogram
 // but no scratch copy. The node granularity cutoff usually stops it after two passes: one
 // byte splits a million items 256 ways, and a second lands every bucket inside a node.
@@ -1296,7 +1287,12 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
     // Once a range lies inside one node its membership is already settled, and order within
     // a node cannot change that node's bounding box, so there is nothing left to sort
     if (wLeft / wNodeSize < wRight / wNodeSize) {
-      const auto wPivot = getPivot(iValues, wLeft, wRight);
+      const auto wStart = iValues[wLeft];
+      const auto wMid = iValues[(wLeft + wRight) >> 1];
+      const auto wEnd = iValues[wRight];
+      const auto wPivot = ((wStart > wMid) != (wStart > wEnd)) ? wStart
+                          : ((wMid < wStart) != (wMid < wEnd)) ? wMid
+                                                               : wEnd;
       auto wPivotLeft = wLeft - 1UL;
       auto wPivotRight = wRight + 1UL;
 
