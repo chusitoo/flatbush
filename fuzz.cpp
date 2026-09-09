@@ -87,7 +87,7 @@ void FuzzFromTemplate(const std::string& data) {
   if (iSize < flatbush::gHeaderByteSize) return;
   if (iData[0] != flatbush::gValidityFlag) return;
   if ((iData[1] >> 4) != flatbush::gVersion) return;
-  if ((iData[1] & 0x0f) != flatbush::detail::arrayTypeIndex<ArrayType>()) return;
+  if (!flatbush::detail::isArrayTypeCompatible<ArrayType>(iData[1] & 0x0fU)) return;
 
   // Use memcpy to safely read unaligned data
   uint16_t wNodeSize;

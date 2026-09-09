@@ -316,6 +316,21 @@ TEST(FlatbushTest, ReconstructIndexFromJSArrayBuffer) {
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), gFlatbush.begin()));
 }
 
+TEST(FlatbushTest, ReconstructIndexFromJSUint8ClampedArray) {
+  flatbush::FlatbushBuilder<uint8_t> wBuilder(2);
+  wBuilder.add({ 10, 20, 10, 20 });
+  wBuilder.add({ 30, 40, 30, 40 });
+  const auto wIndex = wBuilder.finish();
+  auto wData = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+
+  EXPECT_EQ(wData[1] & 0x0fU, 1U);
+  wData[1] = static_cast<uint8_t>((flatbush::gVersion << 4U) | 2U);
+
+  const auto wClampedIndex = flatbush::FlatbushBuilder<uint8_t>::from(wData.data(), wData.size());
+  EXPECT_EQ(wClampedIndex.search({ 0, 0, 255, 255 }), wIndex.search({ 0, 0, 255, 255 }));
+  EXPECT_THROW({ flatbush::FlatbushBuilder<int8_t>::from(wData.data(), wData.size()); }, std::invalid_argument);
+}
+
 TEST(FlatbushTest, FromNull) {
   EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(nullptr, flatbush::gHeaderByteSize); }, std::invalid_argument);
 }

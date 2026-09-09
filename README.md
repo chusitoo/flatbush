@@ -95,12 +95,15 @@ once per visited node box, so it bypasses the SIMD path used by the built-in met
 auto buffer = index.data();
 
 // then pass the underlying data, specifying the template type
-// NOTE: an exception will be thrown if template != encoded type
+// NOTE: an exception will be thrown if the template is incompatible with the encoded type
 auto other = FlatbushBuilder<double>::from(buffer.data(), buffer.size());
 // or, move the source vector into the builder
 auto vector = std::vector<uint8_t>{buffer.begin(), buffer.end()};
 auto other = FlatbushBuilder<double>::from(std::move(vector));
 ```
+
+`FlatbushBuilder<uint8_t>` also accepts indexes encoded by the JavaScript library with
+`Uint8ClampedArray`, since clamping affects writes but not the serialized byte layout.
 
 ### Reconstruct without copying
 

@@ -292,6 +292,12 @@ arrayTypeIndex() {
   return gInvalidArrayType;
 }
 
+template <typename ArrayType>
+constexpr bool isArrayTypeCompatible(size_t iIndex) {
+  // Uint8ClampedArray only changes JS writes; its serialized bytes have uint8_t layout
+  return iIndex == arrayTypeIndex<ArrayType>() || (std::is_same<ArrayType, uint8_t>::value && iIndex == 2UL);
+}
+
 inline const char* arrayTypeName(size_t iIndex) {
   static constexpr auto kUnknownType = "unknown";
   static constexpr auto kArrayTypeNames = std::array<const char*, 9> { "int8_t",   "uint8_t",  "uint8_t",
@@ -902,7 +908,7 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
 
   constexpr auto wExpectedType = detail::arrayTypeIndex<ArrayType>();
   const uint8_t wEncodedType = iData[1] & 0x0fU;
-  if (wExpectedType != wEncodedType) {
+  if (!detail::isArrayTypeCompatible<ArrayType>(wEncodedType)) {
     throw std::invalid_argument(std::string("Expected type is ")
                                     .append(detail::arrayTypeName(wEncodedType))
                                     .append(", but got template type ")
