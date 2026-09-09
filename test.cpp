@@ -610,6 +610,33 @@ TEST(FlatbushTest, QuickSortWorksOnDuplicates) {
   EXPECT_EQ(wIds2.size(), 1);
 }
 
+TEST(FlatbushTest, DegenerateBoundsMapToZeroHilbertCoordinates) {
+  static constexpr auto kNumItems = 17UL;
+  const auto wExpected = flatbush::detail::HilbertXYToIndex(0U, 0U);
+
+  auto wDoubleBoxes = std::vector<flatbush::Box<double>>(kNumItems, flatbush::Box<double> { 42.0, 42.0, 42.0, 42.0 });
+  const auto wDoubleValues = flatbush::detail::computeHilbertValues(kNumItems,
+                                                                    wDoubleBoxes.front(),
+                                                                    flatbush::span<flatbush::Box<double>> {
+                                                                        wDoubleBoxes.data(), wDoubleBoxes.size() });
+
+  for (const auto wValue : wDoubleValues) {
+    EXPECT_EQ(wValue, wExpected);
+  }
+
+  auto wIntBoxes = std::vector<flatbush::Box<int32_t>>(kNumItems,
+                                                       flatbush::Box<int32_t> {
+                                                           1500000000, 1500000000, 1500000000, 1500000000 });
+  const auto wIntValues = flatbush::detail::computeHilbertValues(kNumItems,
+                                                                 wIntBoxes.front(),
+                                                                 flatbush::span<flatbush::Box<int32_t>> {
+                                                                     wIntBoxes.data(), wIntBoxes.size() });
+
+  for (const auto wValue : wIntValues) {
+    EXPECT_EQ(wValue, wExpected);
+  }
+}
+
 TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();

@@ -635,10 +635,12 @@ using HilbertValues = std::vector<HilbertValueType>;
 template <class ArrayType>
 HilbertValues computeHilbertValues(size_t iNumItems, const Box<ArrayType>& iBounds, span<Box<ArrayType>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5f * std::numeric_limits<uint16_t>::max();
-  const auto wHilbertWidth = kMaxHilbertRatio / static_cast<float>(iBounds.mMaxX - iBounds.mMinX);
-  const auto wHilbertHeight = kMaxHilbertRatio / static_cast<float>(iBounds.mMaxY - iBounds.mMinY);
-  const auto wDoubleMinX = static_cast<float>(iBounds.mMinX + iBounds.mMinX);
-  const auto wDoubleMinY = static_cast<float>(iBounds.mMinY + iBounds.mMinY);
+  const auto wWidth = static_cast<float>(static_cast<double>(iBounds.mMaxX) - static_cast<double>(iBounds.mMinX));
+  const auto wHeight = static_cast<float>(static_cast<double>(iBounds.mMaxY) - static_cast<double>(iBounds.mMinY));
+  const auto wHilbertWidth = wWidth == 0.0f ? 0.0f : kMaxHilbertRatio / wWidth;
+  const auto wHilbertHeight = wHeight == 0.0f ? 0.0f : kMaxHilbertRatio / wHeight;
+  const auto wDoubleMinX = static_cast<float>(iBounds.mMinX) + static_cast<float>(iBounds.mMinX);
+  const auto wDoubleMinY = static_cast<float>(iBounds.mMinY) + static_cast<float>(iBounds.mMinY);
   auto wHilbertValues = HilbertValues(iNumItems);
   auto wIdx = 0UL;
 
@@ -691,8 +693,10 @@ HilbertValues computeHilbertValues(size_t iNumItems, const Box<ArrayType>& iBoun
 template <>
 HilbertValues computeHilbertValues<double>(size_t iNumItems, const Box<double>& iBounds, span<Box<double>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5 * std::numeric_limits<uint16_t>::max();
-  const auto wHilbertWidth = kMaxHilbertRatio / (iBounds.mMaxX - iBounds.mMinX);
-  const auto wHilbertHeight = kMaxHilbertRatio / (iBounds.mMaxY - iBounds.mMinY);
+  const auto wWidth = iBounds.mMaxX - iBounds.mMinX;
+  const auto wHeight = iBounds.mMaxY - iBounds.mMinY;
+  const auto wHilbertWidth = wWidth == 0.0 ? 0.0 : kMaxHilbertRatio / wWidth;
+  const auto wHilbertHeight = wHeight == 0.0 ? 0.0 : kMaxHilbertRatio / wHeight;
   const auto wDoubleMinX = iBounds.mMinX + iBounds.mMinX;
   const auto wDoubleMinY = iBounds.mMinY + iBounds.mMinY;
   auto wHilbertValues = HilbertValues(iNumItems);
