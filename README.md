@@ -36,6 +36,9 @@ for (const auto& box : boxes) {
     builder.add(box);
 }
 
+// points are indexed as zero-area boxes
+builder.add(Point<double>{10, 20});
+
 // perform the indexing
 auto index = builder.finish();
 ```

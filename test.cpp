@@ -298,6 +298,17 @@ TEST(FlatbushTest, ReturnIndexOfNewlyAddedRectangle) {
   }
 }
 
+TEST(FlatbushTest, AddPointAsZeroAreaBox) {
+  flatbush::FlatbushBuilder<double> wBuilder(1);
+  const flatbush::Point<double> wPoint { 10.0, 20.0 };
+
+  EXPECT_EQ(wBuilder.add(wPoint), 0UL);
+  const auto wIndex = wBuilder.finish();
+
+  EXPECT_EQ(wIndex.search({ 10.0, 20.0, 10.0, 20.0 }), std::vector<size_t> { 0UL });
+  EXPECT_TRUE(wIndex.search({ 10.0, 21.0, 10.0, 21.0 }).empty());
+}
+
 TEST(FlatbushTest, FinishConsumesBuilderItems) {
   flatbush::FlatbushBuilder<int32_t> wBuilder(1);
   EXPECT_EQ(wBuilder.add({ 1, 1, 1, 1 }), 0UL);

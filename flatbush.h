@@ -840,6 +840,10 @@ class FlatbushBuilder {
     return (mData.size() - gHeaderByteSize) / kBoxByteSize - 1UL;
   }
 
+  inline size_t add(const Point<ArrayType>& iPoint) noexcept {
+    return add({ iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY });
+  }
+
   Flatbush<ArrayType> finish();
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
   static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
