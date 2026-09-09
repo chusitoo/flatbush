@@ -363,6 +363,12 @@ TEST(FlatbushTest, FromInvalidNumItems) {
       std::invalid_argument);
 }
 
+TEST(FlatbushTest, FromZeroNumItems) {
+  const auto wData = std::vector<uint8_t> { 251, 56, 16, 0, 0, 0, 0, 0 };
+
+  EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size()); }, std::invalid_argument);
+}
+
 TEST(FlatbushTest, DataReportsPackedSizeNotCapacity) {
   auto wIndex = createIndex();
   auto wVector = std::vector<uint8_t> {};

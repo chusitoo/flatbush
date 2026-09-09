@@ -96,6 +96,7 @@ void FuzzFromTemplate(const std::string& data) {
 
   uint32_t wNumItems;
   std::memcpy(&wNumItems, &iData[4], sizeof(uint32_t));
+  if (wNumItems == 0U) return;
 
   const auto& wLevelBounds = calculateNumNodesPerLevel(wNumItems, wNodeSize);
   const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();

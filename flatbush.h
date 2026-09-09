@@ -915,6 +915,10 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   }
 
   const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
+  if (wNumItems == 0U) {
+    throw std::invalid_argument("Num items cannot be 0.");
+  }
+
   const auto wSize = Flatbush<ArrayType>::calculateDataSize(wNumItems, wNodeSize);
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
