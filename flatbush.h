@@ -629,16 +629,17 @@ inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, co
 }
 #endif  // defined(FLATBUSH_USE_SIMD)
 
+using HilbertValueType = uint32_t;
+using HilbertValues = std::vector<HilbertValueType>;
+
 template <class ArrayType>
-std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
-                                           const Box<ArrayType>& iBounds,
-                                           span<Box<ArrayType>> iBoxes) {
+HilbertValues computeHilbertValues(size_t iNumItems, const Box<ArrayType>& iBounds, span<Box<ArrayType>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5f * std::numeric_limits<uint16_t>::max();
   const auto wHilbertWidth = kMaxHilbertRatio / static_cast<float>(iBounds.mMaxX - iBounds.mMinX);
   const auto wHilbertHeight = kMaxHilbertRatio / static_cast<float>(iBounds.mMaxY - iBounds.mMinY);
   const auto wDoubleMinX = static_cast<float>(iBounds.mMinX + iBounds.mMinX);
   const auto wDoubleMinY = static_cast<float>(iBounds.mMinY + iBounds.mMinY);
-  auto wHilbertValues = std::vector<uint32_t>(iNumItems);
+  auto wHilbertValues = HilbertValues(iNumItems);
   auto wIdx = 0UL;
 
 #if defined(FLATBUSH_USE_SIMD)
@@ -688,15 +689,13 @@ std::vector<uint32_t> computeHilbertValues(size_t iNumItems,
 }
 
 template <>
-std::vector<uint32_t> computeHilbertValues<double>(size_t iNumItems,
-                                                   const Box<double>& iBounds,
-                                                   span<Box<double>> iBoxes) {
+HilbertValues computeHilbertValues<double>(size_t iNumItems, const Box<double>& iBounds, span<Box<double>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5 * std::numeric_limits<uint16_t>::max();
   const auto wHilbertWidth = kMaxHilbertRatio / (iBounds.mMaxX - iBounds.mMinX);
   const auto wHilbertHeight = kMaxHilbertRatio / (iBounds.mMaxY - iBounds.mMinY);
   const auto wDoubleMinX = iBounds.mMinX + iBounds.mMinX;
   const auto wDoubleMinY = iBounds.mMinY + iBounds.mMinY;
-  auto wHilbertValues = std::vector<uint32_t>(iNumItems);
+  auto wHilbertValues = HilbertValues(iNumItems);
   auto wIdx = 0UL;
 
 #if defined(FLATBUSH_USE_SIMD)
@@ -1002,13 +1001,13 @@ class Flatbush {
 
   void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
   void init(bool iIsPacked) noexcept;
-  void sort(std::vector<uint32_t>& iValues,
+  void sort(detail::HilbertValues& iValues,
             size_t iLeft,
             size_t iRight,
             uint32_t iShift,
             std::vector<size_t>& ioStack) noexcept;
-  void sort(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight, std::vector<size_t>& ioStack) noexcept;
-  void swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept;
+  void sort(detail::HilbertValues& iValues, size_t iLeft, size_t iRight, std::vector<size_t>& ioStack) noexcept;
+  void swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept;
 
   inline size_t getIndex(size_t iPosition) const noexcept {
     return mIsWideIndex ? static_cast<size_t>(mIndicesUint32[iPosition])
@@ -1167,7 +1166,7 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
   // sort items by their Hilbert value (for packing later); one buffer serves every range the
   // radix hands down to the comparison sort
   std::vector<size_t> wSortStack;
-  sort(wHilbertValues, 0U, wNumItems - 1U, 32U, wSortStack);
+  sort(wHilbertValues, 0U, wNumItems - 1U, std::numeric_limits<detail::HilbertValueType>::digits, wSortStack);
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];
@@ -1193,7 +1192,7 @@ void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept 
 // but no scratch copy. The node granularity cutoff usually stops it after two passes: one
 // byte splits a million items 256 ways, and a second lands every bucket inside a node.
 template <typename ArrayType>
-void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
+void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
                                size_t iLeft,
                                size_t iRight,
                                uint32_t iShift,
@@ -1202,7 +1201,7 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
   static constexpr auto kRadixCutoff = 512UL;
   static constexpr auto kRadixBits = 8U;
   static constexpr auto kDigits = 1UL << kRadixBits;
-  static constexpr auto kDigitMask = static_cast<uint32_t>(kDigits - 1UL);
+  static constexpr auto kDigitMask = static_cast<detail::HilbertValueType>(kDigits - 1UL);
   const auto wNodeSize = nodeSize();
   const auto wShift = iShift - kRadixBits;
 
@@ -1264,13 +1263,12 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
 
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
-void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
+void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
                                size_t iLeft,
                                size_t iRight,
                                std::vector<size_t>& ioStack) noexcept {
-  // Depth measured at ~3 entries per log2(items), and the item count is a uint32_t header
-  // field, so this covers the largest representable index; the vector grows if a pivot goes bad
-  static constexpr auto kStackReserve = 4UL * std::numeric_limits<uint32_t>::digits;
+  // Scale the initial stack capacity with the sortable key width; the vector grows if a pivot goes bad
+  static constexpr auto kStackReserve = 4UL * std::numeric_limits<detail::HilbertValueType>::digits;
   const auto wNodeSize = nodeSize();
   auto& wStack = ioStack;
   wStack.clear();
@@ -1298,14 +1296,14 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
 
 #if defined(FLATBUSH_USE_SIMD)
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-      static constexpr size_t kSortBatch = sizeof(__m512i) / sizeof(int32_t);
+      static constexpr size_t kSortBatch = sizeof(__m512i) / sizeof(detail::HilbertValueType);
       const auto wPivotVec512 = _mm512_set1_epi32(static_cast<int32_t>(wPivot));
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-      static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(int32_t);
+      static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(detail::HilbertValueType);
       const auto wPivotVecS256 = _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(wPivot)),
                                                   detail::kSignFlip256);
 #else
-      static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(int32_t);
+      static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(detail::HilbertValueType);
       const auto wPivotVecS128 = _mm_xor_si128(_mm_set1_epi32(static_cast<int32_t>(wPivot)), detail::kOffset32);
 #endif
 #endif  // defined(FLATBUSH_USE_SIMD)
@@ -1391,7 +1389,7 @@ void Flatbush<ArrayType>::sort(std::vector<uint32_t>& iValues,
 
 // swap two values and two corresponding boxes
 template <typename ArrayType>
-void Flatbush<ArrayType>::swap(std::vector<uint32_t>& iValues, size_t iLeft, size_t iRight) noexcept {
+void Flatbush<ArrayType>::swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept {
   std::swap(iValues[iLeft], iValues[iRight]);
   std::swap(mBoxes[iLeft], mBoxes[iRight]);
 
