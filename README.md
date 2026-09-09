@@ -40,6 +40,9 @@ for (const auto& box : boxes) {
 auto index = builder.finish();
 ```
 
+`finish()` transfers the accumulated boxes into the index and resets the builder, which can
+then be filled again to build another independent index.
+
 ### Searching a bounding box
 
 ```cpp

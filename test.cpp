@@ -298,6 +298,31 @@ TEST(FlatbushTest, ReturnIndexOfNewlyAddedRectangle) {
   }
 }
 
+TEST(FlatbushTest, FinishConsumesBuilderItems) {
+  flatbush::FlatbushBuilder<int32_t> wBuilder(1);
+  EXPECT_EQ(wBuilder.add({ 1, 1, 1, 1 }), 0UL);
+  const auto wFirst = wBuilder.finish();
+
+  EXPECT_EQ(wBuilder.add({ 2, 2, 2, 2 }), 0UL);
+  const auto wSecond = wBuilder.finish();
+
+  EXPECT_EQ(wFirst.numItems(), 1UL);
+  EXPECT_EQ(wSecond.numItems(), 1UL);
+  EXPECT_EQ(wFirst.search({ 1, 1, 1, 1 }), std::vector<size_t> { 0UL });
+  EXPECT_EQ(wSecond.search({ 2, 2, 2, 2 }), std::vector<size_t> { 0UL });
+}
+
+TEST(FlatbushTest, ClearDiscardsBuilderItems) {
+  flatbush::FlatbushBuilder<int32_t> wBuilder(2);
+  wBuilder.add({ 1, 1, 1, 1 });
+  wBuilder.clear();
+  EXPECT_EQ(wBuilder.add({ 2, 2, 2, 2 }), 0UL);
+
+  const auto wIndex = wBuilder.finish();
+  EXPECT_TRUE(wIndex.search({ 1, 1, 1, 1 }).empty());
+  EXPECT_EQ(wIndex.search({ 2, 2, 2, 2 }), std::vector<size_t> { 0UL });
+}
+
 TEST(FlatbushTest, SearchQueryFilterFunc) {
   auto wIndex = createIndex();
   auto wIds = wIndex.search({ 40, 40, 60, 60 }, [](size_t iValue, const flatbush::Box<double>&) {
@@ -314,6 +339,14 @@ TEST(FlatbushTest, ReconstructIndexFromJSArrayBuffer) {
   EXPECT_EQ(wIndexBuffer.size(), gFlatbush.size());
 
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), gFlatbush.begin()));
+}
+
+TEST(FlatbushTest, BuildMatchesJSArrayBuffer) {
+  const auto wIndex = createSmallIndex(14, 16);
+  auto wData = wIndex.data();
+
+  EXPECT_EQ(wData.size(), gFlatbush.size());
+  EXPECT_TRUE(std::equal(wData.begin(), wData.end(), gFlatbush.begin()));
 }
 
 TEST(FlatbushTest, ReconstructIndexFromJSUint8ClampedArray) {

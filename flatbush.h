@@ -797,31 +797,47 @@ HilbertValues computeHilbertValues<double>(size_t iNumItems, const Box<double>& 
 
   return wHilbertValues;
 }
+
+template <typename ArrayType>
+size_t calculateDataSize(size_t iNumItems, size_t iNodeSize) noexcept {
+  size_t wCount = iNumItems;
+  size_t wNumNodes = iNumItems;
+
+  do {
+    wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
+    wNumNodes += wCount;
+  } while (wCount > 1UL);
+
+  const size_t wIndicesByteSize = wNumNodes * ((wNumNodes > gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
+  const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
+
+  return gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
+}
 }  // namespace detail
 
 template <class ArrayType>
 class Flatbush;
 template <class ArrayType>
 class FlatbushBuilder {
+  static constexpr auto kBoxByteSize = sizeof(Box<ArrayType>);
+
  public:
-  explicit FlatbushBuilder(size_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize) : mNodeSize(iNodeSize) {
+  explicit FlatbushBuilder(size_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
+      : mNodeSize(std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize)), mData(gHeaderByteSize, 0U) {
     static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
                   "Unexpected typed array class. Expecting non 64-bit integral "
                   "or floating point.");
 
-    mItems.reserve(iNumItems);
+    mData.reserve(detail::calculateDataSize<ArrayType>(iNumItems, mNodeSize));
   }
 
-  inline void clear() noexcept { mItems.clear(); }
+  inline void clear() { mData.assign(gHeaderByteSize, 0U); }
 
   inline size_t add(const Box<ArrayType>& iBox) noexcept {
-    mItems.push_back(iBox);
-    return mItems.size() - 1UL;
-  }
-
-  inline size_t add(Box<ArrayType>&& iBox) noexcept {
-    mItems.push_back(std::move(iBox));
-    return mItems.size() - 1UL;
+    if (mData.size() < gHeaderByteSize) mData.resize(gHeaderByteSize, 0U);
+    const auto wBytes = detail::bit_cast<const uint8_t*>(&iBox);
+    mData.insert(mData.end(), wBytes, wBytes + kBoxByteSize);
+    return (mData.size() - gHeaderByteSize) / kBoxByteSize - 1UL;
   }
 
   Flatbush<ArrayType> finish();
@@ -833,18 +849,21 @@ class FlatbushBuilder {
 
  private:
   static void validate(const uint8_t* iData, size_t iSize);
-  std::uint16_t mNodeSize;
-  std::vector<Box<ArrayType>> mItems;
+  uint16_t mNodeSize;
+  std::vector<uint8_t> mData;
 };
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() {
-  if (mItems.empty()) {
+  if (mData.size() <= gHeaderByteSize) {
     throw std::invalid_argument("No items have been added. Nothing to build.");
   }
 
-  Flatbush<ArrayType> wIndex(uint32_t(mItems.size()), mNodeSize);
-  wIndex.create(std::move(mItems));
+  const auto wNumItems = (mData.size() - gHeaderByteSize) / kBoxByteSize;
+  mData.resize(detail::calculateDataSize<ArrayType>(wNumItems, mNodeSize), 0U);
+  Flatbush<ArrayType> wIndex(std::move(mData), static_cast<uint32_t>(wNumItems), mNodeSize);
+  clear();
+  wIndex.pack();
 
   return wIndex;
 }
@@ -925,7 +944,7 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
     throw std::invalid_argument("Num items cannot be 0.");
   }
 
-  const auto wSize = Flatbush<ArrayType>::calculateDataSize(wNumItems, wNodeSize);
+  const auto wSize = detail::calculateDataSize<ArrayType>(wNumItems, wNodeSize);
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
                                 ", but got buffer size " + std::to_string(iSize) + ".");
@@ -1007,13 +1026,11 @@ class Flatbush {
            std::isnormal(iThreshold) && wDistance <= iThreshold;
   }
 
-  Flatbush(uint32_t iNumItems, uint16_t iNodeSize);
+  Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize);
   explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
   explicit Flatbush(span<const uint8_t> iBytes) noexcept;
 
-  static size_t calculateDataSize(uint32_t iNumItems, uint32_t iNodeSize) noexcept;
-
-  void create(std::vector<Box<ArrayType>>&& iItems) noexcept;
+  void pack() noexcept;
   void init(bool iIsPacked) noexcept;
   void sort(detail::HilbertValues& iValues,
             size_t iLeft,
@@ -1083,10 +1100,8 @@ class Flatbush {
 };
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(uint32_t iNumItems, uint16_t iNodeSize) {
-  iNodeSize = std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize);
-
-  mData.resize(calculateDataSize(iNumItems, iNodeSize), 0U);
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize)
+    : mData(std::move(iData)) {
   mData[0] = gValidityFlag;
   mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
   *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
@@ -1143,31 +1158,15 @@ void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
 }
 
 template <typename ArrayType>
-size_t Flatbush<ArrayType>::calculateDataSize(uint32_t iNumItems, uint32_t iNodeSize) noexcept {
-  size_t wCount = iNumItems;
-  size_t wNumNodes = iNumItems;
+void Flatbush<ArrayType>::pack() noexcept {
+  const auto wNumItems = numItems();
 
-  do {
-    wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
-    wNumNodes += wCount;
-  } while (wCount > 1UL);
-
-  const size_t wIndicesByteSize = wNumNodes * ((wNumNodes > gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
-  const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
-
-  return gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
-}
-
-template <typename ArrayType>
-void Flatbush<ArrayType>::create(std::vector<Box<ArrayType>>&& iItems) noexcept {
-  for (auto&& wBox : iItems) {
+  while (mPosition < wNumItems) {
     setIndex(mPosition, mPosition);
-    mBoxes[mPosition] = std::move(wBox);
     detail::updateBounds(mBounds, mBoxes[mPosition]);
     ++mPosition;
   }
 
-  const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
 
   if (wNumItems <= wNodeSize) {

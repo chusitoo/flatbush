@@ -74,7 +74,7 @@ struct BenchmarkData {
     }
 
     // Build the index
-    flatbush::FlatbushBuilder<double> wBuilder(wNodeSize);
+    flatbush::FlatbushBuilder<double> wBuilder(wNumItems, static_cast<uint16_t>(wNodeSize));
     for (size_t wIdx = 0; wIdx < mCoords.size(); wIdx += 4) {
       wBuilder.add({ mCoords[wIdx], mCoords[wIdx + 1], mCoords[wIdx + 2], mCoords[wIdx + 3] });
     }
@@ -98,7 +98,7 @@ static void BM_Index1M(benchmark::State& state) {
   }
 
   for (auto _ : state) {
-    flatbush::FlatbushBuilder<double> wBuilder(kNodeSize);
+    flatbush::FlatbushBuilder<double> wBuilder(kNumItems, kNodeSize);
     for (size_t wIdx = 0; wIdx < wCoords.size(); wIdx += 4) {
       wBuilder.add({ wCoords[wIdx], wCoords[wIdx + 1], wCoords[wIdx + 2], wCoords[wIdx + 3] });
     }
