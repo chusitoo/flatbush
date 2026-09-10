@@ -28,7 +28,7 @@ using namespace flatbush;
 
 // initialize the builder
 FlatbushBuilder<double> builder;
-// ... or preallocate buffer for 1000 items 
+// ... or reserve storage for 1000 items
 FlatbushBuilder<double> builder(1000);
 
 // fill it with 1000 rectangles
@@ -48,6 +48,11 @@ const auto& bounds = index.bounds();
 
 `finish()` transfers the accumulated boxes into the index and resets the builder, which can
 then be filled again to build another independent index.
+
+The constructor count is a reservation rather than a required item count. If it substantially
+overestimates the number added, call `builder.trim()` after the final `add()` and before `finish()`
+to release excess reserved storage. Trimming reallocates and copies the accumulated boxes, so
+`finish()` does not perform it automatically.
 
 ### Searching a bounding box
 

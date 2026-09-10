@@ -865,6 +865,9 @@ class FlatbushBuilder {
 
   inline size_t add(const Point<ArrayType>& iPoint) { return add({ iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY }); }
 
+  // Reallocate an oversized buffer for the packed size of the items currently added.
+  // Call after the final add; finish does not trim reserved capacity automatically.
+  void trim();
   FLATBUSH_NODISCARD Flatbush<ArrayType> finish();
   FLATBUSH_NODISCARD static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
   FLATBUSH_NODISCARD static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
@@ -877,6 +880,22 @@ class FlatbushBuilder {
   uint16_t mNodeSize;
   std::vector<uint8_t> mData;
 };
+
+template <typename ArrayType>
+void FlatbushBuilder<ArrayType>::trim() {
+  if (mData.size() < gHeaderByteSize) mData.resize(gHeaderByteSize, 0U);
+  const auto wNumItems = (mData.size() - gHeaderByteSize) / kBoxByteSize;
+  size_t wDataSize;
+  if (!detail::tryCalculateDataSize<ArrayType>(wNumItems, mNodeSize, wDataSize)) {
+    throw std::length_error("Built index exceeds the serialized format or platform limits.");
+  }
+  if (mData.capacity() <= wDataSize) return;
+
+  std::vector<uint8_t> wData;
+  wData.reserve(wDataSize);
+  wData.insert(wData.end(), mData.begin(), mData.end());
+  mData.swap(wData);
+}
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() {

@@ -508,6 +508,33 @@ TEST(FlatbushTest, ReturnIndexOfNewlyAddedRectangle) {
   }
 }
 
+TEST(FlatbushTest, TrimOverallocatedBuilder) {
+  constexpr uint32_t wNumAdded = 50;
+  flatbush::FlatbushBuilder<double> wBuilder(gData.size() / 4);
+
+  for (size_t wIdx = 0; wIdx < static_cast<size_t>(wNumAdded) * 4; wIdx += 4) {
+    wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
+  }
+
+  wBuilder.trim();
+  auto wIndex = wBuilder.finish();
+  auto wExpected = createSmallIndex(wNumAdded, flatbush::gDefaultNodeSize);
+
+  EXPECT_EQ(wIndex.numItems(), wNumAdded);
+  EXPECT_EQ(wIndex.data().size(), wExpected.data().size());
+  EXPECT_TRUE(std::equal(wIndex.data().begin(), wIndex.data().end(), wExpected.data().begin()));
+}
+
+TEST(FlatbushTest, TrimMovedFromBuilder) {
+  flatbush::FlatbushBuilder<int32_t> wBuilder(100);
+  wBuilder.add({ 1, 1, 1, 1 });
+  auto wMoved = std::move(wBuilder);
+
+  EXPECT_NO_THROW(wBuilder.trim());
+  EXPECT_THROW(wBuilder.finish(), std::invalid_argument);
+  EXPECT_EQ(wMoved.finish().numItems(), 1UL);
+}
+
 TEST(FlatbushTest, AddPointAsZeroAreaBox) {
   flatbush::FlatbushBuilder<double> wBuilder(1);
   const flatbush::Point<double> wPoint { 10.0, 20.0 };
