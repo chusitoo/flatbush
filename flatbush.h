@@ -803,19 +803,29 @@ inline HilbertValues computeHilbertValues<double>(size_t iNumItems,
 }
 
 template <typename ArrayType>
-size_t calculateDataSize(size_t iNumItems, size_t iNodeSize) noexcept {
-  size_t wCount = iNumItems;
-  size_t wNumNodes = iNumItems;
+bool tryCalculateDataSize(size_t iNumItems, uint16_t iNodeSize, size_t& oDataSize) noexcept {
+  static constexpr auto kMaxChildPosition = std::numeric_limits<uint32_t>::max() / 4UL;
+  if (iNumItems > std::numeric_limits<uint32_t>::max()) return false;
+
+  uint64_t wLevelStart = 0U;
+  uint64_t wCount = iNumItems;
+  uint64_t wNumNodes = iNumItems;
 
   do {
     wCount = (wCount + iNodeSize - 1UL) / iNodeSize;
+    if (wCount == 1U && wLevelStart > kMaxChildPosition) return false;
+    wLevelStart = wNumNodes;
     wNumNodes += wCount;
-  } while (wCount > 1UL);
+  } while (wCount > 1U);
 
-  const size_t wIndicesByteSize = wNumNodes * ((wNumNodes > gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
-  const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
+  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t);
+  const auto wDataSize = static_cast<uint64_t>(gHeaderByteSize) + wNumNodes * (sizeof(Box<ArrayType>) + wIndexByteSize);
+  if (wDataSize > std::numeric_limits<size_t>::max()) {
+    return false;
+  }
 
-  return gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
+  oDataSize = static_cast<size_t>(wDataSize);
+  return true;
 }
 }  // namespace detail
 
@@ -832,7 +842,12 @@ class FlatbushBuilder {
                   "Unexpected typed array class. Expecting non 64-bit integral "
                   "or floating point.");
 
-    mData.reserve(detail::calculateDataSize<ArrayType>(iNumItems, mNodeSize));
+    size_t wDataSize;
+    if (!detail::tryCalculateDataSize<ArrayType>(iNumItems, mNodeSize, wDataSize)) {
+      throw std::length_error("Requested index exceeds the serialized format or platform limits.");
+    }
+
+    mData.reserve(wDataSize);
   }
 
   inline void clear() { mData.assign(gHeaderByteSize, 0U); }
@@ -866,7 +881,12 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() {
   }
 
   const auto wNumItems = (mData.size() - gHeaderByteSize) / kBoxByteSize;
-  mData.resize(detail::calculateDataSize<ArrayType>(wNumItems, mNodeSize), 0U);
+  size_t wDataSize;
+  if (!detail::tryCalculateDataSize<ArrayType>(wNumItems, mNodeSize, wDataSize)) {
+    throw std::length_error("Built index exceeds the serialized format or platform limits.");
+  }
+
+  mData.resize(wDataSize, 0U);
   Flatbush<ArrayType> wIndex(std::move(mData), static_cast<uint32_t>(wNumItems), mNodeSize);
   clear();
   wIndex.pack();
@@ -950,7 +970,11 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
     throw std::invalid_argument("Num items cannot be 0.");
   }
 
-  const auto wSize = detail::calculateDataSize<ArrayType>(wNumItems, wNodeSize);
+  size_t wSize;
+  if (!detail::tryCalculateDataSize<ArrayType>(wNumItems, wNodeSize, wSize)) {
+    throw std::invalid_argument("Data exceeds the serialized format or platform limits.");
+  }
+
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
                                 ", but got buffer size " + std::to_string(iSize) + ".");

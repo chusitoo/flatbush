@@ -582,6 +582,20 @@ TEST(FlatbushTest, FromHostileNumItemsDoesNotAllocate) {
       { flatbush::FlatbushBuilder<double>::from(wHeader.data(), flatbush::gHeaderByteSize); }, std::invalid_argument);
 }
 
+TEST(FlatbushTest, TryCalculateDataSizeRejectsUnrepresentableLayout) {
+  size_t wDataSize;
+  EXPECT_FALSE(flatbush::detail::tryCalculateDataSize<uint8_t>(std::numeric_limits<size_t>::max(), 16U, wDataSize));
+
+  if (sizeof(size_t) > sizeof(uint32_t)) {
+    EXPECT_TRUE(flatbush::detail::tryCalculateDataSize<uint8_t>(1006632960UL, 16U, wDataSize));
+    EXPECT_FALSE(flatbush::detail::tryCalculateDataSize<uint8_t>(1006632961UL, 16U, wDataSize));
+  }
+}
+
+TEST(FlatbushTest, BuilderRejectsUnrepresentableReservation) {
+  EXPECT_THROW({ flatbush::FlatbushBuilder<uint8_t> wBuilder(std::numeric_limits<size_t>::max()); }, std::length_error);
+}
+
 TEST(FlatbushTest, AdjustedNodeSize) {
   flatbush::FlatbushBuilder<int> wBuilder0(1, 0);
   wBuilder0.add({ 0, 0, 0, 0 });
