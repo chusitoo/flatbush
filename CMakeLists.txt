@@ -88,7 +88,7 @@ if(WITH_TESTS)
   enable_testing()
 
   set(test_target unit_test)
-  add_executable(${test_target} "test.cpp")
+  add_executable(${test_target} "test.cpp" "header-smoke.cpp")
   target_compile_options(${test_target} PRIVATE ${FLATBUSH_WARNING_FLAGS})
   target_link_libraries(${test_target} PRIVATE ${FLATBUSH_TARGET} gtest_main)
   gtest_discover_tests(${test_target} DISCOVERY_TIMEOUT 30)

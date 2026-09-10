@@ -639,7 +639,9 @@ using HilbertValueType = uint32_t;
 using HilbertValues = std::vector<HilbertValueType>;
 
 template <class ArrayType>
-HilbertValues computeHilbertValues(size_t iNumItems, const Box<ArrayType>& iBounds, span<Box<ArrayType>> iBoxes) {
+inline HilbertValues computeHilbertValues(size_t iNumItems,
+                                          const Box<ArrayType>& iBounds,
+                                          span<Box<ArrayType>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5f * std::numeric_limits<uint16_t>::max();
   const auto wWidth = static_cast<float>(static_cast<double>(iBounds.mMaxX) - static_cast<double>(iBounds.mMinX));
   const auto wHeight = static_cast<float>(static_cast<double>(iBounds.mMaxY) - static_cast<double>(iBounds.mMinY));
@@ -697,7 +699,9 @@ HilbertValues computeHilbertValues(size_t iNumItems, const Box<ArrayType>& iBoun
 }
 
 template <>
-HilbertValues computeHilbertValues<double>(size_t iNumItems, const Box<double>& iBounds, span<Box<double>> iBoxes) {
+inline HilbertValues computeHilbertValues<double>(size_t iNumItems,
+                                                  const Box<double>& iBounds,
+                                                  span<Box<double>> iBoxes) {
   static constexpr auto kMaxHilbertRatio = 0.5 * std::numeric_limits<uint16_t>::max();
   const auto wWidth = iBounds.mMaxX - iBounds.mMinX;
   const auto wHeight = iBounds.mMaxY - iBounds.mMinY;
