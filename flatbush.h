@@ -1613,7 +1613,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
         }
       }
 
-      std::pop_heap(wQueue.begin(), wQueue.end());
+      if (!wQueue.empty()) std::pop_heap(wQueue.begin(), wQueue.end());
     } else {  // Sorted-vector strategy: batch insert, sort+merge, pop from back
       if (wQueue.size() > wQueueSize) {
         const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wQueueSize);
