@@ -210,7 +210,7 @@ void FuzzNeighborsTemplate(ArrayType iX, ArrayType iY, size_t iMaxResults, doubl
   const auto wResult = wIndex.neighbors(wPoint, iMaxResults, iMaxDistance);
   const auto wDistance = std::pow(wX - 42, 2.0) + std::pow(wY, 2.0);
 
-  if (iMaxResults > 0 && iMaxDistance >= 0.0 && std::isnormal(wMaxDistSquared) && wDistance <= wMaxDistSquared) {
+  if (iMaxResults > 0 && iMaxDistance > 0.0 && !std::isnan(wMaxDistSquared) && wDistance <= wMaxDistSquared) {
     ASSERT_EQ(wResult.size(), 1);
   } else {
     ASSERT_EQ(wResult.size(), 0);

@@ -110,7 +110,7 @@ class span {
 #endif  // FLATBUSH_SPAN
 
 constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
-constexpr auto gMaxDistance = 1.34078e+154;  // std::sqrt(std::numeric_limits<double>::max())
+constexpr auto gMaxDistance = std::numeric_limits<double>::infinity();
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
 constexpr uint16_t gMinNodeSize = 2;
@@ -1028,8 +1028,8 @@ class Flatbush {
 
     const auto wDistance = iDistanceFn(iPoint, mBounds);
 
-    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistance) &&
-           std::isnormal(iThreshold) && wDistance <= iThreshold;
+    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(iThreshold) &&
+           !std::isnan(wDistance) && wDistance <= iThreshold;
   }
 
   Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize);

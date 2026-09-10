@@ -796,8 +796,32 @@ TEST(FlatbushTest, NeighborsGuardPathsReturnEmpty) {
 
   EXPECT_TRUE(wIndex.neighbors({ wNaN, 50.0 }, 10).empty());
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 0).empty());
+  EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, wNaN).empty());
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, 0.0).empty());
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, -1.0).empty());
+}
+
+TEST(FlatbushTest, NeighborsSupportsUnboundedAndSubnormalDistance) {
+  flatbush::FlatbushBuilder<double> wBuilder(1);
+  wBuilder.add({ 0.0, 0.0, 0.0, 0.0 });
+  const auto wIndex = wBuilder.finish();
+
+  EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 }, 1, std::numeric_limits<double>::infinity()), std::vector<size_t> { 0UL });
+  EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 }, 1, std::numeric_limits<double>::denorm_min()), std::vector<size_t> { 0UL });
+  EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 },
+                             1,
+                             std::numeric_limits<double>::infinity(),
+                             nullptr,
+                             [](const flatbush::Point<double>&, const flatbush::Box<double>&) {
+                               return std::numeric_limits<double>::infinity();
+                             }),
+            std::vector<size_t> { 0UL });
+
+  flatbush::FlatbushBuilder<double> wFarBuilder(1);
+  wFarBuilder.add({ 1.0e200, 0.0, 1.0e200, 0.0 });
+  const auto wFarIndex = wFarBuilder.finish();
+  EXPECT_EQ(wFarIndex.neighbors({ 0.0, 0.0 }, 1, 1.0e200), std::vector<size_t> { 0UL });
+  EXPECT_EQ(wFarIndex.neighbors({ 0.0, 0.0 }, 1), std::vector<size_t> { 0UL });
 }
 
 TEST(FlatbushTest, SearchOutsideGlobalBoundsReturnsEmpty) {
