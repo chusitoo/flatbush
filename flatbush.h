@@ -129,7 +129,7 @@ struct Box {
   ArrayType mMaxY;
 
   template <typename OtherType>
-  explicit operator Box<OtherType>() const noexcept {
+  explicit operator Box<OtherType>() const {
     return Box<OtherType> { static_cast<OtherType>(mMinX),
                             static_cast<OtherType>(mMinY),
                             static_cast<OtherType>(mMaxX),
@@ -143,7 +143,7 @@ struct Point {
   ArrayType mY;
 
   template <typename OtherType>
-  explicit operator Point<OtherType>() const noexcept {
+  explicit operator Point<OtherType>() const {
     return Point<OtherType> { static_cast<OtherType>(mX), static_cast<OtherType>(mY) };
   }
 };
@@ -833,16 +833,14 @@ class FlatbushBuilder {
 
   inline void clear() { mData.assign(gHeaderByteSize, 0U); }
 
-  inline size_t add(const Box<ArrayType>& iBox) noexcept {
+  inline size_t add(const Box<ArrayType>& iBox) {
     if (mData.size() < gHeaderByteSize) mData.resize(gHeaderByteSize, 0U);
     const auto wBytes = detail::bit_cast<const uint8_t*>(&iBox);
     mData.insert(mData.end(), wBytes, wBytes + kBoxByteSize);
     return (mData.size() - gHeaderByteSize) / kBoxByteSize - 1UL;
   }
 
-  inline size_t add(const Point<ArrayType>& iPoint) noexcept {
-    return add({ iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY });
-  }
+  inline size_t add(const Point<ArrayType>& iPoint) { return add({ iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY }); }
 
   Flatbush<ArrayType> finish();
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
@@ -969,7 +967,7 @@ class Flatbush {
   Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  std::vector<size_t> search(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn = nullptr) const noexcept;
+  std::vector<size_t> search(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn = nullptr) const;
 
   // Without a distance callback, iMaxDistance is a Euclidean distance in index units; with
   // one, it is compared as-is against whatever that callback returns
@@ -977,7 +975,7 @@ class Flatbush {
                                 size_t iMaxResults = gMaxResults,
                                 double iMaxDistance = gMaxDistance,
                                 const FilterCb& iFilterFn = nullptr,
-                                const DistanceCb& iDistanceFn = nullptr) const noexcept;
+                                const DistanceCb& iDistanceFn = nullptr) const;
 
   inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2); }
 
@@ -1031,17 +1029,13 @@ class Flatbush {
   }
 
   Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize);
-  explicit Flatbush(std::vector<uint8_t>&& iData) noexcept;
-  explicit Flatbush(span<const uint8_t> iBytes) noexcept;
+  explicit Flatbush(std::vector<uint8_t>&& iData);
+  explicit Flatbush(span<const uint8_t> iBytes);
 
-  void pack() noexcept;
-  void init(bool iIsPacked) noexcept;
-  void sort(detail::HilbertValues& iValues,
-            size_t iLeft,
-            size_t iRight,
-            uint32_t iShift,
-            std::vector<size_t>& ioStack) noexcept;
-  void sort(detail::HilbertValues& iValues, size_t iLeft, size_t iRight, std::vector<size_t>& ioStack) noexcept;
+  void pack();
+  void init(bool iIsPacked);
+  void sort(detail::HilbertValues& iValues, size_t iLeft, size_t iRight, uint32_t iShift, std::vector<size_t>& ioStack);
+  void sort(detail::HilbertValues& iValues, size_t iLeft, size_t iRight, std::vector<size_t>& ioStack);
   void swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept;
 
   inline size_t getIndex(size_t iPosition) const noexcept {
@@ -1059,20 +1053,17 @@ class Flatbush {
 
   inline size_t levelOf(size_t iNodeIndex) const noexcept;
 
-  void collectContained(size_t iNodeIndex,
-                        size_t iEnd,
-                        size_t iLevel,
-                        const FilterCb& iFilterFn,
-                        std::vector<size_t>& oResults) const noexcept;
+  void collectContained(
+      size_t iNodeIndex, size_t iEnd, size_t iLevel, const FilterCb& iFilterFn, std::vector<size_t>& oResults) const;
 
-  std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const noexcept;
+  std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const;
 
   template <bool UseHeap, bool CanBound>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iThreshold,
                                     const FilterCb& iFilterFn,
-                                    const DistanceCb& iDistanceFn) const noexcept;
+                                    const DistanceCb& iDistanceFn) const;
 
   struct IndexDistance {
     // Left uninitialized on purpose: a default member initializer would make the default
@@ -1116,18 +1107,18 @@ Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, 
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData) noexcept
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData)
     : mData(std::move(iData)), mBytes(mData.data(), mData.size()) {
   init(kIsPacked);
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) noexcept : mBytes(iBytes) {
+Flatbush<ArrayType>::Flatbush(span<const uint8_t> iBytes) : mBytes(iBytes) {
   init(kIsPacked);
 }
 
 template <typename ArrayType>
-void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
+void Flatbush<ArrayType>::init(bool iIsPacked) {
   // Const is shed only to bind the typed views; externally managed bytes are never written to
   const auto wBase = const_cast<uint8_t*>(mBytes.data());
   const auto wNumItems = *detail::bit_cast<const uint32_t*>(wBase + 4);
@@ -1162,7 +1153,7 @@ void Flatbush<ArrayType>::init(bool iIsPacked) noexcept {
 }
 
 template <typename ArrayType>
-void Flatbush<ArrayType>::pack() noexcept {
+void Flatbush<ArrayType>::pack() {
   const auto wNumItems = numItems();
 
   while (mPosition < wNumItems) {
@@ -1209,11 +1200,8 @@ void Flatbush<ArrayType>::pack() noexcept {
 // but no scratch copy. The node granularity cutoff usually stops it after two passes: one
 // byte splits a million items 256 ways, and a second lands every bucket inside a node.
 template <typename ArrayType>
-void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
-                               size_t iLeft,
-                               size_t iRight,
-                               uint32_t iShift,
-                               std::vector<size_t>& ioStack) noexcept {
+void Flatbush<ArrayType>::sort(
+    detail::HilbertValues& iValues, size_t iLeft, size_t iRight, uint32_t iShift, std::vector<size_t>& ioStack) {
   // Below this a histogram costs more than the comparison sort it would replace
   static constexpr auto kRadixCutoff = 512UL;
   static constexpr auto kRadixBits = 8U;
@@ -1283,7 +1271,7 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
                                size_t iLeft,
                                size_t iRight,
-                               std::vector<size_t>& ioStack) noexcept {
+                               std::vector<size_t>& ioStack) {
   // Scale the initial stack capacity with the sortable key width; the vector grows if a pivot goes bad
   static constexpr auto kStackReserve = 4UL * std::numeric_limits<detail::HilbertValueType>::digits;
   const auto wNodeSize = nodeSize();
@@ -1431,11 +1419,8 @@ size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
 // Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
 // subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
 template <typename ArrayType>
-void Flatbush<ArrayType>::collectContained(size_t iNodeIndex,
-                                           size_t iEnd,
-                                           size_t iLevel,
-                                           const FilterCb& iFilterFn,
-                                           std::vector<size_t>& oResults) const noexcept {
+void Flatbush<ArrayType>::collectContained(
+    size_t iNodeIndex, size_t iEnd, size_t iLevel, const FilterCb& iFilterFn, std::vector<size_t>& oResults) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wPosition = iNodeIndex;
@@ -1464,8 +1449,7 @@ void Flatbush<ArrayType>::collectContained(size_t iNodeIndex,
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
-                                                    const FilterCb& iFilterFn) const noexcept {
+std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1533,8 +1517,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds,
-                                                const FilterCb& iFilterFn) const noexcept {
+std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const {
   if (!canDoSearch(iBounds)) {
     return {};
   }
@@ -1548,7 +1531,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
                                                        size_t iMaxResults,
                                                        double iThreshold,
                                                        const FilterCb& iFilterFn,
-                                                       const DistanceCb& iDistanceFn) const noexcept {
+                                                       const DistanceCb& iDistanceFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1648,7 +1631,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    size_t iMaxResults,
                                                    double iMaxDistance,
                                                    const FilterCb& iFilterFn,
-                                                   const DistanceCb& iDistanceFn) const noexcept {
+                                                   const DistanceCb& iDistanceFn) const {
   static constexpr auto kMergeThreshold = 128UL;
   static constexpr auto kUseHeap = true;
   static constexpr auto kCanBound = true;

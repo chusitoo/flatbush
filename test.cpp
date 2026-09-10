@@ -24,12 +24,35 @@ SOFTWARE.
 
 #include <gtest/gtest.h>
 
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "flatbush.h"
 
 using ::testing::Test;
 using ::testing::Types;
+
+struct ThrowingNumber {
+  ThrowingNumber(double) {}
+};
+
+static_assert(
+    !noexcept(std::declval<flatbush::FlatbushBuilder<double>&>().add(std::declval<const flatbush::Box<double>&>())),
+    "Builder insertion can allocate");
+static_assert(
+    !noexcept(std::declval<flatbush::FlatbushBuilder<double>&>().add(std::declval<const flatbush::Point<double>&>())),
+    "Point insertion can allocate");
+static_assert(
+    !noexcept(std::declval<const flatbush::Flatbush<double>&>().search(std::declval<const flatbush::Box<double>&>())),
+    "Search can allocate and invoke callbacks");
+static_assert(!noexcept(std::declval<const flatbush::Flatbush<double>&>().neighbors(
+                  std::declval<const flatbush::Point<double>&>())),
+              "Neighbor search can allocate and invoke callbacks");
+static_assert(!noexcept(static_cast<flatbush::Box<ThrowingNumber>>(std::declval<const flatbush::Box<double>&>())),
+              "Box coordinate conversion can invoke user code");
+static_assert(!noexcept(static_cast<flatbush::Point<ThrowingNumber>>(std::declval<const flatbush::Point<double>&>())),
+              "Point coordinate conversion can invoke user code");
 
 static constexpr std::array<double, 400> gData {
   8,  62, 11, 66, 57, 17, 57, 19, 76, 26, 79, 29, 36, 56, 38, 56, 92, 77, 96, 80, 87, 70, 90, 74, 43, 41, 47, 43, 0,
@@ -288,6 +311,52 @@ TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   EXPECT_GT(wCalls, 0UL);
   // Pruning means the traversal stops well short of measuring every node
   EXPECT_LT(wCalls, wIndex.indexSize());
+}
+
+TEST(FlatbushTest, SearchFilterExceptionsPropagate) {
+  auto wIndex = createIndex();
+
+  EXPECT_THROW(
+      {
+        wIndex.search({ 0.0, 0.0, 100.0, 100.0 }, [](size_t, const flatbush::Box<double>&) -> bool {
+          throw std::runtime_error("filter failure");
+        });
+      },
+      std::runtime_error);
+  EXPECT_EQ(wIndex.search({ 0.0, 0.0, 100.0, 100.0 }).size(), wIndex.numItems());
+}
+
+TEST(FlatbushTest, NeighborsFilterExceptionsPropagate) {
+  auto wIndex = createIndex();
+
+  EXPECT_THROW(
+      {
+        wIndex.neighbors({ 50.0, 50.0 }, 3, flatbush::gMaxDistance, [](size_t, const flatbush::Box<double>&) -> bool {
+          throw std::runtime_error("filter failure");
+        });
+      },
+      std::runtime_error);
+  EXPECT_EQ(wIndex.neighbors({ 50.0, 50.0 }, 3).size(), 3UL);
+}
+
+TEST(FlatbushTest, NeighborsDistanceExceptionsPropagate) {
+  auto wIndex = createIndex();
+  size_t wCalls = 0UL;
+
+  EXPECT_THROW(
+      {
+        wIndex.neighbors({ 50.0, 50.0 },
+                         3,
+                         flatbush::gMaxDistance,
+                         nullptr,
+                         [&wCalls](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) -> double {
+                           if (++wCalls > 1UL) throw std::runtime_error("distance failure");
+                           return flatbush::detail::computeDistanceSquared(iPoint, iBox);
+                         });
+      },
+      std::runtime_error);
+  EXPECT_GT(wCalls, 1UL);
+  EXPECT_EQ(wIndex.neighbors({ 50.0, 50.0 }, 3).size(), 3UL);
 }
 
 TEST(FlatbushTest, ReturnIndexOfNewlyAddedRectangle) {
