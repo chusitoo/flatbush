@@ -49,6 +49,33 @@ jobs:
       working-directory: ${{github.workspace}}/build
       run: ctest --rerun-failed --output-on-failure
 
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - standard: 11
+            with_span: 'ON'
+          - standard: 20
+            with_span: 'OFF'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install package
+      run: |
+        cmake -B ${{github.workspace}}/build/package -DWITH_SPAN=${{matrix.with_span}} -DCMAKE_INSTALL_PREFIX=${{runner.temp}}/flatbush
+        cmake --install ${{github.workspace}}/build/package
+
+    - name: Configure consumer
+      run: cmake -S ${{github.workspace}}/tests/package -B ${{github.workspace}}/build/consumer -DCMAKE_PREFIX_PATH=${{runner.temp}}/flatbush -DCMAKE_CXX_STANDARD=${{matrix.standard}} -DCMAKE_CXX_STANDARD_REQUIRED=ON -DCMAKE_CXX_EXTENSIONS=OFF
+
+    - name: Build consumer
+      run: cmake --build ${{github.workspace}}/build/consumer -j $(nproc)
+
+    - name: Test consumer
+      run: ctest --test-dir ${{github.workspace}}/build/consumer --output-on-failure
+
   windows:
     runs-on: windows-latest
     strategy:
