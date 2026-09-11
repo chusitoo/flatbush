@@ -785,6 +785,86 @@ TEST(FlatbushTest, DegenerateBoundsMapToZeroHilbertCoordinates) {
   }
 }
 
+TEST(FlatbushTest, IntegralHilbertCoordinatesAreTranslationInvariant) {
+  static constexpr auto kNumItems = 17U;
+  static constexpr auto kOffset = 4000000000U;
+  auto wBaseBoxes = std::vector<flatbush::Box<uint32_t>> {};
+  auto wTranslatedBoxes = std::vector<flatbush::Box<uint32_t>> {};
+
+  for (uint32_t wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    wBaseBoxes.push_back({ wIdx, 0U, wIdx, 0U });
+    wTranslatedBoxes.push_back({ kOffset + wIdx, 0U, kOffset + wIdx, 0U });
+  }
+
+  const auto wBaseValues = flatbush::detail::computeHilbertValues(kNumItems,
+                                                                  flatbush::Box<uint32_t> {
+                                                                      0U, 0U, kNumItems - 1U, 0U },
+                                                                  flatbush::span<flatbush::Box<uint32_t>> {
+                                                                      wBaseBoxes.data(), wBaseBoxes.size() });
+  const auto wTranslatedValues = flatbush::detail::computeHilbertValues(kNumItems,
+                                                                        flatbush::Box<uint32_t> {
+                                                                            kOffset, 0U, kOffset + kNumItems - 1U, 0U },
+                                                                        flatbush::span<flatbush::Box<uint32_t>> {
+                                                                            wTranslatedBoxes.data(),
+                                                                            wTranslatedBoxes.size() });
+
+  EXPECT_EQ(wTranslatedValues, wBaseValues);
+}
+
+TEST(FlatbushTest, DoubleHilbertCoordinatesUseTruncation) {
+  auto wBoxes = std::vector<flatbush::Box<double>> { { 0.0, 0.0, 1.0, 2.0 },
+                                                     { 1.0, 3.0, 3.0, 6.0 },
+                                                     { 3.0, 6.0, 5.0, 11.0 },
+                                                     { 5.0, 9.0, 7.0, 15.0 },
+                                                     { 7.0, 14.0, 8.0, 16.0 } };
+  const auto wValues = flatbush::detail::computeHilbertValues(wBoxes.size(),
+                                                              flatbush::Box<double> { 0.0, 0.0, 8.0, 16.0 },
+                                                              flatbush::span<flatbush::Box<double>> { wBoxes.data(),
+                                                                                                      wBoxes.size() });
+  EXPECT_EQ(wValues,
+            (flatbush::detail::HilbertValues { flatbush::detail::HilbertXYToIndex(4095U, 4095U),
+                                               flatbush::detail::HilbertXYToIndex(16383U, 18431U),
+                                               flatbush::detail::HilbertXYToIndex(32767U, 34815U),
+                                               flatbush::detail::HilbertXYToIndex(49151U, 49151U),
+                                               flatbush::detail::HilbertXYToIndex(61439U, 61439U) }));
+}
+
+TEST(FlatbushTest, LargeFiniteDoubleBoundsAvoidIntermediateOverflow) {
+  auto wExtremeBoxes = std::vector<flatbush::Box<double>> { { -8e307, 0.0, -8e307, 0.0 },
+                                                            { -4e307, 0.0, -4e307, 0.0 },
+                                                            { 0.0, 0.0, 0.0, 0.0 },
+                                                            { 4e307, 0.0, 4e307, 0.0 },
+                                                            { 8e307, 0.0, 8e307, 0.0 } };
+  const auto wExtremeValues = flatbush::detail::computeHilbertValues(wExtremeBoxes.size(),
+                                                                     flatbush::Box<double> { -8e307, 0.0, 8e307, 0.0 },
+                                                                     flatbush::span<flatbush::Box<double>> {
+                                                                         wExtremeBoxes.data(), wExtremeBoxes.size() });
+  EXPECT_EQ(wExtremeValues,
+            (flatbush::detail::HilbertValues { flatbush::detail::HilbertXYToIndex(0U, 0U),
+                                               flatbush::detail::HilbertXYToIndex(16383U, 0U),
+                                               flatbush::detail::HilbertXYToIndex(32767U, 0U),
+                                               flatbush::detail::HilbertXYToIndex(49151U, 0U),
+                                               flatbush::detail::HilbertXYToIndex(65535U, 0U) }));
+}
+
+TEST(FlatbushTest, ExtremeFloatBoundsPreserveHilbertRange) {
+  const auto wFloatMax = std::numeric_limits<float>::max();
+  auto wFloatBoxes = std::vector<flatbush::Box<float>> { { -wFloatMax, 0.0F, -wFloatMax, 0.0F },
+                                                         { -wFloatMax, 0.0F, -wFloatMax, 0.0F },
+                                                         { 0.0F, 0.0F, 0.0F, 0.0F },
+                                                         { wFloatMax, 0.0F, wFloatMax, 0.0F },
+                                                         { wFloatMax, 0.0F, wFloatMax, 0.0F } };
+  const auto wFloatValues = flatbush::detail::computeHilbertValues(wFloatBoxes.size(),
+                                                                   flatbush::Box<float> {
+                                                                       -wFloatMax, 0.0F, wFloatMax, 0.0F },
+                                                                   flatbush::span<flatbush::Box<float>> {
+                                                                       wFloatBoxes.data(), wFloatBoxes.size() });
+  const auto wZero = flatbush::detail::HilbertXYToIndex(0U, 0U);
+  const auto wMiddle = flatbush::detail::HilbertXYToIndex(32767U, 0U);
+  const auto wMaximum = flatbush::detail::HilbertXYToIndex(65535U, 0U);
+  EXPECT_EQ(wFloatValues, (flatbush::detail::HilbertValues { wZero, wZero, wMiddle, wMaximum, wMaximum }));
+}
+
 TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();

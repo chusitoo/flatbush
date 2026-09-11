@@ -109,7 +109,7 @@ class span {
 };
 #endif  // FLATBUSH_SPAN
 
-constexpr auto gMaxHilbert = std::numeric_limits<uint16_t>::max();
+constexpr double gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = std::numeric_limits<double>::infinity();
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
@@ -408,12 +408,6 @@ static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 static const auto kSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
 #endif
 
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-static const auto kPermuteMinXY512 = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
-static const auto kPermuteMaxXY512 = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
-static const auto kPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
-#endif
-
 // True when no lane of a comparison mask is set
 inline bool isNoneSet(__m128 iMask) noexcept {
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
@@ -642,161 +636,105 @@ template <class ArrayType>
 inline HilbertValues computeHilbertValues(size_t iNumItems,
                                           const Box<ArrayType>& iBounds,
                                           span<Box<ArrayType>> iBoxes) {
-  static constexpr auto kMaxHilbertRatio = 0.5f * std::numeric_limits<uint16_t>::max();
-  const auto wWidth = static_cast<float>(static_cast<double>(iBounds.mMaxX) - static_cast<double>(iBounds.mMinX));
-  const auto wHeight = static_cast<float>(static_cast<double>(iBounds.mMaxY) - static_cast<double>(iBounds.mMinY));
-  const auto wHilbertWidth = wWidth == 0.0f ? 0.0f : kMaxHilbertRatio / wWidth;
-  const auto wHilbertHeight = wHeight == 0.0f ? 0.0f : kMaxHilbertRatio / wHeight;
-  const auto wDoubleMinX = static_cast<float>(iBounds.mMinX) + static_cast<float>(iBounds.mMinX);
-  const auto wDoubleMinY = static_cast<float>(iBounds.mMinY) + static_cast<float>(iBounds.mMinY);
-  auto wHilbertValues = HilbertValues(iNumItems);
-  auto wIdx = 0UL;
+  static constexpr auto kMaxHilbertRatio = 0.5 * gMaxHilbert;
+  const auto wMinX = static_cast<double>(iBounds.mMinX);
+  const auto wMinY = static_cast<double>(iBounds.mMinY);
+  const auto wWidth = static_cast<double>(iBounds.mMaxX) - wMinX;
+  const auto wHeight = static_cast<double>(iBounds.mMaxY) - wMinY;
+  const auto wScaleX = wWidth == 0.0 ? 0.0 : kMaxHilbertRatio / wWidth;
+  const auto wScaleY = wHeight == 0.0 ? 0.0 : kMaxHilbertRatio / wHeight;
+  const auto wCoordinateX = [=](const Box<ArrayType>& iBox) noexcept -> uint32_t {
+    const auto wCoordinate = wScaleX * (static_cast<double>(iBox.mMinX) - wMinX) +
+                             wScaleX * (static_cast<double>(iBox.mMaxX) - wMinX);
+    if (!std::isfinite(wCoordinate)) return 0U;
 
-#if defined(FLATBUSH_USE_SIMD)
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wHilbertWidth128 = _mm_broadcast_ss(&wHilbertWidth);
-  const auto wHilbertHeight128 = _mm_broadcast_ss(&wHilbertHeight);
-  const auto wDoubleMinX128 = _mm_broadcast_ss(&wDoubleMinX);
-  const auto wDoubleMinY128 = _mm_broadcast_ss(&wDoubleMinY);
-#else
-  const auto wHilbertWidth128 = _mm_set1_ps(wHilbertWidth);
-  const auto wHilbertHeight128 = _mm_set1_ps(wHilbertHeight);
-  const auto wDoubleMinX128 = _mm_set1_ps(wDoubleMinX);
-  const auto wDoubleMinY128 = _mm_set1_ps(wDoubleMinY);
-#endif
-
-  static const auto sumAxis = [](ArrayType iMin, ArrayType iMax) {
-    return static_cast<float>(iMin) + static_cast<float>(iMax);
+    return static_cast<uint32_t>(std::max(0.0, std::min(gMaxHilbert, wCoordinate)));
   };
+  const auto wCoordinateY = [=](const Box<ArrayType>& iBox) noexcept -> uint32_t {
+    const auto wCoordinate = wScaleY * (static_cast<double>(iBox.mMinY) - wMinY) +
+                             wScaleY * (static_cast<double>(iBox.mMaxY) - wMinY);
+    if (!std::isfinite(wCoordinate)) return 0U;
 
-  // Widening each corner one at a time keeps a single code path for every array type; the
-  // Hilbert transform below is ~60 vector ops and dwarfs the cost of the gather
-  for (; wIdx + 3 < iNumItems; wIdx += 4) {
-    const auto wSumX = _mm_setr_ps(sumAxis(iBoxes[wIdx].mMinX, iBoxes[wIdx].mMaxX),
-                                   sumAxis(iBoxes[wIdx + 1].mMinX, iBoxes[wIdx + 1].mMaxX),
-                                   sumAxis(iBoxes[wIdx + 2].mMinX, iBoxes[wIdx + 2].mMaxX),
-                                   sumAxis(iBoxes[wIdx + 3].mMinX, iBoxes[wIdx + 3].mMaxX));
-    const auto wSumY = _mm_setr_ps(sumAxis(iBoxes[wIdx].mMinY, iBoxes[wIdx].mMaxY),
-                                   sumAxis(iBoxes[wIdx + 1].mMinY, iBoxes[wIdx + 1].mMaxY),
-                                   sumAxis(iBoxes[wIdx + 2].mMinY, iBoxes[wIdx + 2].mMaxY),
-                                   sumAxis(iBoxes[wIdx + 3].mMinY, iBoxes[wIdx + 3].mMaxY));
-    const auto wResultX = _mm_mul_ps(wHilbertWidth128, _mm_sub_ps(wSumX, wDoubleMinX128));
-    const auto wResultY = _mm_mul_ps(wHilbertHeight128, _mm_sub_ps(wSumY, wDoubleMinY128));
-    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
-                     HilbertXYToIndex(_mm_cvtps_epi32(wResultX), _mm_cvtps_epi32(wResultY)));
-  }
-#endif  // defined(FLATBUSH_USE_SIMD)
-
-  for (; wIdx < iNumItems; ++wIdx) {
-    const auto& wBox = static_cast<Box<float>>(iBoxes[wIdx]);
-    wHilbertValues[wIdx] = HilbertXYToIndex(static_cast<uint32_t>(wHilbertWidth *
-                                                                  (wBox.mMinX + wBox.mMaxX - wDoubleMinX)),
-                                            static_cast<uint32_t>(wHilbertHeight *
-                                                                  (wBox.mMinY + wBox.mMaxY - wDoubleMinY)));
-  }
-
-  return wHilbertValues;
-}
-
-template <>
-inline HilbertValues computeHilbertValues<double>(size_t iNumItems,
-                                                  const Box<double>& iBounds,
-                                                  span<Box<double>> iBoxes) {
-  static constexpr auto kMaxHilbertRatio = 0.5 * std::numeric_limits<uint16_t>::max();
-  const auto wWidth = iBounds.mMaxX - iBounds.mMinX;
-  const auto wHeight = iBounds.mMaxY - iBounds.mMinY;
-  const auto wHilbertWidth = wWidth == 0.0 ? 0.0 : kMaxHilbertRatio / wWidth;
-  const auto wHilbertHeight = wHeight == 0.0 ? 0.0 : kMaxHilbertRatio / wHeight;
-  const auto wDoubleMinX = iBounds.mMinX + iBounds.mMinX;
-  const auto wDoubleMinY = iBounds.mMinY + iBounds.mMinY;
+    return static_cast<uint32_t>(std::max(0.0, std::min(gMaxHilbert, wCoordinate)));
+  };
   auto wHilbertValues = HilbertValues(iNumItems);
   auto wIdx = 0UL;
 
-#if defined(FLATBUSH_USE_SIMD)
+#if defined(FLATBUSH_USE_SIMD) && FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
+  // Double boxes can be transposed directly; other types use the four-lane gather below.
+  const auto wUsePackedDoubles = std::is_same<ArrayType, double>::value && wWidth >= 0.0 && wHeight >= 0.0 &&
+                                 std::isfinite(wWidth) && std::isfinite(wHeight) && std::isfinite(wScaleX) &&
+                                 std::isfinite(wScaleY);
+  if (wUsePackedDoubles) {
+    const auto* wDoubleBoxes = bit_cast<const Box<double>*>(iBoxes.data());
+
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-  const auto wHilbertWidth512 = _mm512_set1_pd(wHilbertWidth);
-  const auto wHilbertHeight512 = _mm512_set1_pd(wHilbertHeight);
-  const auto wDoubleMinX512 = _mm512_set1_pd(wDoubleMinX);
-  const auto wDoubleMinY512 = _mm512_set1_pd(wDoubleMinY);
-  const auto wWidthHeight512 = _mm512_mask_blend_pd(0xAA, wHilbertWidth512, wHilbertHeight512);
-  const auto wDoubleMinXY512 = _mm512_mask_blend_pd(0xAA, wDoubleMinX512, wDoubleMinY512);
+    const auto wMinIndices = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
+    const auto wMaxIndices = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
+    const auto wPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
+    const auto wScaleXY = _mm512_mask_blend_pd(0xAA, _mm512_set1_pd(wScaleX), _mm512_set1_pd(wScaleY));
+    const auto wMinXY = _mm512_mask_blend_pd(0xAA, _mm512_set1_pd(wMinX), _mm512_set1_pd(wMinY));
 
-  for (; wIdx + 3 < iNumItems; wIdx += 4) {
-    const auto wBoxes01 = _mm512_loadu_pd(&iBoxes[wIdx].mMinX);
-    const auto wBoxes23 = _mm512_loadu_pd(&iBoxes[wIdx + 2].mMinX);
-    const auto wMin = _mm512_permutex2var_pd(wBoxes01, kPermuteMinXY512, wBoxes23);
-    const auto wMax = _mm512_permutex2var_pd(wBoxes01, kPermuteMaxXY512, wBoxes23);
-    const auto wResult = _mm256_permutevar8x32_epi32(_mm512_cvtpd_epi32(
-                                                         _mm512_mul_pd(wWidthHeight512,
-                                                                       _mm512_sub_pd(_mm512_add_pd(wMin, wMax),
-                                                                                     wDoubleMinXY512))),
-                                                     kPermuteXLoYHi);
-    const auto wResultX = _mm256_castsi256_si128(wResult);
-    const auto wResultY = _mm256_extracti32x4_epi32(wResult, 1);
+    for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
+      const auto wBoxes01 = _mm512_loadu_pd(&wDoubleBoxes[wIdx].mMinX);
+      const auto wBoxes23 = _mm512_loadu_pd(&wDoubleBoxes[wIdx + 2UL].mMinX);
+      const auto wMin = _mm512_permutex2var_pd(wBoxes01, wMinIndices, wBoxes23);
+      const auto wMax = _mm512_permutex2var_pd(wBoxes01, wMaxIndices, wBoxes23);
+      const auto wCoordinates = _mm512_add_pd(_mm512_mul_pd(wScaleXY, _mm512_sub_pd(wMin, wMinXY)),
+                                              _mm512_mul_pd(wScaleXY, _mm512_sub_pd(wMax, wMinXY)));
+      const auto wResult = _mm256_permutevar8x32_epi32(_mm512_cvttpd_epi32(wCoordinates), wPermuteXLoYHi);
 
-    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]), HilbertXYToIndex(wResultX, wResultY));
-  }
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  const auto wHilbertWidth256 = _mm256_broadcast_sd(&wHilbertWidth);
-  const auto wHilbertHeight256 = _mm256_broadcast_sd(&wHilbertHeight);
-  const auto wDoubleMinX256 = _mm256_broadcast_sd(&wDoubleMinX);
-  const auto wDoubleMinY256 = _mm256_broadcast_sd(&wDoubleMinY);
+      _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
+                       HilbertXYToIndex(_mm256_castsi256_si128(wResult), _mm256_extracti128_si256(wResult, 1)));
+    }
+#else
+    const auto wScaleX256 = _mm256_set1_pd(wScaleX);
+    const auto wScaleY256 = _mm256_set1_pd(wScaleY);
+    const auto wMinX256 = _mm256_set1_pd(wMinX);
+    const auto wMinY256 = _mm256_set1_pd(wMinY);
 
-  for (; wIdx + 3 < iNumItems; wIdx += 4) {
-    const auto wBox0 = _mm256_loadu_pd(&iBoxes[wIdx].mMinX);
-    const auto wBox1 = _mm256_loadu_pd(&iBoxes[wIdx + 1].mMinX);
-    const auto wBox2 = _mm256_loadu_pd(&iBoxes[wIdx + 2].mMinX);
-    const auto wBox3 = _mm256_loadu_pd(&iBoxes[wIdx + 3].mMinX);
-    const auto wBoxes01Lo = _mm256_shuffle_pd(wBox0, wBox1, 0x0);
-    const auto wBoxes01Hi = _mm256_shuffle_pd(wBox0, wBox1, 0xF);
-    const auto wBoxes23Lo = _mm256_shuffle_pd(wBox2, wBox3, 0x0);
-    const auto wBoxes23Hi = _mm256_shuffle_pd(wBox2, wBox3, 0xF);
-    const auto wMinX = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x20);
-    const auto wMinY = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x20);
-    const auto wMaxX = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x31);
-    const auto wMaxY = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x31);
-    const auto wSumX = _mm256_add_pd(wMinX, wMaxX);
-    const auto wSumY = _mm256_add_pd(wMinY, wMaxY);
-    const auto wResultX = _mm256_mul_pd(wHilbertWidth256, _mm256_sub_pd(wSumX, wDoubleMinX256));
-    const auto wResultY = _mm256_mul_pd(wHilbertHeight256, _mm256_sub_pd(wSumY, wDoubleMinY256));
+    for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
+      const auto wBox0 = _mm256_loadu_pd(&wDoubleBoxes[wIdx].mMinX);
+      const auto wBox1 = _mm256_loadu_pd(&wDoubleBoxes[wIdx + 1UL].mMinX);
+      const auto wBox2 = _mm256_loadu_pd(&wDoubleBoxes[wIdx + 2UL].mMinX);
+      const auto wBox3 = _mm256_loadu_pd(&wDoubleBoxes[wIdx + 3UL].mMinX);
+      const auto wBoxes01Lo = _mm256_shuffle_pd(wBox0, wBox1, 0x0);
+      const auto wBoxes01Hi = _mm256_shuffle_pd(wBox0, wBox1, 0xF);
+      const auto wBoxes23Lo = _mm256_shuffle_pd(wBox2, wBox3, 0x0);
+      const auto wBoxes23Hi = _mm256_shuffle_pd(wBox2, wBox3, 0xF);
+      const auto wMinXVector = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x20);
+      const auto wMinYVector = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x20);
+      const auto wMaxXVector = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x31);
+      const auto wMaxYVector = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x31);
+      const auto wCoordinatesX = _mm256_add_pd(_mm256_mul_pd(wScaleX256, _mm256_sub_pd(wMinXVector, wMinX256)),
+                                               _mm256_mul_pd(wScaleX256, _mm256_sub_pd(wMaxXVector, wMinX256)));
+      const auto wCoordinatesY = _mm256_add_pd(_mm256_mul_pd(wScaleY256, _mm256_sub_pd(wMinYVector, wMinY256)),
+                                               _mm256_mul_pd(wScaleY256, _mm256_sub_pd(wMaxYVector, wMinY256)));
 
-    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
-                     HilbertXYToIndex(_mm256_cvtpd_epi32(wResultX), _mm256_cvtpd_epi32(wResultY)));
+      _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
+                       HilbertXYToIndex(_mm256_cvttpd_epi32(wCoordinatesX), _mm256_cvttpd_epi32(wCoordinatesY)));
+    }
+#endif
   }
 #endif
 
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
-  const auto wHilbertWidth128 = _mm_set1_pd(wHilbertWidth);
-  const auto wHilbertHeight128 = _mm_set1_pd(wHilbertHeight);
-  const auto wDoubleMinX128 = _mm_set1_pd(wDoubleMinX);
-  const auto wDoubleMinY128 = _mm_set1_pd(wDoubleMinY);
-
-  for (; wIdx + 1 < iNumItems; wIdx += 2) {
-    const auto wBox0Lo = _mm_loadu_pd(&iBoxes[wIdx].mMinX);
-    const auto wBox0Hi = _mm_loadu_pd(&iBoxes[wIdx].mMaxX);
-    const auto wBox1Lo = _mm_loadu_pd(&iBoxes[wIdx + 1].mMinX);
-    const auto wBox1Hi = _mm_loadu_pd(&iBoxes[wIdx + 1].mMaxX);
-
-    const auto wMinX = _mm_shuffle_pd(wBox0Lo, wBox1Lo, 0x0);
-    const auto wMinY = _mm_shuffle_pd(wBox0Lo, wBox1Lo, 0x3);
-    const auto wMaxX = _mm_shuffle_pd(wBox0Hi, wBox1Hi, 0x0);
-    const auto wMaxY = _mm_shuffle_pd(wBox0Hi, wBox1Hi, 0x3);
-
-    const auto wSumX = _mm_add_pd(wMinX, wMaxX);
-    const auto wSumY = _mm_add_pd(wMinY, wMaxY);
-    const auto wResultX = _mm_mul_pd(wHilbertWidth128, _mm_sub_pd(wSumX, wDoubleMinX128));
-    const auto wResultY = _mm_mul_pd(wHilbertHeight128, _mm_sub_pd(wSumY, wDoubleMinY128));
-
-    _mm_storeu_si64(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
-                    HilbertXYToIndex(_mm_cvtpd_epi32(wResultX), _mm_cvtpd_epi32(wResultY)));
+#if defined(FLATBUSH_USE_SIMD)
+  for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
+    const auto wX = _mm_setr_epi32(static_cast<int32_t>(wCoordinateX(iBoxes[wIdx])),
+                                   static_cast<int32_t>(wCoordinateX(iBoxes[wIdx + 1UL])),
+                                   static_cast<int32_t>(wCoordinateX(iBoxes[wIdx + 2UL])),
+                                   static_cast<int32_t>(wCoordinateX(iBoxes[wIdx + 3UL])));
+    const auto wY = _mm_setr_epi32(static_cast<int32_t>(wCoordinateY(iBoxes[wIdx])),
+                                   static_cast<int32_t>(wCoordinateY(iBoxes[wIdx + 1UL])),
+                                   static_cast<int32_t>(wCoordinateY(iBoxes[wIdx + 2UL])),
+                                   static_cast<int32_t>(wCoordinateY(iBoxes[wIdx + 3UL])));
+    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]), HilbertXYToIndex(wX, wY));
   }
-#endif  // FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE2
-#endif  // defined(FLATBUSH_USE_SIMD)
+#endif
 
   for (; wIdx < iNumItems; ++wIdx) {
     const auto& wBox = iBoxes[wIdx];
-    wHilbertValues.at(wIdx) = HilbertXYToIndex(uint32_t(wHilbertWidth * (wBox.mMinX + wBox.mMaxX - wDoubleMinX)),
-                                               uint32_t(wHilbertHeight * (wBox.mMinY + wBox.mMaxY - wDoubleMinY)));
+    wHilbertValues[wIdx] = HilbertXYToIndex(wCoordinateX(wBox), wCoordinateY(wBox));
   }
 
   return wHilbertValues;
