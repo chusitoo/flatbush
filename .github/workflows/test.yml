@@ -49,6 +49,18 @@ jobs:
       working-directory: ${{github.workspace}}/build
       run: ctest --rerun-failed --output-on-failure
 
+  avx512-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: ['g++', 'clang++']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Compile
+      run: ${{matrix.compiler}} -std=c++11 -DFLATBUSH_SPAN -mavx512f -mavx512dq -mavx512vl -I${{github.workspace}} -c ${{github.workspace}}/tests/package/main.cpp -o ${{runner.temp}}/flatbush-avx512.o
+
   libstdcxx-debug:
     runs-on: ubuntu-latest
 
