@@ -394,12 +394,11 @@ inline double computeMaxDistanceSquared(const Point<ArrayType>& iPoint, const Bo
 #if defined(FLATBUSH_USE_SIMD)
 static constexpr auto kShuffleUnpackLo = _MM_SHUFFLE(1, 0, 1, 0);
 static constexpr auto kShuffleUnpackHi = _MM_SHUFFLE(3, 2, 3, 2);
-static constexpr auto kShuffleBroadcast1 = _MM_SHUFFLE(1, 1, 1, 1);
 static constexpr auto kShuffleBlendMinMax = _MM_SHUFFLE(3, 2, 1, 0);
 static constexpr auto kShuffleExchange01 = _MM_SHUFFLE2(0, 1);
 static const auto kOffset32 = _mm_set1_epi32(std::numeric_limits<int32_t>::min());
+static const auto kUnsignedBiasPd = _mm_set1_pd(2147483648.0);
 static const auto kZeroPd = _mm_setzero_pd();
-static const auto kZeroPs = _mm_setzero_ps();
 
 static const auto kMaskAllOnes = _mm_set1_epi32(0xFFFF);
 static const auto kMaskInterleave1 = _mm_set1_epi32(0x00FF00FF);
@@ -558,14 +557,9 @@ inline void updateBounds<double>(Box<double>& ioSrc, const Box<double>& iBox) no
 #endif
 }
 
-template <>
-inline double computeDistanceSquared<double>(const Point<double>& iPoint, const Box<double>& iBox) noexcept {
-  // Two half loads beat a full load plus extractf128: same cache line, and no shuffle
-  const auto wBoxMin = _mm_loadu_pd(&iBox.mMinX);
-  const auto wBoxMax = _mm_loadu_pd(&iBox.mMaxX);
-  const auto wPoint = _mm_loadu_pd(&iPoint.mX);
+inline double computeDistanceSquaredPd(__m128d iBoxMin, __m128d iBoxMax, __m128d iPoint) noexcept {
   // Compute axis distances - using max to clamp to zero
-  const auto wDist = _mm_max_pd(kZeroPd, _mm_max_pd(_mm_sub_pd(wBoxMin, wPoint), _mm_sub_pd(wPoint, wBoxMax)));
+  const auto wDist = _mm_max_pd(kZeroPd, _mm_max_pd(_mm_sub_pd(iBoxMin, iPoint), _mm_sub_pd(iPoint, iBoxMax)));
   // Square and sum
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
   const auto wResult = _mm_dp_pd(wDist, wDist, 0x31);
@@ -579,56 +573,99 @@ inline double computeDistanceSquared<double>(const Point<double>& iPoint, const 
   return _mm_cvtsd_f64(wResult);
 }
 
+inline double computeDistanceSquaredEpi32(__m128i iBox, __m128i iPoint) noexcept {
+  return computeDistanceSquaredPd(_mm_cvtepi32_pd(iBox),
+                                  _mm_cvtepi32_pd(_mm_srli_si128(iBox, 8)),
+                                  _mm_cvtepi32_pd(iPoint));
+}
+
+template <>
+inline double computeDistanceSquared<double>(const Point<double>& iPoint, const Box<double>& iBox) noexcept {
+  // Two half loads beat a full load plus extractf128: same cache line, and no shuffle
+  return computeDistanceSquaredPd(_mm_loadu_pd(&iBox.mMinX), _mm_loadu_pd(&iBox.mMaxX), _mm_loadu_pd(&iPoint.mX));
+}
+
 template <>
 inline double computeDistanceSquared<float>(const Point<float>& iPoint, const Box<float>& iBox) noexcept {
+  // Widen before subtracting so neither the difference nor its square overflows float
   const auto wBox = _mm_loadu_ps(&iBox.mMinX);
-  const auto wPoint = _mm_castpd_ps(_mm_load_sd(bit_cast<const double*>(&iPoint.mX)));
-  const auto wPoint2 = _mm_shuffle_ps(wPoint, wPoint, kShuffleUnpackLo);
-  const auto wBoxMin = _mm_shuffle_ps(wBox, wBox, kShuffleUnpackLo);
-  const auto wBoxMax = _mm_shuffle_ps(wBox, wBox, kShuffleUnpackHi);
-  // Compute axis distances - using max to clamp to zero
-  const auto wDist = _mm_max_ps(kZeroPs, _mm_max_ps(_mm_sub_ps(wBoxMin, wPoint2), _mm_sub_ps(wPoint2, wBoxMax)));
-  // Square and sum
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
-  const auto wResult = _mm_dp_ps(wDist, wDist, 0x31);
-#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE3
-  const auto wDistSq = _mm_mul_ps(wDist, wDist);
-  const auto wResult = _mm_hadd_ps(wDistSq, wDistSq);
-#else
-  const auto wDistSq = _mm_mul_ps(wDist, wDist);
-  const auto wResult = _mm_add_ps(wDistSq, _mm_shuffle_ps(wDistSq, wDistSq, kShuffleBroadcast1));
-#endif
-  return static_cast<double>(_mm_cvtss_f32(wResult));
+  return computeDistanceSquaredPd(_mm_cvtps_pd(wBox),
+                                  _mm_cvtps_pd(_mm_movehl_ps(wBox, wBox)),
+                                  _mm_cvtps_pd(_mm_castpd_ps(_mm_load_sd(bit_cast<const double*>(&iPoint.mX)))));
 }
 
 template <>
 inline double computeDistanceSquared<int8_t>(const Point<int8_t>& iPoint, const Box<int8_t>& iBox) noexcept {
-  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+  const auto wWiden = [](__m128i iValues) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+    return _mm_cvtepi8_epi32(iValues);
+#else
+    const auto wSign8 = _mm_cmpgt_epi8(_mm_setzero_si128(), iValues);
+    const auto wValues16 = _mm_unpacklo_epi8(iValues, wSign8);
+    return _mm_unpacklo_epi16(wValues16, _mm_srai_epi16(wValues16, 15));
+#endif
+  };
+
+  return computeDistanceSquaredEpi32(wWiden(_mm_loadu_si32(&iBox.mMinX)), wWiden(_mm_loadu_si16(&iPoint.mX)));
 }
 
 template <>
 inline double computeDistanceSquared<uint8_t>(const Point<uint8_t>& iPoint, const Box<uint8_t>& iBox) noexcept {
-  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+  const auto wWiden = [](__m128i iValues) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+    return _mm_cvtepu8_epi32(iValues);
+#else
+    const auto wValues16 = _mm_unpacklo_epi8(iValues, _mm_setzero_si128());
+    return _mm_unpacklo_epi16(wValues16, _mm_setzero_si128());
+#endif
+  };
+
+  return computeDistanceSquaredEpi32(wWiden(_mm_loadu_si32(&iBox.mMinX)), wWiden(_mm_loadu_si16(&iPoint.mX)));
 }
 
 template <>
 inline double computeDistanceSquared<int16_t>(const Point<int16_t>& iPoint, const Box<int16_t>& iBox) noexcept {
-  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+  const auto wWiden = [](__m128i iValues) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+    return _mm_cvtepi16_epi32(iValues);
+#else
+    return _mm_unpacklo_epi16(iValues, _mm_srai_epi16(iValues, 15));
+#endif
+  };
+
+  return computeDistanceSquaredEpi32(wWiden(_mm_loadl_epi64(bit_cast<const __m128i*>(&iBox.mMinX))),
+                                     wWiden(_mm_loadu_si32(&iPoint.mX)));
 }
 
 template <>
 inline double computeDistanceSquared<uint16_t>(const Point<uint16_t>& iPoint, const Box<uint16_t>& iBox) noexcept {
-  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+  const auto wWiden = [](__m128i iValues) noexcept {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_SSE4
+    return _mm_cvtepu16_epi32(iValues);
+#else
+    return _mm_unpacklo_epi16(iValues, _mm_setzero_si128());
+#endif
+  };
+
+  return computeDistanceSquaredEpi32(wWiden(_mm_loadl_epi64(bit_cast<const __m128i*>(&iBox.mMinX))),
+                                     wWiden(_mm_loadu_si32(&iPoint.mX)));
 }
 
 template <>
 inline double computeDistanceSquared<int32_t>(const Point<int32_t>& iPoint, const Box<int32_t>& iBox) noexcept {
-  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+  const auto wBox = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
+  return computeDistanceSquaredEpi32(wBox, _mm_loadl_epi64(bit_cast<const __m128i*>(&iPoint.mX)));
 }
 
 template <>
 inline double computeDistanceSquared<uint32_t>(const Point<uint32_t>& iPoint, const Box<uint32_t>& iBox) noexcept {
-  return computeDistanceSquared(static_cast<Point<float>>(iPoint), static_cast<Box<float>>(iBox));
+  const auto wWiden = [](__m128i iValues) noexcept {
+    return _mm_add_pd(_mm_cvtepi32_pd(_mm_add_epi32(iValues, kOffset32)), kUnsignedBiasPd);
+  };
+  const auto wBox = _mm_loadu_si128(bit_cast<const __m128i*>(&iBox.mMinX));
+  return computeDistanceSquaredPd(wWiden(wBox),
+                                  wWiden(_mm_srli_si128(wBox, 8)),
+                                  wWiden(_mm_loadl_epi64(bit_cast<const __m128i*>(&iPoint.mX))));
 }
 #endif  // defined(FLATBUSH_USE_SIMD)
 

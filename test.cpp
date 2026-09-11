@@ -24,6 +24,7 @@ SOFTWARE.
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -994,6 +995,60 @@ TEST(FlatbushTest, NeighborsSupportsUnboundedAndSubnormalDistance) {
   const auto wFarIndex = wFarBuilder.finish();
   EXPECT_EQ(wFarIndex.neighbors({ 0.0, 0.0 }, 1, 1.0e200), std::vector<size_t> { 0UL });
   EXPECT_EQ(wFarIndex.neighbors({ 0.0, 0.0 }, 1), std::vector<size_t> { 0UL });
+}
+
+TEST(FlatbushTest, NeighborsDoNotOverflowTheMetric) {
+  constexpr size_t kNumItems = 64;
+  flatbush::FlatbushBuilder<float> wBuilder(kNumItems, 4);
+
+  for (size_t wIdx = 0; wIdx < kNumItems; ++wIdx) {
+    const auto wValue = -1e30F + static_cast<float>(wIdx) * (2e30F / kNumItems);
+    wBuilder.add({ wValue, wValue, wValue, wValue });
+  }
+
+  const auto wIndex = wBuilder.finish();
+  const auto wCorner = static_cast<double>(-1e30F);
+
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(flatbush::Point<float> { 0.0F, 0.0F },
+                                                            flatbush::Box<float> { -1e30F, -1e30F, -1e30F, -1e30F }),
+                   2.0 * wCorner * wCorner);
+  EXPECT_EQ(wIndex.neighbors({ 0.0F, 0.0F }, kNumItems, 2e30).size(), kNumItems);
+}
+
+TEST(FlatbushTest, SignedIntegerMetricKeepsFullPrecision) {
+  const flatbush::Point<int32_t> wPoint { 0, 0 };
+  const flatbush::Box<int32_t> wNear { 2147483585, 0, 2147483585, 0 };
+  const flatbush::Box<int32_t> wFar { 2147483647, 0, 2147483647, 0 };
+
+  EXPECT_EQ(static_cast<float>(wNear.mMinX), static_cast<float>(wFar.mMinX));
+  EXPECT_LT(flatbush::detail::computeDistanceSquared(wPoint, wNear),
+            flatbush::detail::computeDistanceSquared(wPoint, wFar));
+}
+
+TEST(FlatbushTest, UnsignedIntegerMetricKeepsFullPrecision) {
+  const auto wMax = std::numeric_limits<uint32_t>::max();
+  const flatbush::Point<uint32_t> wPoint { 0U, 0U };
+  const flatbush::Box<uint32_t> wNear { wMax - 62U, 0U, wMax - 62U, 0U };
+  const flatbush::Box<uint32_t> wFar { wMax, 0U, wMax, 0U };
+
+  EXPECT_EQ(static_cast<float>(wNear.mMinX), static_cast<float>(wFar.mMinX));
+  EXPECT_LT(flatbush::detail::computeDistanceSquared(wPoint, wNear),
+            flatbush::detail::computeDistanceSquared(wPoint, wFar));
+}
+
+TEST(FlatbushTest, NarrowIntegerMetricWidensCorrectly) {
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(flatbush::Point<int8_t> { -128, -128 },
+                                                            flatbush::Box<int8_t> { 127, 127, 127, 127 }),
+                   2.0 * 255.0 * 255.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(flatbush::Point<uint8_t> { 0U, 0U },
+                                                            flatbush::Box<uint8_t> { 255U, 255U, 255U, 255U }),
+                   2.0 * 255.0 * 255.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(flatbush::Point<int16_t> { -32768, -32768 },
+                                                            flatbush::Box<int16_t> { 32767, 32767, 32767, 32767 }),
+                   2.0 * 65535.0 * 65535.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(flatbush::Point<uint16_t> { 0U, 0U },
+                                                            flatbush::Box<uint16_t> { 65535U, 65535U, 65535U, 65535U }),
+                   2.0 * 65535.0 * 65535.0);
 }
 
 TEST(FlatbushTest, SearchOutsideGlobalBoundsReturnsEmpty) {

@@ -76,6 +76,8 @@ auto filterOdd = [](size_t id){ return id % 2 != 0; };
 auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
+`maxDistance` may be infinite, in which case no candidates are pruned by distance.
+
 ### Searching for nearest neighbors with a custom metric
 
 By default, `neighbors` ranks and prunes on the planar Euclidean distance and `maxDistance` is
