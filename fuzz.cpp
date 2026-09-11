@@ -100,18 +100,22 @@ void FuzzFromTemplate(const std::string& data) {
 
   const auto& wLevelBounds = calculateNumNodesPerLevel(wNumItems, wNodeSize);
   const auto wNumNodes = wLevelBounds.empty() ? wNumItems : wLevelBounds.back();
-  const auto wIndicesByteSize = wNumNodes *
-                                ((wNumNodes > flatbush::gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t));
+  const auto wIndicesByteSize = wNumNodes * ((wNumNodes > flatbush::gMaxNumNodes) ? sizeof(flatbush::WideIndexType)
+                                                                                  : sizeof(flatbush::NarrowIndexType));
   const auto wNodesByteSize = wNumNodes * sizeof(flatbush::Box<ArrayType>);
   const auto wSize = flatbush::gHeaderByteSize + wNodesByteSize + wIndicesByteSize;
   if (wSize != iSize) return;
 
-  auto wIndex = flatbush::FlatbushBuilder<ArrayType>::from(iData, iSize);
+  try {
+    auto wIndex = flatbush::FlatbushBuilder<ArrayType>::from(iData, iSize);
 
-  ASSERT_EQ(wIndex.data().size(), iSize);
-  ASSERT_EQ(wIndex.nodeSize(), wNodeSize);
-  ASSERT_EQ(wIndex.numItems(), wNumItems);
-  ASSERT_EQ(wIndex.indexSize(), wNumNodes);
+    ASSERT_EQ(wIndex.data().size(), iSize);
+    ASSERT_EQ(wIndex.nodeSize(), wNodeSize);
+    ASSERT_EQ(wIndex.numItems(), wNumItems);
+    ASSERT_EQ(wIndex.indexSize(), wNumNodes);
+  } catch (const std::invalid_argument&) {
+    return;
+  }
 }
 
 void FuzzFromInt8(const std::string& data) { FuzzFromTemplate<int8_t>(data); }

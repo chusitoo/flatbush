@@ -133,7 +133,7 @@ TEST(FlatbushTest, IndexBunchOfRectangles) {
   EXPECT_EQ(wBoxes[wBoxLen - 2], 96);
   EXPECT_EQ(wBoxes[wBoxLen - 1], 95);
 
-  auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
+  auto wIndices = flatbush::detail::bit_cast<const flatbush::NarrowIndexType*>(&wBoxes[wBoxLen]);
   EXPECT_EQ(wIndices[wIndex.indexSize() - 1], 400);
 }
 
@@ -160,7 +160,7 @@ TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
   auto wBoxes = flatbush::detail::bit_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
   size_t wBoxLen = wIndex.indexSize() * 4;
 
-  auto wIndices = flatbush::detail::bit_cast<const uint16_t*>(&wBoxes[wBoxLen]);
+  auto wIndices = flatbush::detail::bit_cast<const flatbush::NarrowIndexType*>(&wBoxes[wBoxLen]);
   // sort should be skipped, ordered progressing indices expected
   for (size_t wIdx = 0; wIdx < wSize; ++wIdx) {
     EXPECT_EQ(wIndices[wIdx], wIdx);
@@ -517,6 +517,84 @@ TEST(FlatbushTest, FromOversizedBuffer) {
 
   EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(wVector.data(), wVector.size()); }, std::invalid_argument);
   EXPECT_THROW({ flatbush::FlatbushBuilder<double>::from(std::move(wVector)); }, std::invalid_argument);
+}
+
+TEST(FlatbushTest, FromInvalidInternalNodeIndex) {
+  static constexpr auto kNumItems = 5U;
+  flatbush::FlatbushBuilder<uint32_t> wBuilder(kNumItems, 2U);
+  for (uint32_t wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    wBuilder.add({ wIdx, wIdx, wIdx, wIdx });
+  }
+
+  auto wIndex = wBuilder.finish();
+  const auto wData = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wIndicesOffset = flatbush::gHeaderByteSize + wIndex.indexSize() * sizeof(flatbush::Box<uint32_t>);
+
+  for (auto wPosition = wIndex.numItems(); wPosition < wIndex.indexSize(); ++wPosition) {
+    auto wCorruptData = wData;
+    flatbush::NarrowIndexType wIndexValue;
+    std::memcpy(&wIndexValue,
+                wCorruptData.data() + wIndicesOffset + wPosition * sizeof(wIndexValue),
+                sizeof(wIndexValue));
+    wIndexValue = static_cast<flatbush::NarrowIndexType>(wIndexValue ^ 4U);
+    std::memcpy(wCorruptData.data() + wIndicesOffset + wPosition * sizeof(wIndexValue),
+                &wIndexValue,
+                sizeof(wIndexValue));
+
+    EXPECT_THROW(
+        { flatbush::FlatbushBuilder<uint32_t>::from(wCorruptData.data(), wCorruptData.size()); },
+        std::invalid_argument);
+  }
+}
+
+TEST(FlatbushTest, FromInvalidWideInternalNodeIndex) {
+  static constexpr auto kNumItems = 20000U;
+  flatbush::FlatbushBuilder<uint32_t> wBuilder(kNumItems);
+  for (uint32_t wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    wBuilder.add({ wIdx, wIdx, wIdx, wIdx });
+  }
+
+  auto wIndex = wBuilder.finish();
+  auto wData = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
+  const auto wRootPosition = wIndex.indexSize() - 1UL;
+  const auto wIndicesOffset = flatbush::gHeaderByteSize + wIndex.indexSize() * sizeof(flatbush::Box<uint32_t>);
+
+  ASSERT_GT(wIndex.indexSize(), flatbush::gMaxNumNodes);
+  const auto wRestored = flatbush::FlatbushBuilder<uint32_t>::from(wData.data(), wData.size());
+  EXPECT_EQ(wRestored.numItems(), kNumItems);
+
+  const flatbush::WideIndexType wWrongRootIndex = 0U;
+  std::memcpy(wData.data() + wIndicesOffset + wRootPosition * sizeof(wWrongRootIndex),
+              &wWrongRootIndex,
+              sizeof(wWrongRootIndex));
+  EXPECT_THROW({ flatbush::FlatbushBuilder<uint32_t>::from(wData.data(), wData.size()); }, std::invalid_argument);
+}
+
+TEST(FlatbushTest, FromSupportsIndexWidthBoundary) {
+  for (const auto wNumItems : { 15358U, 15359U }) {
+    flatbush::FlatbushBuilder<uint32_t> wBuilder(wNumItems);
+    for (uint32_t wIdx = 0U; wIdx < wNumItems; ++wIdx) {
+      wBuilder.add({ wIdx, wIdx, wIdx, wIdx });
+    }
+
+    const auto wIndex = wBuilder.finish();
+    const auto wExpectedNodes = wNumItems == 15358U ? flatbush::gMaxNumNodes : flatbush::gMaxNumNodes + 1UL;
+    ASSERT_EQ(wIndex.indexSize(), wExpectedNodes);
+
+    const auto wRestored = flatbush::FlatbushBuilder<uint32_t>::from(wIndex.data().data(), wIndex.data().size());
+    EXPECT_EQ(wRestored.indexSize(), wExpectedNodes);
+    EXPECT_EQ(wRestored.search({ wNumItems - 1U, wNumItems - 1U, wNumItems - 1U, wNumItems - 1U }),
+              std::vector<size_t> { wNumItems - 1UL });
+  }
+}
+
+TEST(FlatbushTest, FromSupportsSingleItemIndex) {
+  flatbush::FlatbushBuilder<double> wBuilder(1U);
+  wBuilder.add({ 1.0, 2.0, 3.0, 4.0 });
+  const auto wIndex = wBuilder.finish();
+
+  const auto wRestored = flatbush::FlatbushBuilder<double>::from(wIndex.data().data(), wIndex.data().size());
+  EXPECT_EQ(wRestored.search({ 1.0, 2.0, 3.0, 4.0 }), std::vector<size_t> { 0UL });
 }
 
 TEST(FlatbushTest, FromMovedVectorDoesNotCopy) {

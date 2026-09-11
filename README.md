@@ -115,11 +115,11 @@ auto other = FlatbushBuilder<double>::from(std::move(vector));
 
 `fromView` builds the index directly on top of bytes it does not own, 
 so nothing is copied. The buffer stays the caller's responsibility and 
-**must outlive the index**, which makes this the right fit for a memory 
+**must outlive the index and remain unchanged**, which makes this the right fit for a memory
 mapping or a long-lived buffer shared between several indices.
 
 ```cpp
-// the index reads these bytes in place; `storage` must outlive `view`
+// the index reads these bytes in place; `storage` must outlive `view` and remain unchanged
 auto storage = std::vector<uint8_t>{buffer.begin(), buffer.end()};
 auto bytes = span<const uint8_t>{storage.data(), storage.size()};
 auto view = FlatbushBuilder<double>::fromView(bytes);

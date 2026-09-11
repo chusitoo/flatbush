@@ -109,15 +109,18 @@ class span {
 };
 #endif  // FLATBUSH_SPAN
 
+using NarrowIndexType = uint16_t;
+using WideIndexType = uint32_t;
+
 constexpr double gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = std::numeric_limits<double>::infinity();
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
 constexpr auto gInvalidArrayType = std::numeric_limits<uint8_t>::max();
-constexpr uint16_t gMinNodeSize = 2;
-constexpr uint16_t gMaxNodeSize = std::numeric_limits<uint16_t>::max();
-constexpr size_t gMaxNumNodes = gMaxNodeSize / 4U;
-constexpr size_t gDefaultNodeSize = 16;
-constexpr size_t gHeaderByteSize = 8;
+constexpr auto gMinNodeSize = uint16_t { 2 };
+constexpr auto gMaxNodeSize = std::numeric_limits<uint16_t>::max();
+constexpr auto gMaxNumNodes = gMaxNodeSize / 4UL;
+constexpr auto gDefaultNodeSize = 16UL;
+constexpr auto gHeaderByteSize = 8UL;
 constexpr uint8_t gValidityFlag = 0xfb;
 constexpr uint8_t gVersion = 3;  // serialized format version
 
@@ -742,7 +745,7 @@ inline HilbertValues computeHilbertValues(size_t iNumItems,
 
 template <typename ArrayType>
 bool tryCalculateDataSize(size_t iNumItems, uint16_t iNodeSize, size_t& oDataSize) noexcept {
-  static constexpr auto kMaxChildPosition = std::numeric_limits<uint32_t>::max() / 4UL;
+  static constexpr auto kMaxChildPosition = std::numeric_limits<WideIndexType>::max() / 4UL;
   if (iNumItems > std::numeric_limits<uint32_t>::max()) return false;
 
   uint64_t wLevelStart = 0U;
@@ -756,7 +759,7 @@ bool tryCalculateDataSize(size_t iNumItems, uint16_t iNodeSize, size_t& oDataSiz
     wNumNodes += wCount;
   } while (wCount > 1U);
 
-  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? sizeof(uint32_t) : sizeof(uint16_t);
+  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? sizeof(WideIndexType) : sizeof(NarrowIndexType);
   const auto wDataSize = static_cast<uint64_t>(gHeaderByteSize) + wNumNodes * (sizeof(Box<ArrayType>) + wIndexByteSize);
   if (wDataSize > std::numeric_limits<size_t>::max()) {
     return false;
@@ -803,7 +806,7 @@ class FlatbushBuilder {
   static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
   static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
 
-  // Zero-copy: the bytes stay owned by the caller, who must outlive the index
+  // Zero-copy: caller-owned bytes must outlive the index and remain unchanged
   static Flatbush<ArrayType> fromView(span<const uint8_t> iBytes);
 
  private:
@@ -866,6 +869,9 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBy
 
 template <typename ArrayType>
 void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
+  static constexpr auto kNarrowNodeByteSize = kBoxByteSize + sizeof(NarrowIndexType);
+  static constexpr auto kWideNodeByteSize = kBoxByteSize + sizeof(WideIndexType);
+
   static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
                 "Unexpected typed array class. Expecting non 64-bit integral "
                 "or floating point.");
@@ -916,6 +922,32 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   if (wSize != iSize) {
     throw std::invalid_argument("Num items dictates a total size of " + std::to_string(wSize) +
                                 ", but got buffer size " + std::to_string(iSize) + ".");
+  }
+
+  // Exact size is known, so the box-plus-index stride determines the node count and index width.
+  const auto wPayloadSize = iSize - gHeaderByteSize;
+  const auto wIsWideIndex = wPayloadSize > (gMaxNumNodes * kNarrowNodeByteSize);
+  const auto wNumNodes = wPayloadSize / (wIsWideIndex ? kWideNodeByteSize : kNarrowNodeByteSize);
+  const auto wIndexes = iData + gHeaderByteSize + wNumNodes * kBoxByteSize;
+  const auto wNarrowIndexes = detail::bit_cast<const NarrowIndexType*>(wIndexes);
+  const auto wWideIndexes = detail::bit_cast<const WideIndexType*>(wIndexes);
+  size_t wChildStart = 0UL;
+  size_t wChildEnd = wNumItems;
+  size_t wParentIndex = wNumItems;
+
+  // Each parent follows its child level and points to the first child in its fixed-size group.
+  while (wParentIndex < wNumNodes) {
+    for (auto wChildIndex = wChildStart; wChildIndex < wChildEnd; wChildIndex += wNodeSize, ++wParentIndex) {
+      const size_t wExpectedIndex = wChildIndex << 2U;
+      const size_t wStoredIndex = wIsWideIndex ? wWideIndexes[wParentIndex] : wNarrowIndexes[wParentIndex];
+
+      if (wStoredIndex != wExpectedIndex) {
+        throw std::invalid_argument("Data contains an invalid internal node index.");
+      }
+    }
+
+    wChildStart = wChildEnd;
+    wChildEnd = wParentIndex;
   }
 }
 
@@ -1005,15 +1037,14 @@ class Flatbush {
   void swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept;
 
   inline size_t getIndex(size_t iPosition) const noexcept {
-    return mIsWideIndex ? static_cast<size_t>(mIndicesUint32[iPosition])
-                        : static_cast<size_t>(mIndicesUint16[iPosition]);
+    return mIsWideIndex ? static_cast<size_t>(mWideIndexes[iPosition]) : static_cast<size_t>(mNarrowIndexes[iPosition]);
   }
 
   inline void setIndex(size_t iPosition, size_t iValue) noexcept {
     if (mIsWideIndex) {
-      mIndicesUint32[iPosition] = static_cast<uint32_t>(iValue);
+      mWideIndexes[iPosition] = static_cast<WideIndexType>(iValue);
     } else {
-      mIndicesUint16[iPosition] = static_cast<uint16_t>(iValue);
+      mNarrowIndexes[iPosition] = static_cast<NarrowIndexType>(iValue);
     }
   }
 
@@ -1050,8 +1081,8 @@ class Flatbush {
   std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
   span<const uint8_t> mBytes;
   span<Box<ArrayType>> mBoxes;
-  span<uint16_t> mIndicesUint16;
-  span<uint32_t> mIndicesUint32;
+  span<NarrowIndexType> mNarrowIndexes;
+  span<WideIndexType> mWideIndexes;
   // pick appropriate index view
   bool mIsWideIndex = false;
   // box stuff
@@ -1108,8 +1139,8 @@ void Flatbush<ArrayType>::init(bool iIsPacked) {
 
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
   mBoxes = { detail::bit_cast<Box<ArrayType>*>(wBase + gHeaderByteSize), wNumNodes };
-  mIndicesUint16 = { detail::bit_cast<uint16_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
-  mIndicesUint32 = { detail::bit_cast<uint32_t*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+  mNarrowIndexes = { detail::bit_cast<NarrowIndexType*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+  mWideIndexes = { detail::bit_cast<WideIndexType*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
 
   // Already-packed bytes leave nothing to fill in, so the tree starts out complete
   if (iIsPacked && wNumNodes > 0UL) {
@@ -1365,9 +1396,9 @@ void Flatbush<ArrayType>::swap(detail::HilbertValues& iValues, size_t iLeft, siz
   std::swap(mBoxes[iLeft], mBoxes[iRight]);
 
   if (mIsWideIndex) {
-    std::swap(mIndicesUint32[iLeft], mIndicesUint32[iRight]);
+    std::swap(mWideIndexes[iLeft], mWideIndexes[iRight]);
   } else {
-    std::swap(mIndicesUint16[iLeft], mIndicesUint16[iRight]);
+    std::swap(mNarrowIndexes[iLeft], mNarrowIndexes[iRight]);
   }
 }
 
