@@ -91,7 +91,7 @@ if(WITH_TESTS)
   add_executable(${test_target} "test.cpp")
   target_compile_options(${test_target} PRIVATE ${FLATBUSH_WARNING_FLAGS})
   target_link_libraries(${test_target} PRIVATE ${FLATBUSH_TARGET} gtest_main)
-  gtest_discover_tests(${test_target})
+  gtest_discover_tests(${test_target} DISCOVERY_TIMEOUT 30)
 endif()
 
 if(WITH_FUZZING)
