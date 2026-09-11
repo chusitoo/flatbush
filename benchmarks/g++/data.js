@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789004982919,
+  "lastUpdate": 1789121927800,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -13870,6 +13870,72 @@ window.BENCHMARK_DATA = {
             "value": 212946616.00000116,
             "unit": "ns/iter",
             "extra": "iterations: 3\ncpu: 212907490.33333346 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "distinct": true,
+          "id": "e70887d621af5e43937d87cb61b98ba8f98f22c7",
+          "message": "Verify the packed structure when importing a buffer\n\nLevels are packed into consecutive blocks of nodeSize, full except for the last\nof each, so a node's first child follows from its position alone. The traversal\nwalks those offsets without bounds checking them, and validate() so far looked\nonly at the header and the total size, so a buffer that disagreed was accepted\nand then followed.\n\nChecking it costs one multiply add and a compare per internal node, reading only\nthe internal node tail of the index array rather than the buffer: 39 microseconds\non a million item, 36.6 MB index, against 78 milliseconds to build one. A scan\nconfirming that each parent box encloses its children would be the other half of\nthe story, but it touches all 32.6 MB and costs 2.8 milliseconds, so it is left\nout.\n\nOf 4000 buffers with random bytes flipped in the index array, 489 are now\nrejected, being exactly those that move a child offset. The rest only corrupt\nleaf indices, which are handed back to the caller rather than followed.",
+          "timestamp": "2026-09-10T04:24:03Z",
+          "tree_id": "fdd75f808a8a43fea58d904534cd2426f7af0bcb",
+          "url": "https://github.com/chusitoo/flatbush/commit/e70887d621af5e43937d87cb61b98ba8f98f22c7"
+        },
+        "date": 1789121926840,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 41649645.071428515,
+            "unit": "ns/iter",
+            "extra": "iterations: 14\ncpu: 41645668.21428572 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 55905396.41666699,
+            "unit": "ns/iter",
+            "extra": "iterations: 12\ncpu: 55897409.16666668 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 12688300.509090956,
+            "unit": "ns/iter",
+            "extra": "iterations: 55\ncpu: 12686059.199999996 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 1934598.457063682,
+            "unit": "ns/iter",
+            "extra": "iterations: 361\ncpu: 1934009.3102493074 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 9976064.20000007,
+            "unit": "ns/iter",
+            "extra": "iterations: 70\ncpu: 9974260.171428563 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 88952082.24999961,
+            "unit": "ns/iter",
+            "extra": "iterations: 8\ncpu: 88943320.75 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 125355377.00000247,
+            "unit": "ns/iter",
+            "extra": "iterations: 5\ncpu: 125340867.79999995 ns\nthreads: 1"
           }
         ]
       }
