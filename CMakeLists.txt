@@ -70,7 +70,9 @@ if(WITH_BENCHMARKS)
 endif()
 
 if(WITH_TESTS)
-  set(CMAKE_BUILD_TYPE Debug)
+  if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
+  endif()
 
   include(FetchContent)
   FetchContent_Declare(
