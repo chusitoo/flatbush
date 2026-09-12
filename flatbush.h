@@ -1208,10 +1208,12 @@ void Flatbush<ArrayType>::pack() {
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
   auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
-  // sort items by their Hilbert value (for packing later); one buffer serves every range the
-  // radix hands down to the comparison sort
-  std::vector<size_t> wSortStack;
-  sort(wHilbertValues, 0U, wNumItems - 1U, std::numeric_limits<detail::HilbertValueType>::digits, wSortStack);
+  if (!std::is_sorted(wHilbertValues.begin(), wHilbertValues.end())) {
+    // sort items by their Hilbert value (for packing later); one buffer serves every range the
+    // radix hands down to the comparison sort
+    std::vector<size_t> wSortStack;
+    sort(wHilbertValues, 0U, wNumItems - 1U, std::numeric_limits<detail::HilbertValueType>::digits, wSortStack);
+  }
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
     const auto wEnd = mLevelBounds[wIdx];

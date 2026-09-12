@@ -175,6 +175,66 @@ TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
   EXPECT_EQ(wBoxes[wBoxLen - 1], wRootMaxY);
 }
 
+TEST(FlatbushTest, SkipSortingEqualHilbertValues) {
+  static constexpr auto kNumItems = 64U;
+  flatbush::FlatbushBuilder<double> wBuilder(kNumItems);
+
+  for (auto wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    wBuilder.add({ 42.0, 42.0, 42.0, 42.0 });
+  }
+
+  const auto wIndex = wBuilder.finish();
+  const auto wData = wIndex.data();
+  const auto wBoxes =
+      flatbush::detail::bit_cast<const flatbush::Box<double>*>(&wData[flatbush::gHeaderByteSize]);
+  const auto wIndices =
+      flatbush::detail::bit_cast<const flatbush::NarrowIndexType*>(wBoxes + wIndex.indexSize());
+
+  for (auto wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    EXPECT_EQ(wIndices[wIdx], wIdx);
+  }
+}
+
+TEST(FlatbushTest, SkipSortingIncreasingHilbertValues) {
+  static constexpr auto kNumItems = 64U;
+  auto wBoxes = std::vector<flatbush::Box<double>> {};
+  auto wOrder = std::vector<size_t> {};
+  wBoxes.reserve(kNumItems);
+  wOrder.reserve(kNumItems);
+
+  for (auto wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    const auto wX = static_cast<double>(wIdx);
+    const auto wY = static_cast<double>((wIdx * 17U) % kNumItems);
+    wBoxes.push_back({ wX, wY, wX, wY });
+    wOrder.push_back(wIdx);
+  }
+
+  const auto wHilbertValues = flatbush::detail::computeHilbertValues(
+      wBoxes.size(),
+      { 0.0, 0.0, static_cast<double>(kNumItems - 1U), static_cast<double>(kNumItems - 1U) },
+      flatbush::span<flatbush::Box<double>> { wBoxes.data(), wBoxes.size() });
+  std::sort(wOrder.begin(), wOrder.end(), [&wHilbertValues](size_t iLeft, size_t iRight) {
+    return wHilbertValues[iLeft] < wHilbertValues[iRight];
+  });
+  ASSERT_LT(wHilbertValues[wOrder.front()], wHilbertValues[wOrder.back()]);
+
+  flatbush::FlatbushBuilder<double> wBuilder(kNumItems);
+  for (const auto wIdx : wOrder) {
+    wBuilder.add(wBoxes[wIdx]);
+  }
+
+  const auto wIndex = wBuilder.finish();
+  const auto wData = wIndex.data();
+  const auto wPackedBoxes =
+      flatbush::detail::bit_cast<const flatbush::Box<double>*>(&wData[flatbush::gHeaderByteSize]);
+  const auto wIndices =
+      flatbush::detail::bit_cast<const flatbush::NarrowIndexType*>(wPackedBoxes + wIndex.indexSize());
+
+  for (auto wIdx = 0U; wIdx < kNumItems; ++wIdx) {
+    EXPECT_EQ(wIndices[wIdx], wIdx);
+  }
+}
+
 TEST(FlatbushTest, PerformBoxSearch) {
   auto wIndex = createIndex();
   flatbush::Box<double> box { 40, 40, 60, 60 };
