@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1789218045667,
+  "lastUpdate": 1789219581718,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -13554,6 +13554,72 @@ window.BENCHMARK_DATA = {
             "value": 227186174.33333322,
             "unit": "ns/iter",
             "extra": "iterations: 3\ncpu: 227144643.66666663 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "distinct": true,
+          "id": "1ca4a8229d5578ba5662a8b35fa0acfe15c95ae1",
+          "message": "Preserve precision in Hilbert normalization\n\nNormalize coordinates in double precision, avoid overflow for large bounds, and keep SIMD and scalar conversion semantics consistent.",
+          "timestamp": "2026-09-11T23:52:39Z",
+          "tree_id": "150f0dfdce9b7137632904697dfd4a6b585611eb",
+          "url": "https://github.com/chusitoo/flatbush/commit/1ca4a8229d5578ba5662a8b35fa0acfe15c95ae1"
+        },
+        "date": 1789219579534,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 56317475.08333263,
+            "unit": "ns/iter",
+            "extra": "iterations: 12\ncpu: 56314309.16666665 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 67473234.59999989,
+            "unit": "ns/iter",
+            "extra": "iterations: 10\ncpu: 67458385.7 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 15991482.15909064,
+            "unit": "ns/iter",
+            "extra": "iterations: 44\ncpu: 15988591.818181815 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 2209218.0757097905,
+            "unit": "ns/iter",
+            "extra": "iterations: 317\ncpu: 2209045.684542587 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 17956475.487179384,
+            "unit": "ns/iter",
+            "extra": "iterations: 39\ncpu: 17955997 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 112634901.83333384,
+            "unit": "ns/iter",
+            "extra": "iterations: 6\ncpu: 112629726.49999996 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 223476077.00000083,
+            "unit": "ns/iter",
+            "extra": "iterations: 3\ncpu: 223429020.0000002 ns\nthreads: 1"
           }
         ]
       }
