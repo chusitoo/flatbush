@@ -98,14 +98,17 @@ class span {
   size_t mLen = 0;
 
  public:
-  span() noexcept = default;
-  span(Type* iPtr, size_t iLen) noexcept : mPtr { iPtr }, mLen { iLen } {}
+  constexpr span() noexcept = default;
+  constexpr span(Type* iPtr, size_t iLen) noexcept : mPtr { iPtr }, mLen { iLen } {}
   Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
-  Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
-  const Type* data() const noexcept { return mPtr; }
-  size_t size() const noexcept { return mLen; }
+  constexpr Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
+  constexpr const Type* data() const noexcept { return mPtr; }
+  constexpr size_t size() const noexcept { return mLen; }
+  constexpr bool empty() const noexcept { return mLen == 0; }
   Type* begin() noexcept { return mPtr; }
+  constexpr const Type* begin() const noexcept { return mPtr; }
   Type* end() noexcept { return mPtr + mLen; }
+  constexpr const Type* end() const noexcept { return mPtr + mLen; }
 };
 #endif  // FLATBUSH_SPAN
 
@@ -132,7 +135,7 @@ struct Box {
   ArrayType mMaxY;
 
   template <typename OtherType>
-  explicit operator Box<OtherType>() const {
+  constexpr explicit operator Box<OtherType>() const {
     return Box<OtherType> { static_cast<OtherType>(mMinX),
                             static_cast<OtherType>(mMinY),
                             static_cast<OtherType>(mMaxX),
@@ -146,7 +149,7 @@ struct Point {
   ArrayType mY;
 
   template <typename OtherType>
-  explicit operator Point<OtherType>() const {
+  constexpr explicit operator Point<OtherType>() const {
     return Point<OtherType> { static_cast<OtherType>(mX), static_cast<OtherType>(mY) };
   }
 };
@@ -342,7 +345,7 @@ inline size_t approximateResultsSize(const Box<ArrayType>& iBoxIndex,
 }
 
 template <typename ArrayType>
-inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+constexpr bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
   // Bitwise or instead of logical or: the four comparisons are cheap and independent,
   // so evaluating them all beats short circuiting on unpredictable data
   return !((iQuery.mMaxX < iBox.mMinX) | (iQuery.mMaxY < iBox.mMinY) | (iQuery.mMinX > iBox.mMaxX) |
@@ -351,7 +354,7 @@ inline bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& i
 
 // True when the query swallows the box whole, so every descendant of it matches
 template <typename ArrayType>
-inline bool boxContains(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+constexpr bool boxContains(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
   return !((iQuery.mMinX > iBox.mMinX) | (iQuery.mMinY > iBox.mMinY) | (iQuery.mMaxX < iBox.mMaxX) |
            (iQuery.mMaxY < iBox.mMaxY));
 }
