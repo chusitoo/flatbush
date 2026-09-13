@@ -427,6 +427,69 @@ TEST(FlatbushTest, NeighborsQueryAllItems) {
   EXPECT_EQ(wIds.size(), wIndex.numItems());
 }
 
+TEST(FlatbushTest, VisitNeighborsMatchesNeighborsAndReportsSquaredDistance) {
+  auto wIndex = createIndex();
+  const flatbush::Point<double> wQuery { 50, 50 };
+  const auto wExpected = wIndex.neighbors(wQuery);
+  std::vector<size_t> wVisited;
+  auto wPreviousDistance = 0.0;
+
+  const auto wCompleted = wIndex.visitNeighbors(wQuery, [&](size_t iId, double iDistanceSquared) {
+    const flatbush::Box<double> wBox { gData[iId * 4], gData[iId * 4 + 1], gData[iId * 4 + 2], gData[iId * 4 + 3] };
+    EXPECT_DOUBLE_EQ(iDistanceSquared, flatbush::detail::computeDistanceSquared(wQuery, wBox));
+    EXPECT_GE(iDistanceSquared, wPreviousDistance);
+    wPreviousDistance = iDistanceSquared;
+    wVisited.push_back(iId);
+    return true;
+  });
+
+  EXPECT_TRUE(wCompleted);
+  EXPECT_EQ(wVisited, wExpected);
+}
+
+TEST(FlatbushTest, VisitNeighborsStopsImmediately) {
+  auto wIndex = createIndex();
+  const flatbush::Point<double> wQuery { 50, 50 };
+  auto wExpected = wIndex.neighbors(wQuery, 3);
+  std::vector<size_t> wVisited;
+
+  const auto wCompleted = wIndex.visitNeighbors(wQuery, [&wVisited](size_t iId, double) {
+    wVisited.push_back(iId);
+    return wVisited.size() < 3UL;
+  });
+
+  std::sort(wExpected.begin(), wExpected.end());
+  std::sort(wVisited.begin(), wVisited.end());
+  EXPECT_FALSE(wCompleted);
+  EXPECT_EQ(wVisited, wExpected);
+}
+
+TEST(FlatbushTest, VisitNeighborsGuardPathCompletesWithoutResults) {
+  auto wIndex = createIndex();
+  const auto wNaN = std::numeric_limits<double>::quiet_NaN();
+  size_t wCalls = 0UL;
+
+  const auto wCompleted = wIndex.visitNeighbors({ wNaN, 50.0 }, [&wCalls](size_t, double) {
+    ++wCalls;
+    return true;
+  });
+
+  EXPECT_TRUE(wCompleted);
+  EXPECT_EQ(wCalls, 0UL);
+}
+
+TEST(FlatbushTest, VisitNeighborsExceptionsPropagate) {
+  auto wIndex = createIndex();
+
+  EXPECT_THROW(
+      {
+        static_cast<void>(wIndex.visitNeighbors({ 50.0, 50.0 }, [](size_t, double) -> bool {
+          throw std::runtime_error("visitor failure");
+        }));
+      },
+      std::runtime_error);
+}
+
 TEST(FlatbushTest, NeighborsQueryMaxDistance) {
   auto wIndex = createIndex();
   auto wIds = wIndex.neighbors({ 50, 50 }, flatbush::gMaxResults, 12);

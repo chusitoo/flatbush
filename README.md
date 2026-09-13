@@ -100,6 +100,20 @@ auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 
 `maxDistance` may be infinite, in which case no candidates are pruned by distance.
 
+### Visiting nearest neighbors
+
+`visitNeighbors` invokes a callback for each item in nearest-first order without constructing a result vector. The
+callback receives the item ID and its squared Euclidean distance. Return `true` to continue or `false` to stop;
+the method returns whether every item was visited.
+
+```cpp
+auto completed = index.visitNeighbors(targetPoint,
+                                      [](size_t id, double distanceSquared) {
+                                          process(id, distanceSquared);
+                                          return shouldContinue();
+                                      });
+```
+
 ### Searching for nearest neighbors with a custom metric
 
 By default, `neighbors` ranks and prunes on the planar Euclidean distance and `maxDistance` is
