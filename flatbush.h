@@ -1186,6 +1186,10 @@ class Flatbush {
                                                 const FilterFn& iFilterFn = FilterFn {},
                                                 size_t iMaxResults = gMaxResults) const;
 
+  // Visits intersecting items until the visitor returns false. Returns true if traversal completed.
+  template <typename Visitor>
+  bool visitSearch(const Box<ArrayType>& iBounds, Visitor&& iVisitorFn) const;
+
   // The default metric takes a Euclidean radius; explicit callbacks use their output units.
   template <typename FilterFn = DefaultFilterFn, typename DistanceFn = DefaultDistanceFn>
   FLATBUSH_NODISCARD std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
@@ -1293,6 +1297,12 @@ class Flatbush {
 
   template <bool IsWideIndex, typename FilterFn>
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterFn& iFilterFn, size_t iMaxResults) const;
+
+  template <bool IsWideIndex, typename Visitor>
+  bool visitContained(size_t iNodeIndex, size_t iEnd, size_t iLevel, Visitor& iVisitorFn) const;
+
+  template <bool IsWideIndex, typename Visitor>
+  bool visitSearchImpl(const Box<ArrayType>& iBounds, Visitor& iVisitorFn) const;
 
   template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
@@ -1762,6 +1772,104 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   }
 
   return wResults;
+}
+
+// Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
+// subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
+template <typename ArrayType>
+template <bool IsWideIndex, typename Visitor>
+bool Flatbush<ArrayType>::visitContained(size_t iNodeIndex, size_t iEnd, size_t iLevel, Visitor& iVisitorFn) const {
+  const auto wNumItems = numItems();
+  const auto wNodeSize = nodeSize();
+  auto wPosition = iNodeIndex;
+  auto wCount = iEnd - iNodeIndex;
+
+  for (auto wDepth = iLevel; wDepth > 0UL; --wDepth) {
+    wPosition = getIndex<IsWideIndex>(wPosition) >> 2U;
+    wCount = std::min(wCount * wNodeSize, wNumItems);
+  }
+
+  const auto wEnd = std::min(wPosition + wCount, wNumItems);
+
+  for (; wPosition < wEnd; ++wPosition) {
+    const auto wIndex = getIndex<IsWideIndex>(wPosition);
+    const auto& wBox = mBoxes[wPosition];
+
+    if (!iVisitorFn(wIndex, wBox)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+template <typename ArrayType>
+template <bool IsWideIndex, typename Visitor>
+bool Flatbush<ArrayType>::visitSearchImpl(const Box<ArrayType>& iBounds, Visitor& iVisitorFn) const {
+  const auto wNumItems = numItems();
+  const auto wNodeSize = nodeSize();
+  size_t wNodeIndex = mBoxes.size() - 1UL;
+  std::vector<size_t> wQueue;
+  wQueue.reserve(wNodeSize << 2U);
+  auto wContained = detail::boxContains(iBounds, mBounds);
+
+  while (true) {
+    const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wLevel = levelOf(wNodeIndex);
+    const size_t wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
+
+    if (wContained) {
+      if (!visitContained<IsWideIndex>(wNodeIndex, wEnd, wLevel, iVisitorFn)) {
+        return false;
+      }
+    } else if (wIsInternalNode) {
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          wQueue.push_back(getIndex<IsWideIndex>(wPosition) |
+                           static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
+        }
+      }
+    } else {
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+          continue;
+        }
+
+        const auto wIndex = getIndex<IsWideIndex>(wPosition);
+        if (!iVisitorFn(wIndex, mBoxes[wPosition])) {
+          return false;
+        }
+      }
+    }
+
+    if (wQueue.empty()) {
+      return true;
+    }
+
+    wContained = (wQueue.back() & 1UL) != 0UL;
+    wNodeIndex = wQueue.back() >> 2U;
+    wQueue.pop_back();
+    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
+
+    if (!wQueue.empty()) {
+      const auto wNextIndex = wQueue.back() >> 2U;
+      detail::prefetchNode(&mBoxes[wNextIndex], std::min(wNodeSize, mBoxes.size() - wNextIndex));
+    }
+  }
+}
+
+template <typename ArrayType>
+template <typename Visitor>
+bool Flatbush<ArrayType>::visitSearch(const Box<ArrayType>& iBounds, Visitor&& iVisitorFn) const {
+  if (!canDoSearch(iBounds)) {
+    return true;
+  }
+
+  if (mIsWideIndex) {
+    return visitSearchImpl<true>(iBounds, iVisitorFn);
+  }
+
+  return visitSearchImpl<false>(iBounds, iVisitorFn);
 }
 
 template <typename ArrayType>
