@@ -321,6 +321,73 @@ TEST(FlatbushTest, PerformBoxSearch) {
   EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wResults.begin()));
 }
 
+TEST(FlatbushTest, VisitSearchMatchesSearch) {
+  auto wIndex = createIndex();
+  const flatbush::Box<double> wQuery { 40, 40, 60, 60 };
+  const auto wExpected = wIndex.search(wQuery);
+  std::vector<size_t> wVisited;
+
+  const auto wCompleted = wIndex.visitSearch(wQuery, [&wVisited](size_t iId, const flatbush::Box<double>& iBox) {
+    wVisited.push_back(iId);
+    EXPECT_EQ(iBox.mMinX, gData[iId * 4]);
+    EXPECT_EQ(iBox.mMinY, gData[iId * 4 + 1]);
+    EXPECT_EQ(iBox.mMaxX, gData[iId * 4 + 2]);
+    EXPECT_EQ(iBox.mMaxY, gData[iId * 4 + 3]);
+    return true;
+  });
+
+  EXPECT_TRUE(wCompleted);
+  EXPECT_EQ(wVisited, wExpected);
+}
+
+TEST(FlatbushTest, VisitSearchStopsInsideContainedSubtree) {
+  auto wIndex = createIndex();
+  const flatbush::Box<double> wQuery { 0, 1, 96, 95 };
+  const auto wExpected = wIndex.search(wQuery);
+  std::vector<size_t> wVisited;
+
+  const auto wCompleted = wIndex.visitSearch(wQuery, [&wVisited](size_t iId, const flatbush::Box<double>&) {
+    wVisited.push_back(iId);
+    return wVisited.size() < 3UL;
+  });
+
+  ASSERT_GE(wExpected.size(), wVisited.size());
+  EXPECT_FALSE(wCompleted);
+  EXPECT_EQ(wVisited.size(), 3UL);
+  EXPECT_TRUE(std::equal(wVisited.begin(), wVisited.end(), wExpected.begin()));
+}
+
+TEST(FlatbushTest, VisitSearchStopsDuringLeafTraversal) {
+  auto wIndex = createIndex();
+  const flatbush::Box<double> wQuery { 45, 42, 45, 42 };
+  const auto wExpected = wIndex.search(wQuery);
+  std::vector<size_t> wVisited;
+
+  const auto wCompleted = wIndex.visitSearch(wQuery, [&wVisited](size_t iId, const flatbush::Box<double>&) {
+    wVisited.push_back(iId);
+    return false;
+  });
+
+  ASSERT_FALSE(wExpected.empty());
+  ASSERT_EQ(wVisited.size(), 1UL);
+  EXPECT_FALSE(wCompleted);
+  EXPECT_EQ(wVisited.front(), wExpected.front());
+}
+
+TEST(FlatbushTest, VisitSearchCompletesWithoutMatches) {
+  auto wIndex = createIndex();
+  size_t wCalls = 0UL;
+
+  const auto wCompleted = wIndex.visitSearch({ 1000, 1000, 1010, 1010 },
+                                             [&wCalls](size_t, const flatbush::Box<double>&) {
+                                               ++wCalls;
+                                               return true;
+                                             });
+
+  EXPECT_TRUE(wCompleted);
+  EXPECT_EQ(wCalls, 0UL);
+}
+
 TEST(FlatbushTest, ReconstructIndexFromArrayBuffer) {
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();
