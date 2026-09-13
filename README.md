@@ -68,6 +68,18 @@ An omitted limit returns all matches; zero returns none. Results follow tree tra
 
 Filters and distance callbacks must be callable through a const reference.
 
+### Visiting bounding box results
+
+`visitSearch` invokes a callback for each matching item without constructing a result vector. Return `true` from the callback to continue or `false` to stop immediately. The method returns whether the traversal completed.
+
+```cpp
+auto completed = index.visitSearch({40, 40, 60, 60},
+                                   [](size_t id, const Box<double>& box) {
+                                       process(id, box);
+                                       return shouldContinue();
+                                   });
+```
+
 ### Searching for nearest neighbors
 
 ```cpp
