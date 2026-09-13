@@ -42,6 +42,14 @@ SOFTWARE.
 #include <utility>      // for swap
 #include <vector>       // for vector
 
+#ifndef FLATBUSH_NODISCARD
+#if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
+#define FLATBUSH_NODISCARD [[nodiscard]]
+#else
+#define FLATBUSH_NODISCARD
+#endif
+#endif
+
 #define FLATBUSH_USE_AVX512 7
 #define FLATBUSH_USE_AVX2 6
 #define FLATBUSH_USE_AVX 5
@@ -842,12 +850,12 @@ class FlatbushBuilder {
 
   inline size_t add(const Point<ArrayType>& iPoint) { return add({ iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY }); }
 
-  Flatbush<ArrayType> finish();
-  static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
-  static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
+  FLATBUSH_NODISCARD Flatbush<ArrayType> finish();
+  FLATBUSH_NODISCARD static Flatbush<ArrayType> from(const uint8_t* iData, size_t iSize);
+  FLATBUSH_NODISCARD static Flatbush<ArrayType> from(std::vector<uint8_t>&& iData);
 
   // Zero-copy: caller-owned bytes must outlive the index and remain unchanged
-  static Flatbush<ArrayType> fromView(span<const uint8_t> iBytes);
+  FLATBUSH_NODISCARD static Flatbush<ArrayType> fromView(span<const uint8_t> iBytes);
 
  private:
   static void validate(const uint8_t* iData, size_t iSize);
@@ -1005,27 +1013,32 @@ class Flatbush {
   Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  std::vector<size_t> search(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn = nullptr) const;
+  FLATBUSH_NODISCARD std::vector<size_t> search(const Box<ArrayType>& iBounds,
+                                                const FilterCb& iFilterFn = nullptr) const;
 
   // Without a distance callback, iMaxDistance is a Euclidean distance in index units; with
   // one, it is compared as-is against whatever that callback returns
-  std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
-                                size_t iMaxResults = gMaxResults,
-                                double iMaxDistance = gMaxDistance,
-                                const FilterCb& iFilterFn = nullptr,
-                                const DistanceCb& iDistanceFn = nullptr) const;
+  FLATBUSH_NODISCARD std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults = gMaxResults,
+                                                   double iMaxDistance = gMaxDistance,
+                                                   const FilterCb& iFilterFn = nullptr,
+                                                   const DistanceCb& iDistanceFn = nullptr) const;
 
-  inline size_t nodeSize() const noexcept { return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2); }
+  FLATBUSH_NODISCARD inline size_t nodeSize() const noexcept {
+    return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2);
+  }
 
-  inline size_t numItems() const noexcept { return *detail::bit_cast<const uint32_t*>(mBytes.data() + 4); }
+  FLATBUSH_NODISCARD inline size_t numItems() const noexcept {
+    return *detail::bit_cast<const uint32_t*>(mBytes.data() + 4);
+  }
 
-  inline size_t indexSize() const noexcept { return mBoxes.size(); }
+  FLATBUSH_NODISCARD inline size_t indexSize() const noexcept { return mBoxes.size(); }
 
-  inline const Box<ArrayType>& bounds() const noexcept { return mBounds; }
+  FLATBUSH_NODISCARD inline const Box<ArrayType>& bounds() const noexcept { return mBounds; }
 
-  inline bool isView() const noexcept { return mData.empty(); }
+  FLATBUSH_NODISCARD inline bool isView() const noexcept { return mData.empty(); }
 
-  inline span<const uint8_t> data() const noexcept { return mBytes; }
+  FLATBUSH_NODISCARD inline span<const uint8_t> data() const noexcept { return mBytes; }
 
   friend class FlatbushBuilder<ArrayType>;
 
