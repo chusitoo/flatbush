@@ -1185,6 +1185,11 @@ class Flatbush {
                                                    const FilterFn& iFilterFn = FilterFn {},
                                                    const DistanceFn& iDistanceFn = DistanceFn {}) const;
 
+  // Visits all items in nearest-first order until the visitor returns false.
+  // The visitor receives the item index and its squared Euclidean distance.
+  template <typename Visitor>
+  bool visitNeighbors(const Point<ArrayType>& iPoint, Visitor&& iVisitorFn) const;
+
   FLATBUSH_NODISCARD inline size_t nodeSize() const noexcept {
     return detail::readUnaligned<uint16_t>(mBytes.data() + 2);
   }
@@ -1297,6 +1302,14 @@ class Flatbush {
                                     double iMaxDistance,
                                     const FilterFn& iFilterFn,
                                     const DistanceFn& iDistanceFn) const;
+
+  template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn, typename Visitor>
+  bool visitNeighborsImpl(const Point<ArrayType>& iPoint,
+                          size_t iMaxResults,
+                          double iThreshold,
+                          const FilterFn& iFilterFn,
+                          const DistanceFn& iDistanceFn,
+                          Visitor& iVisitorFn) const;
 
   struct IndexDistance {
     // Left uninitialized on purpose: a default member initializer would make the default
@@ -2070,6 +2083,132 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 
   return neighborsImpl<!kWideIndex, !kUseHeap>(iPoint, iMaxResults, iMaxDistance, iFilterFn, iDistanceFn);
 }
+
+template <typename ArrayType>
+template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn, typename Visitor>
+bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
+                                             size_t iMaxResults,
+                                             double iThreshold,
+                                             const FilterFn& iFilterFn,
+                                             const DistanceFn& iDistanceFn,
+                                             Visitor& iVisitorFn) const {
+  static constexpr auto kDefaultDistFn = std::is_same<typename std::decay<DistanceFn>::type, DefaultDistanceFn>::value;
+  static constexpr auto kDefaultFilterFn = std::is_same<typename std::decay<FilterFn>::type, DefaultFilterFn>::value;
+  // The bound inside counts every item under a node, so a filter that rejects some of them, or
+  // a metric that cannot say where a box ends, both invalidate it
+  static constexpr auto kCanBound = kDefaultDistFn && kDefaultFilterFn;
+  const auto wNumItems = numItems();
+  const auto wNodeSize = nodeSize();
+  size_t wNodeIndex = mBoxes.size() - 1UL;
+  std::vector<IndexDistance> wQueue;
+  wQueue.reserve(wNodeSize << 2U);
+  size_t wNumResults = 0UL;
+  // Wanting a single result makes the closest leaf seen so far a valid bound: nothing
+  // farther away can displace it, provided the visitor cannot reject that leaf
+  const auto wTrackNearest = iMaxResults == 1UL;
+  // Every item under a node sits inside that node's box, so once a subtree is known to hold at
+  // least iMaxResults of them its farthest corner is an upper bound on the k-th distance
+  auto wBound = iThreshold;
+  size_t wBoundLevel = 0UL;
+
+  for (size_t wItems = 1UL; wItems < iMaxResults && wBoundLevel + 1UL < mLevelBounds.size(); ++wBoundLevel) {
+    wItems = std::min(wItems * wNodeSize, wNumItems);
+  }
+
+  while (true) {
+    // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
+    const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wLevel = levelOf(wNodeIndex);
+    const auto wLevelEnd = mLevelBounds[wLevel];
+    const auto wLastAtLevel = wLevelEnd - 1UL;
+    const auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
+    const auto wQueueSize = wQueue.size();
+    // only a full node carries the count guarantee, and just the last of a level can be short
+    const auto wCanTighten = kCanBound && wIsInternalNode && wLevel >= wBoundLevel;
+
+    for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+      const auto wDistance = static_cast<double>(iDistanceFn(iPoint, mBoxes[wPosition]));
+
+      if (wDistance > wBound) {
+        continue;
+      }
+
+      const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+      if (wIsInternalNode || iFilterFn(wIndex, mBoxes[wPosition])) {
+        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
+        if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
+
+        if (wTrackNearest && !wIsInternalNode && wDistance < wBound) {
+          wBound = wDistance;
+        }
+
+        if (wCanTighten && wPosition != wLastAtLevel) {
+          wBound = std::min(wBound, detail::computeMaxDistanceSquared(iPoint, mBoxes[wPosition]));
+        }
+      }
+    }
+
+    if (UseHeap) {  // Heap strategy: push_heap after each insert, pop from front
+      while (!wQueue.empty() && (wQueue.front().mId & 1U)) {
+        const auto wResult = wQueue.front();
+        std::pop_heap(wQueue.begin(), wQueue.end());
+        wQueue.pop_back();
+
+        ++wNumResults;
+        if (!iVisitorFn(wResult.mId >> 1U, wResult.mDistance)) return false;
+        if (wNumResults >= iMaxResults) return true;
+      }
+
+      if (!wQueue.empty()) std::pop_heap(wQueue.begin(), wQueue.end());
+    } else {  // Sorted-vector strategy: batch insert, sort+merge, pop from back
+      if (wQueue.size() > wQueueSize) {
+        const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wQueueSize);
+        std::sort(wMid, wQueue.end());
+        std::inplace_merge(wQueue.begin(), wMid, wQueue.end());
+      }
+
+      while (!wQueue.empty() && (wQueue.back().mId & 1U)) {
+        const auto wResult = wQueue.back();
+        wQueue.pop_back();
+
+        ++wNumResults;
+        if (!iVisitorFn(wResult.mId >> 1U, wResult.mDistance)) return false;
+        if (wNumResults >= iMaxResults) return true;
+      }
+    }
+
+    if (wQueue.empty()) {
+      break;
+    }
+
+    wNodeIndex = wQueue.back().mId >> 3U;
+    wQueue.pop_back();
+    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
+  }
+
+  return true;
+}
+
+template <typename ArrayType>
+template <typename Visitor>
+bool Flatbush<ArrayType>::visitNeighbors(const Point<ArrayType>& iPoint, Visitor&& iVisitorFn) const {
+  static constexpr auto kWideIndex = true;
+  static constexpr auto kUseHeap = true;
+  const DefaultFilterFn wFilterFn {};
+  const DefaultDistanceFn wDistanceFn {};
+
+  if (!canDoNeighbors(iPoint, gMaxResults, wDistanceFn, gMaxDistance, gMaxDistance)) {
+    return true;
+  }
+
+  if (mIsWideIndex) {
+    return visitNeighborsImpl<kWideIndex, kUseHeap>(iPoint, gMaxResults, gMaxDistance, wFilterFn, wDistanceFn, iVisitorFn);
+  }
+
+  return visitNeighborsImpl<!kWideIndex, kUseHeap>(iPoint, gMaxResults, gMaxDistance, wFilterFn, wDistanceFn, iVisitorFn);
+}
+
 }  // namespace flatbush
 
 #endif  // FLATBUSH_FLATBUSH_H
