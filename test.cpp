@@ -26,6 +26,7 @@ SOFTWARE.
 
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -54,6 +55,11 @@ static_assert(!noexcept(static_cast<flatbush::Box<ThrowingNumber>>(std::declval<
               "Box coordinate conversion can invoke user code");
 static_assert(!noexcept(static_cast<flatbush::Point<ThrowingNumber>>(std::declval<const flatbush::Point<double>&>())),
               "Point coordinate conversion can invoke user code");
+static_assert(std::is_same<decltype(std::declval<const flatbush::Flatbush<double>&>().bounds()),
+                           const flatbush::Box<double>&>::value,
+              "Bounds must be exposed as a read-only reference");
+static_assert(noexcept(std::declval<const flatbush::Flatbush<double>&>().bounds()),
+              "Reading cached bounds cannot fail");
 
 static constexpr std::array<double, 400> gData {
   8,  62, 11, 66, 57, 17, 57, 19, 76, 26, 79, 29, 36, 56, 38, 56, 92, 77, 96, 80, 87, 70, 90, 74, 43, 41, 47, 43, 0,
@@ -125,6 +131,12 @@ flatbush::Flatbush<double> createSmallIndex(uint32_t iNumItems, uint16_t iNodeSi
 TEST(FlatbushTest, IndexBunchOfRectangles) {
   auto wIndex = createIndex();
   EXPECT_EQ(wIndex.indexSize() * 4 + wIndex.indexSize(), 540);
+
+  const auto& wBounds = wIndex.bounds();
+  EXPECT_EQ(wBounds.mMinX, 0);
+  EXPECT_EQ(wBounds.mMinY, 1);
+  EXPECT_EQ(wBounds.mMaxX, 96);
+  EXPECT_EQ(wBounds.mMaxY, 95);
 
   auto wData = wIndex.data();
   auto wBoxes = flatbush::detail::bit_cast<const double*>(&wData[flatbush::gHeaderByteSize]);

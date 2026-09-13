@@ -41,6 +41,9 @@ builder.add(Point<double>{10, 20});
 
 // perform the indexing
 auto index = builder.finish();
+
+// inspect the total extent of all indexed items without copying it
+const auto& bounds = index.bounds();
 ```
 
 `finish()` transfers the accumulated boxes into the index and resets the builder, which can

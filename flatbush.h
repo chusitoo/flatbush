@@ -1021,6 +1021,8 @@ class Flatbush {
 
   inline size_t indexSize() const noexcept { return mBoxes.size(); }
 
+  inline const Box<ArrayType>& bounds() const noexcept { return mBounds; }
+
   inline bool isView() const noexcept { return mData.empty(); }
 
   inline span<const uint8_t> data() const noexcept { return mBytes; }
