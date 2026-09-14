@@ -1316,11 +1316,10 @@ class Flatbush {
                                     const FilterFn& iFilterFn,
                                     const DistanceFn& iDistanceFn) const;
 
-  template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn, typename Visitor>
+  template <bool IsWideIndex, bool UseHeap, bool CanBound, typename DistanceFn, typename Visitor>
   bool visitNeighborsImpl(const Point<ArrayType>& iPoint,
                           size_t iMaxResults,
                           double iThreshold,
-                          const FilterFn& iFilterFn,
                           const DistanceFn& iDistanceFn,
                           Visitor& iVisitorFn) const;
 
@@ -2098,18 +2097,12 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 }
 
 template <typename ArrayType>
-template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn, typename Visitor>
+template <bool IsWideIndex, bool UseHeap, bool CanBound, typename DistanceFn, typename Visitor>
 bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
                                              size_t iMaxResults,
                                              double iThreshold,
-                                             const FilterFn& iFilterFn,
                                              const DistanceFn& iDistanceFn,
                                              Visitor& iVisitorFn) const {
-  static constexpr auto kDefaultDistFn = std::is_same<typename std::decay<DistanceFn>::type, DefaultDistanceFn>::value;
-  static constexpr auto kDefaultFilterFn = std::is_same<typename std::decay<FilterFn>::type, DefaultFilterFn>::value;
-  // The bound inside counts every item under a node, so a filter that rejects some of them, or
-  // a metric that cannot say where a box ends, both invalidate it
-  static constexpr auto kCanBound = kDefaultDistFn && kDefaultFilterFn;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   size_t wNodeIndex = mBoxes.size() - 1UL;
@@ -2137,7 +2130,7 @@ bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
     const auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
     const auto wQueueSize = wQueue.size();
     // only a full node carries the count guarantee, and just the last of a level can be short
-    const auto wCanTighten = kCanBound && wIsInternalNode && wLevel >= wBoundLevel;
+    const auto wCanTighten = CanBound && wIsInternalNode && wLevel >= wBoundLevel;
 
     for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
       const auto wDistance = static_cast<double>(iDistanceFn(iPoint, mBoxes[wPosition]));
@@ -2148,7 +2141,7 @@ bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
 
       const auto wIndex = getIndex<IsWideIndex>(wPosition);
 
-      if (wIsInternalNode || iFilterFn(wIndex, mBoxes[wPosition])) {
+      if (wIsInternalNode || iVisitorFn.accepts(wIndex, mBoxes[wPosition])) {
         wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
 
@@ -2169,7 +2162,7 @@ bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
         wQueue.pop_back();
 
         ++wNumResults;
-        if (!iVisitorFn(wResult.mId >> 1U, wResult.mDistance)) return false;
+        if (!iVisitorFn.visit(wResult.mId >> 1U, wResult.mDistance)) return false;
         if (wNumResults >= iMaxResults) return true;
       }
 
@@ -2186,7 +2179,7 @@ bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
         wQueue.pop_back();
 
         ++wNumResults;
-        if (!iVisitorFn(wResult.mId >> 1U, wResult.mDistance)) return false;
+        if (!iVisitorFn.visit(wResult.mId >> 1U, wResult.mDistance)) return false;
         if (wNumResults >= iMaxResults) return true;
       }
     }
@@ -2208,18 +2201,25 @@ template <typename Visitor>
 bool Flatbush<ArrayType>::visitNeighbors(const Point<ArrayType>& iPoint, Visitor&& iVisitorFn) const {
   static constexpr auto kWideIndex = true;
   static constexpr auto kUseHeap = true;
-  const DefaultFilterFn wFilterFn {};
+  static constexpr auto kCanBound = true;
   const DefaultDistanceFn wDistanceFn {};
+  struct VisitorAdapter {
+    Visitor& mVisitorFn;
+
+    bool accepts(size_t, const Box<ArrayType>&) const noexcept { return true; }
+    bool visit(size_t iIndex, double iDistance) { return mVisitorFn(iIndex, iDistance); }
+  };
+  VisitorAdapter wVisitor { iVisitorFn };
 
   if (!canDoNeighbors(iPoint, gMaxResults, wDistanceFn, gMaxDistance, gMaxDistance)) {
     return true;
   }
 
   if (mIsWideIndex) {
-    return visitNeighborsImpl<kWideIndex, kUseHeap>(iPoint, gMaxResults, gMaxDistance, wFilterFn, wDistanceFn, iVisitorFn);
+    return visitNeighborsImpl<kWideIndex, kUseHeap, kCanBound>(iPoint, gMaxResults, gMaxDistance, wDistanceFn, wVisitor);
   }
 
-  return visitNeighborsImpl<!kWideIndex, kUseHeap>(iPoint, gMaxResults, gMaxDistance, wFilterFn, wDistanceFn, iVisitorFn);
+  return visitNeighborsImpl<!kWideIndex, kUseHeap, kCanBound>(iPoint, gMaxResults, gMaxDistance, wDistanceFn, wVisitor);
 }
 
 }  // namespace flatbush
