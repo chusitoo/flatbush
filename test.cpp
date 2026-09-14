@@ -516,6 +516,55 @@ TEST(FlatbushTest, NeighborsQueryFilterFunc) {
   EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
+TEST(FlatbushTest, NeighborsFilterDoesNotBoundOnRejectedItems) {
+  flatbush::FlatbushBuilder<double> wBuilder(2);
+  wBuilder.add(flatbush::Point<double> { 0, 0 });
+  wBuilder.add(flatbush::Point<double> { 10, 10 });
+  auto wIndex = wBuilder.finish();
+
+  const auto wIds = wIndex.neighbors({ 0, 0 }, 1, flatbush::gMaxDistance, [](size_t iId, const flatbush::Box<double>&) {
+    return iId == 1UL;
+  });
+
+  EXPECT_EQ(wIds, std::vector<size_t> { 1UL });
+}
+
+TEST(FlatbushTest, NeighborsBuiltInMetricAsDistanceCallback) {
+  auto wIndex = createIndex();
+  const flatbush::Point<double> wQuery { 50, 50 };
+  const auto& wFilter = flatbush::detail::acceptAllFilter<double>;
+  const auto wBuiltIn = [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
+    return flatbush::detail::computeDistanceSquared(iPoint, iBox);
+  };
+
+  EXPECT_EQ(wIndex.neighbors(wQuery, 10), wIndex.neighbors(wQuery, 10, flatbush::gMaxDistance, wFilter, wBuiltIn));
+
+  // Without a callback maxDistance is squared internally, so a squared metric needs the squared threshold
+  EXPECT_EQ(wIndex.neighbors(wQuery, flatbush::gMaxResults, 12),
+            wIndex.neighbors(wQuery, flatbush::gMaxResults, 144.0, wFilter, wBuiltIn));
+}
+
+TEST(FlatbushTest, NeighborsFilterAndDistanceCallbacks) {
+  auto wIndex = createIndex();
+  auto wIds = wIndex.neighbors(
+      { 50, 50 },
+      6,
+      flatbush::gMaxDistance,
+      [](size_t iValue, const flatbush::Box<double>&) {
+        return iValue % 2 == 0;
+      },
+      [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
+        return flatbush::detail::computeDistanceSquared(iPoint, iBox);
+      });
+  std::vector<size_t> wExpected = { 6, 16, 18, 24, 54, 80 };
+
+  EXPECT_EQ(wExpected.size(), wIds.size());
+  std::sort(wExpected.begin(), wExpected.end());
+  std::sort(wIds.begin(), wIds.end());
+
+  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
+}
+
 TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   auto wIndex = createIndex();
   size_t wCalls = 0;
