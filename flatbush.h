@@ -30,7 +30,6 @@ SOFTWARE.
 #include <cmath>        // for isnan
 #include <cstdint>      // for uint32_t, uint8_t, uint16_t, int16_t, int32_t, int8_t
 #include <cstring>      // for size_t, memcpy
-#include <functional>   // for function
 #include <limits>       // for numeric_limits
 #include <queue>        // for priority_queue
 #ifndef FLATBUSH_SPAN
@@ -1001,11 +1000,6 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
 
 template <typename ArrayType>
 class Flatbush {
-  using FilterCb = std::function<bool(size_t, const Box<ArrayType>&)>;
-  // Must return a lower bound of the distance from the point to any point of the box,
-  // otherwise the traversal prunes and orders on a value it cannot trust
-  using DistanceCb = std::function<double(const Point<ArrayType>&, const Box<ArrayType>&)>;
-
  public:
   Flatbush(const Flatbush&) = delete;
   Flatbush& operator=(const Flatbush&) = delete;
@@ -1013,16 +1007,35 @@ class Flatbush {
   Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  FLATBUSH_NODISCARD std::vector<size_t> search(const Box<ArrayType>& iBounds,
-                                                const FilterCb& iFilterFn = nullptr) const;
+  FLATBUSH_NODISCARD std::vector<size_t> search(const Box<ArrayType>& iBounds) const;
+
+  template <typename FilterFn>
+  FLATBUSH_NODISCARD std::vector<size_t> search(const Box<ArrayType>& iBounds, FilterFn&& iFilterFn) const;
 
   // Without a distance callback, iMaxDistance is a Euclidean distance in index units; with
   // one, it is compared as-is against whatever that callback returns
   FLATBUSH_NODISCARD std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
                                                    size_t iMaxResults = gMaxResults,
-                                                   double iMaxDistance = gMaxDistance,
-                                                   const FilterCb& iFilterFn = nullptr,
-                                                   const DistanceCb& iDistanceFn = nullptr) const;
+                                                   double iMaxDistance = gMaxDistance) const;
+
+  template <typename FilterFn>
+  FLATBUSH_NODISCARD std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults,
+                                                   double iMaxDistance,
+                                                   FilterFn&& iFilterFn) const;
+
+  template <typename DistanceFn>
+  FLATBUSH_NODISCARD std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults,
+                                                   DistanceFn&& iDistanceFn,
+                                                   double iMaxDistance) const;
+
+  template <bool CanBound = false, bool HasCustomDistance = true, typename FilterFn, typename DistanceFn>
+  FLATBUSH_NODISCARD std::vector<size_t> neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults,
+                                                   DistanceFn&& iDistanceFn,
+                                                   double iMaxDistance,
+                                                   FilterFn&& iFilterFn) const;
 
   FLATBUSH_NODISCARD inline size_t nodeSize() const noexcept {
     return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2);
@@ -1063,11 +1076,12 @@ class Flatbush {
            iBounds.mMaxY >= mBounds.mMinY && iBounds.mMinY <= mBounds.mMaxY;
   }
 
+  template <typename DistanceFn>
   inline bool canDoNeighbors(const Point<ArrayType>& iPoint,
                              size_t iMaxResults,
+                             DistanceFn& iDistanceFn,
                              double iMaxDistance,
-                             double iThreshold,
-                             const DistanceCb& iDistanceFn) const {
+                             double iThreshold) const {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanPoint = (std::isnan(static_cast<double>(iPoint.mX)) || std::isnan(static_cast<double>(iPoint.mY)));
@@ -1105,17 +1119,19 @@ class Flatbush {
 
   inline size_t levelOf(size_t iNodeIndex) const noexcept;
 
+  template <typename FilterFn>
   void collectContained(
-      size_t iNodeIndex, size_t iEnd, size_t iLevel, const FilterCb& iFilterFn, std::vector<size_t>& oResults) const;
+      size_t iNodeIndex, size_t iEnd, size_t iLevel, FilterFn& iFilterFn, std::vector<size_t>& oResults) const;
 
-  std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const;
+  template <typename FilterFn>
+  std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, FilterFn& iFilterFn) const;
 
-  template <bool UseHeap, bool CanBound>
+  template <bool UseHeap, bool CanBound, typename FilterFn, typename DistanceFn>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iThreshold,
-                                    const FilterCb& iFilterFn,
-                                    const DistanceCb& iDistanceFn) const;
+                                    FilterFn& iFilterFn,
+                                    DistanceFn& iDistanceFn) const;
 
   struct IndexDistance {
     // Left uninitialized on purpose: a default member initializer would make the default
@@ -1473,8 +1489,9 @@ size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
 // Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
 // subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
 template <typename ArrayType>
+template <typename FilterFn>
 void Flatbush<ArrayType>::collectContained(
-    size_t iNodeIndex, size_t iEnd, size_t iLevel, const FilterCb& iFilterFn, std::vector<size_t>& oResults) const {
+    size_t iNodeIndex, size_t iEnd, size_t iLevel, FilterFn& iFilterFn, std::vector<size_t>& oResults) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wPosition = iNodeIndex;
@@ -1487,23 +1504,18 @@ void Flatbush<ArrayType>::collectContained(
 
   const auto wEnd = std::min(wPosition + wCount, wNumItems);
 
-  if (iFilterFn) {
-    for (; wPosition < wEnd; ++wPosition) {
-      const auto wIndex = getIndex(wPosition);
+  for (; wPosition < wEnd; ++wPosition) {
+    const auto wIndex = getIndex(wPosition);
 
-      if (iFilterFn(wIndex, mBoxes[wPosition])) {
-        oResults.push_back(wIndex);
-      }
-    }
-  } else {
-    for (; wPosition < wEnd; ++wPosition) {
-      oResults.push_back(getIndex(wPosition));
+    if (iFilterFn(wIndex, mBoxes[wPosition])) {
+      oResults.push_back(wIndex);
     }
   }
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const {
+template <typename FilterFn>
+std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds, FilterFn& iFilterFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1530,7 +1542,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
                            static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
         }
       }
-    } else if (iFilterFn) {
+    } else {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           continue;
@@ -1540,12 +1552,6 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 
         if (iFilterFn(wIndex, mBoxes[wPosition])) {
           wResults.push_back(wIndex);
-        }
-      }
-    } else {
-      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-        if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          wResults.push_back(getIndex(wPosition));
         }
       }
     }
@@ -1571,7 +1577,16 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 }
 
 template <typename ArrayType>
-std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds, const FilterCb& iFilterFn) const {
+std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds) const {
+  auto wFilterFn = [](size_t, const Box<ArrayType>&) noexcept {
+    return true;
+  };
+  return search(iBounds, wFilterFn);
+}
+
+template <typename ArrayType>
+template <typename FilterFn>
+std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds, FilterFn&& iFilterFn) const {
   if (!canDoSearch(iBounds)) {
     return {};
   }
@@ -1580,12 +1595,12 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds, c
 }
 
 template <typename ArrayType>
-template <bool UseHeap, bool CanBound>
+template <bool UseHeap, bool CanBound, typename FilterFn, typename DistanceFn>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
                                                        double iThreshold,
-                                                       const FilterCb& iFilterFn,
-                                                       const DistanceCb& iDistanceFn) const {
+                                                       FilterFn& iFilterFn,
+                                                       DistanceFn& iDistanceFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   auto wNodeIndex = mBoxes.size() - 1UL;
@@ -1625,7 +1640,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
       const auto wIndex = getIndex(wPosition);
 
-      if (wIsInternalNode || !iFilterFn || iFilterFn(wIndex, mBoxes[wPosition])) {
+      if (wIsInternalNode || iFilterFn(wIndex, mBoxes[wPosition])) {
         wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
         if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
 
@@ -1683,38 +1698,65 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
                                                    size_t iMaxResults,
-                                                   double iMaxDistance,
-                                                   const FilterCb& iFilterFn,
-                                                   const DistanceCb& iDistanceFn) const {
-  static constexpr auto kMergeThreshold = 128UL;
-  static constexpr auto kUseHeap = true;
-  static constexpr auto kCanBound = true;
-  const auto wNeedHeap = iMaxResults > kMergeThreshold;
-
-  static const auto wDefaultFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+                                                   double iMaxDistance) const {
+  auto wFilterFn = [](size_t, const Box<ArrayType>&) noexcept {
+    return true;
+  };
+  auto wDistanceFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
     return detail::computeDistanceSquared(iQuery, iBox);
   };
+  return neighbors<true, false>(iPoint, iMaxResults, wDistanceFn, iMaxDistance, wFilterFn);
+}
+
+template <typename ArrayType>
+template <typename FilterFn>
+std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults,
+                                                   double iMaxDistance,
+                                                   FilterFn&& iFilterFn) const {
+  auto wDistanceFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+    return detail::computeDistanceSquared(iQuery, iBox);
+  };
+  return neighbors<false, false>(iPoint, iMaxResults, wDistanceFn, iMaxDistance, iFilterFn);
+}
+
+template <typename ArrayType>
+template <typename DistanceFn>
+std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults,
+                                                   DistanceFn&& iDistanceFn,
+                                                   double iMaxDistance) const {
+  auto wFilterFn = [](size_t, const Box<ArrayType>&) noexcept {
+    return true;
+  };
+  return neighbors<false, true>(iPoint, iMaxResults, iDistanceFn, iMaxDistance, wFilterFn);
+}
+
+template <typename ArrayType>
+template <bool CanBound, bool HasCustomDistance, typename FilterFn, typename DistanceFn>
+std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
+                                                   size_t iMaxResults,
+                                                   DistanceFn&& iDistanceFn,
+                                                   double iMaxDistance,
+                                                   FilterFn&& iFilterFn) const {
+  static constexpr auto kMergeThreshold = 128UL;
+  const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
   // A custom metric owns its units, so its threshold is taken as given; the built-in one
   // compares squared distances to keep the square root out of the traversal
-  const DistanceCb wDistanceFn = iDistanceFn ? iDistanceFn : DistanceCb(wDefaultFn);
-  const auto wThreshold = iDistanceFn ? iMaxDistance : iMaxDistance * iMaxDistance;
+  const auto wThreshold = HasCustomDistance ? iMaxDistance : iMaxDistance * iMaxDistance;
 
-  if (!canDoNeighbors(iPoint, iMaxResults, iMaxDistance, wThreshold, wDistanceFn)) {
+  if (!canDoNeighbors(iPoint, iMaxResults, iDistanceFn, iMaxDistance, wThreshold)) {
     return {};
   }
 
   // The bound inside counts every item under a node, so a filter that rejects some of them, or
   // a metric that cannot say where a box ends, both invalidate it
-  const auto wCanBound = !iFilterFn && !iDistanceFn;
-
   if (wNeedHeap) {
-    return wCanBound ? neighborsImpl<kUseHeap, kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn)
-                     : neighborsImpl<kUseHeap, !kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
+    return neighborsImpl<true, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
   }
 
-  return wCanBound ? neighborsImpl<!kUseHeap, kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn)
-                   : neighborsImpl<!kUseHeap, !kCanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, wDistanceFn);
+  return neighborsImpl<false, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
 }
 }  // namespace flatbush
 
