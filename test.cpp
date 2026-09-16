@@ -410,8 +410,11 @@ TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
 TEST(FlatbushTest, QueryCallbacksCanBeMoveOnly) {
   auto wIndex = createIndex();
   const auto wSearchIds = wIndex.search({ 0.0, 0.0, 100.0, 100.0 }, MoveOnlyFilter {});
-  const auto wNeighborIds = wIndex.neighbors(
-      { 50.0, 50.0 }, 6, MoveOnlyDistance {}, flatbush::gMaxDistance, MoveOnlyFilter {});
+  const auto wNeighborIds = wIndex.neighbors({ 50.0, 50.0 },
+                                             6,
+                                             MoveOnlyDistance {},
+                                             flatbush::gMaxDistance,
+                                             MoveOnlyFilter {});
 
   EXPECT_EQ(wSearchIds.size(), wIndex.numItems() / 2UL);
   for (const auto wId : wSearchIds) {
@@ -1114,12 +1117,13 @@ TEST(FlatbushTest, NeighborsSupportsUnboundedAndSubnormalDistance) {
 
   EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 }, 1, std::numeric_limits<double>::infinity()), std::vector<size_t> { 0UL });
   EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 }, 1, std::numeric_limits<double>::denorm_min()), std::vector<size_t> { 0UL });
-  EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 },
-                             1,
-                             [](const flatbush::Point<double>&, const flatbush::Box<double>&) {
-                               return std::numeric_limits<double>::infinity();
-                             },
-                             std::numeric_limits<double>::infinity()),
+  EXPECT_EQ(wIndex.neighbors(
+                { 0.0, 0.0 },
+                1,
+                [](const flatbush::Point<double>&, const flatbush::Box<double>&) {
+                  return std::numeric_limits<double>::infinity();
+                },
+                std::numeric_limits<double>::infinity()),
             std::vector<size_t> { 0UL });
 
   flatbush::FlatbushBuilder<double> wFarBuilder(1);

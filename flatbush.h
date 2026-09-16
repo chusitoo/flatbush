@@ -877,7 +877,11 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() {
   mData.resize(wDataSize, 0U);
   Flatbush<ArrayType> wIndex(std::move(mData), static_cast<uint32_t>(wNumItems), mNodeSize);
   clear();
-  wIndex.pack();
+  if (wIndex.mIsWideIndex) {
+    wIndex.template pack<true>();
+  } else {
+    wIndex.template pack<false>();
+  }
 
   return wIndex;
 }
@@ -1099,18 +1103,24 @@ class Flatbush {
   explicit Flatbush(std::vector<uint8_t>&& iData);
   explicit Flatbush(span<const uint8_t> iBytes);
 
+  template <bool IsWideIndex>
   void pack();
   void init(bool iIsPacked);
+  template <bool IsWideIndex>
   void sort(detail::HilbertValues& iValues, size_t iLeft, size_t iRight, uint32_t iShift, std::vector<size_t>& ioStack);
+  template <bool IsWideIndex>
   void sort(detail::HilbertValues& iValues, size_t iLeft, size_t iRight, std::vector<size_t>& ioStack);
+  template <bool IsWideIndex>
   void swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept;
 
+  template <bool IsWideIndex>
   inline size_t getIndex(size_t iPosition) const noexcept {
-    return mIsWideIndex ? static_cast<size_t>(mWideIndexes[iPosition]) : static_cast<size_t>(mNarrowIndexes[iPosition]);
+    return IsWideIndex ? static_cast<size_t>(mWideIndexes[iPosition]) : static_cast<size_t>(mNarrowIndexes[iPosition]);
   }
 
+  template <bool IsWideIndex>
   inline void setIndex(size_t iPosition, size_t iValue) noexcept {
-    if (mIsWideIndex) {
+    if (IsWideIndex) {
       mWideIndexes[iPosition] = static_cast<WideIndexType>(iValue);
     } else {
       mNarrowIndexes[iPosition] = static_cast<NarrowIndexType>(iValue);
@@ -1119,14 +1129,14 @@ class Flatbush {
 
   inline size_t levelOf(size_t iNodeIndex) const noexcept;
 
-  template <typename FilterFn>
+  template <bool IsWideIndex, typename FilterFn>
   void collectContained(
       size_t iNodeIndex, size_t iEnd, size_t iLevel, FilterFn& iFilterFn, std::vector<size_t>& oResults) const;
 
-  template <typename FilterFn>
+  template <bool IsWideIndex, typename FilterFn>
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, FilterFn& iFilterFn) const;
 
-  template <bool UseHeap, bool CanBound, typename FilterFn, typename DistanceFn>
+  template <bool IsWideIndex, bool UseHeap, bool CanBound, typename FilterFn, typename DistanceFn>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
                                     size_t iMaxResults,
                                     double iThreshold,
@@ -1221,11 +1231,12 @@ void Flatbush<ArrayType>::init(bool iIsPacked) {
 }
 
 template <typename ArrayType>
+template <bool IsWideIndex>
 void Flatbush<ArrayType>::pack() {
   const auto wNumItems = numItems();
 
   while (mPosition < wNumItems) {
-    setIndex(mPosition, mPosition);
+    setIndex<IsWideIndex>(mPosition, mPosition);
     detail::updateBounds(mBounds, mBoxes[mPosition]);
     ++mPosition;
   }
@@ -1243,7 +1254,11 @@ void Flatbush<ArrayType>::pack() {
     // sort items by their Hilbert value (for packing later); one buffer serves every range the
     // radix hands down to the comparison sort
     std::vector<size_t> wSortStack;
-    sort(wHilbertValues, 0U, wNumItems - 1U, std::numeric_limits<detail::HilbertValueType>::digits, wSortStack);
+    sort<IsWideIndex>(wHilbertValues,
+                      0U,
+                      wNumItems - 1U,
+                      std::numeric_limits<detail::HilbertValueType>::digits,
+                      wSortStack);
   }
 
   for (size_t wIdx = 0UL, wPosition = 0UL; wIdx < mLevelBounds.size() - 1UL; ++wIdx) {
@@ -1260,7 +1275,7 @@ void Flatbush<ArrayType>::pack() {
       }
 
       // add the new node to the tree data
-      setIndex(mPosition, wNodeIndex);
+      setIndex<IsWideIndex>(mPosition, wNodeIndex);
       mBoxes[mPosition++] = wNodeBox;
     }
   }
@@ -1270,6 +1285,7 @@ void Flatbush<ArrayType>::pack() {
 // but no scratch copy. The node granularity cutoff usually stops it after two passes: one
 // byte splits a million items 256 ways, and a second lands every bucket inside a node.
 template <typename ArrayType>
+template <bool IsWideIndex>
 void Flatbush<ArrayType>::sort(
     detail::HilbertValues& iValues, size_t iLeft, size_t iRight, uint32_t iShift, std::vector<size_t>& ioStack) {
   // Below this a histogram costs more than the comparison sort it would replace
@@ -1287,7 +1303,7 @@ void Flatbush<ArrayType>::sort(
 
   // A short range cannot repay a whole histogram, so hand it to the comparison sort
   if (iRight - iLeft < kRadixCutoff) {
-    sort(iValues, iLeft, iRight, ioStack);
+    sort<IsWideIndex>(iValues, iLeft, iRight, ioStack);
     return;
   }
 
@@ -1314,7 +1330,7 @@ void Flatbush<ArrayType>::sort(
       const auto wTarget = (iValues[wCursor[wDigit]] >> wShift) & kDigitMask;
 
       if (wTarget != wDigit) {
-        swap(iValues, wCursor[wDigit], wCursor[wTarget]);
+        swap<IsWideIndex>(iValues, wCursor[wDigit], wCursor[wTarget]);
       }
 
       ++wCursor[wTarget];
@@ -1329,7 +1345,7 @@ void Flatbush<ArrayType>::sort(
 
   for (size_t wDigit = 0UL; wDigit < kDigits; ++wDigit) {
     if (wBucketEnd[wDigit] > wStart + 1U) {
-      sort(iValues, wStart, wBucketEnd[wDigit] - 1U, wShift, ioStack);
+      sort<IsWideIndex>(iValues, wStart, wBucketEnd[wDigit] - 1U, wShift, ioStack);
     }
 
     wStart = wBucketEnd[wDigit];
@@ -1338,6 +1354,7 @@ void Flatbush<ArrayType>::sort(
 
 // custom quicksort that partially sorts bbox data alongside the hilbert values
 template <typename ArrayType>
+template <bool IsWideIndex>
 void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
                                size_t iLeft,
                                size_t iRight,
@@ -1451,7 +1468,7 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
           break;
         }
 
-        swap(iValues, wPivotLeft, wPivotRight);
+        swap<IsWideIndex>(iValues, wPivotLeft, wPivotRight);
       }
 
       wStack.push_back(wLeft);
@@ -1464,11 +1481,12 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
 
 // swap two values and two corresponding boxes
 template <typename ArrayType>
+template <bool IsWideIndex>
 void Flatbush<ArrayType>::swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept {
   std::swap(iValues[iLeft], iValues[iRight]);
   std::swap(mBoxes[iLeft], mBoxes[iRight]);
 
-  if (mIsWideIndex) {
+  if (IsWideIndex) {
     std::swap(mWideIndexes[iLeft], mWideIndexes[iRight]);
   } else {
     std::swap(mNarrowIndexes[iLeft], mNarrowIndexes[iRight]);
@@ -1489,7 +1507,7 @@ size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
 // Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
 // subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
 template <typename ArrayType>
-template <typename FilterFn>
+template <bool IsWideIndex, typename FilterFn>
 void Flatbush<ArrayType>::collectContained(
     size_t iNodeIndex, size_t iEnd, size_t iLevel, FilterFn& iFilterFn, std::vector<size_t>& oResults) const {
   const auto wNumItems = numItems();
@@ -1498,14 +1516,14 @@ void Flatbush<ArrayType>::collectContained(
   auto wCount = iEnd - iNodeIndex;
 
   for (auto wDepth = iLevel; wDepth > 0UL; --wDepth) {
-    wPosition = getIndex(wPosition) >> 2U;
+    wPosition = getIndex<IsWideIndex>(wPosition) >> 2U;
     wCount = (wCount > wNumItems / wNodeSize) ? wNumItems : wCount * wNodeSize;
   }
 
   const auto wEnd = std::min(wPosition + wCount, wNumItems);
 
   for (; wPosition < wEnd; ++wPosition) {
-    const auto wIndex = getIndex(wPosition);
+    const auto wIndex = getIndex<IsWideIndex>(wPosition);
 
     if (iFilterFn(wIndex, mBoxes[wPosition])) {
       oResults.push_back(wIndex);
@@ -1514,7 +1532,7 @@ void Flatbush<ArrayType>::collectContained(
 }
 
 template <typename ArrayType>
-template <typename FilterFn>
+template <bool IsWideIndex, typename FilterFn>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds, FilterFn& iFilterFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
@@ -1534,11 +1552,11 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 
     if (wContained) {
       // A swallowed leaf is just a subtree of depth zero, so one sweep covers both
-      collectContained(wNodeIndex, wEnd, wLevel, iFilterFn, wResults);
+      collectContained<IsWideIndex>(wNodeIndex, wEnd, wLevel, iFilterFn, wResults);
     } else if (wIsInternalNode) {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          wQueue.push_back(getIndex(wPosition) | /* low bit carries contained flag */
+          wQueue.push_back(getIndex<IsWideIndex>(wPosition) | /* low bit carries contained flag */
                            static_cast<size_t>(detail::boxContains(iBounds, mBoxes[wPosition])));
         }
       }
@@ -1548,7 +1566,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
           continue;
         }
 
-        const auto wIndex = getIndex(wPosition);
+        const auto wIndex = getIndex<IsWideIndex>(wPosition);
 
         if (iFilterFn(wIndex, mBoxes[wPosition])) {
           wResults.push_back(wIndex);
@@ -1591,11 +1609,15 @@ std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds, F
     return {};
   }
 
-  return searchImpl(iBounds, iFilterFn);
+  if (mIsWideIndex) {
+    return searchImpl<true>(iBounds, iFilterFn);
+  }
+
+  return searchImpl<false>(iBounds, iFilterFn);
 }
 
 template <typename ArrayType>
-template <bool UseHeap, bool CanBound, typename FilterFn, typename DistanceFn>
+template <bool IsWideIndex, bool UseHeap, bool CanBound, typename FilterFn, typename DistanceFn>
 std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
                                                        size_t iMaxResults,
                                                        double iThreshold,
@@ -1638,7 +1660,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
         continue;
       }
 
-      const auto wIndex = getIndex(wPosition);
+      const auto wIndex = getIndex<IsWideIndex>(wPosition);
 
       if (wIsInternalNode || iFilterFn(wIndex, mBoxes[wPosition])) {
         wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
@@ -1739,6 +1761,8 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    DistanceFn&& iDistanceFn,
                                                    double iMaxDistance,
                                                    FilterFn&& iFilterFn) const {
+  static constexpr auto kWideIndex = true;
+  static constexpr auto kUseHeap = true;
   static constexpr auto kMergeThreshold = 128UL;
   const auto wNeedHeap = iMaxResults > kMergeThreshold;
 
@@ -1752,11 +1776,19 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 
   // The bound inside counts every item under a node, so a filter that rejects some of them, or
   // a metric that cannot say where a box ends, both invalidate it
-  if (wNeedHeap) {
-    return neighborsImpl<true, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
+  if (mIsWideIndex) {
+    if (wNeedHeap) {
+      return neighborsImpl<kWideIndex, kUseHeap, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
+    }
+
+    return neighborsImpl<kWideIndex, !kUseHeap, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
   }
 
-  return neighborsImpl<false, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
+  if (wNeedHeap) {
+    return neighborsImpl<!kWideIndex, kUseHeap, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
+  }
+
+  return neighborsImpl<!kWideIndex, !kUseHeap, CanBound>(iPoint, iMaxResults, wThreshold, iFilterFn, iDistanceFn);
 }
 }  // namespace flatbush
 
