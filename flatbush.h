@@ -385,6 +385,11 @@ inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noe
 }
 
 template <typename ArrayType>
+inline bool acceptAllFilter(size_t, const Box<ArrayType>&) noexcept {
+  return true;
+}
+
+template <typename ArrayType>
 inline double computeDistanceSquared(const Point<ArrayType>& iPoint, const Box<ArrayType>& iBox) noexcept {
   const auto wDistX = axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX);
   const auto wDistY = axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
@@ -1596,9 +1601,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 
 template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::search(const Box<ArrayType>& iBounds) const {
-  auto wFilterFn = [](size_t, const Box<ArrayType>&) noexcept {
-    return true;
-  };
+  const auto& wFilterFn = detail::acceptAllFilter<ArrayType>;
   return search(iBounds, wFilterFn);
 }
 
@@ -1721,12 +1724,8 @@ template <typename ArrayType>
 std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoint,
                                                    size_t iMaxResults,
                                                    double iMaxDistance) const {
-  auto wFilterFn = [](size_t, const Box<ArrayType>&) noexcept {
-    return true;
-  };
-  auto wDistanceFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
-    return detail::computeDistanceSquared(iQuery, iBox);
-  };
+  const auto& wFilterFn = detail::acceptAllFilter<ArrayType>;
+  const auto& wDistanceFn = detail::computeDistanceSquared<ArrayType>;
   return neighbors<true, false>(iPoint, iMaxResults, wDistanceFn, iMaxDistance, wFilterFn);
 }
 
@@ -1736,9 +1735,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    size_t iMaxResults,
                                                    double iMaxDistance,
                                                    FilterFn&& iFilterFn) const {
-  auto wDistanceFn = [](const Point<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
-    return detail::computeDistanceSquared(iQuery, iBox);
-  };
+  const auto& wDistanceFn = detail::computeDistanceSquared<ArrayType>;
   return neighbors<false, false>(iPoint, iMaxResults, wDistanceFn, iMaxDistance, iFilterFn);
 }
 
@@ -1748,9 +1745,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    size_t iMaxResults,
                                                    DistanceFn&& iDistanceFn,
                                                    double iMaxDistance) const {
-  auto wFilterFn = [](size_t, const Box<ArrayType>&) noexcept {
-    return true;
-  };
+  const auto& wFilterFn = detail::acceptAllFilter<ArrayType>;
   return neighbors<false, true>(iPoint, iMaxResults, iDistanceFn, iMaxDistance, wFilterFn);
 }
 
