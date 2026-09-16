@@ -61,6 +61,39 @@ struct MoveOnlyDistance {
   }
 };
 
+#if __cplusplus >= 201402L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201402L)
+constexpr bool canMutateSpanAtCompileTime() {
+  int wValues[] = { 1, 2 };
+  flatbush::span<int> wView(wValues, 2);
+  wView[0] = 3;
+  *wView.begin() = 4;
+  *(wView.end() - 1) = 5;
+  return wView[0] == 4 && wView[1] == 5;
+}
+
+constexpr bool canUpdateBoundsAtCompileTime() {
+  flatbush::Box<int> wBounds { 2, 3, 4, 5 };
+  flatbush::detail::updateBounds(wBounds, flatbush::Box<int> { 1, 4, 6, 7 });
+  return wBounds.mMinX == 1 && wBounds.mMinY == 3 && wBounds.mMaxX == 6 && wBounds.mMaxY == 7;
+}
+
+constexpr bool canCalculateDataSizeAtCompileTime() {
+  size_t wDataSize = 0;
+  return flatbush::detail::tryCalculateDataSize<uint8_t>(2, 16, wDataSize) && wDataSize == 26;
+}
+
+static_assert(flatbush::detail::Interleave(3) == 5, "Bit interleaving must be constant-evaluable");
+static_assert(flatbush::detail::HilbertXYToIndex(0, 0) == 0, "Hilbert mapping must be constant-evaluable");
+static_assert(flatbush::detail::axisDistance(5, 0, 3) == 2.0, "Axis distance must be constant-evaluable");
+static_assert(flatbush::detail::computeDistanceSquared(flatbush::Point<int64_t> { 3, 4 },
+                                                       flatbush::Box<int64_t> { 0, 0, 1, 1 }) == 13.0,
+              "Squared distance must be constant-evaluable");
+static_assert(flatbush::detail::computeMaxDistanceSquared(flatbush::Point<int> { 1, 1 },
+                                                          flatbush::Box<int> { 0, 0, 3, 4 }) == 13.0,
+              "Maximum squared distance must be constant-evaluable");
+static_assert(canCalculateDataSizeAtCompileTime(), "Serialized size calculation must be constant-evaluable");
+#endif
+
 static_assert(
     !noexcept(std::declval<flatbush::FlatbushBuilder<double>&>().add(std::declval<const flatbush::Box<double>&>())),
     "Builder insertion can allocate");
@@ -82,6 +115,8 @@ static_assert(std::is_same<decltype(std::declval<const flatbush::Flatbush<double
               "Bounds must be exposed as a read-only reference");
 static_assert(noexcept(std::declval<const flatbush::Flatbush<double>&>().bounds()),
               "Reading cached bounds cannot fail");
+static_assert(flatbush::detail::acceptAllFilter(0, flatbush::Box<int> { 0, 0, 0, 0 }),
+              "Accept-all filter must be constant-evaluable");
 
 static constexpr std::array<double, 400> gData {
   8,  62, 11, 66, 57, 17, 57, 19, 76, 26, 79, 29, 36, 56, 38, 56, 92, 77, 96, 80, 87, 70, 90, 74, 43, 41, 47, 43, 0,

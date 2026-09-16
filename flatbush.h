@@ -49,6 +49,14 @@ SOFTWARE.
 #endif
 #endif
 
+#ifndef FLATBUSH_CONSTEXPR_14
+#if __cplusplus >= 201402L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201402L)
+#define FLATBUSH_CONSTEXPR_14 constexpr
+#else
+#define FLATBUSH_CONSTEXPR_14
+#endif
+#endif
+
 #define FLATBUSH_USE_AVX512 7
 #define FLATBUSH_USE_AVX2 6
 #define FLATBUSH_USE_AVX 5
@@ -107,14 +115,14 @@ class span {
  public:
   constexpr span() noexcept = default;
   constexpr span(Type* iPtr, size_t iLen) noexcept : mPtr { iPtr }, mLen { iLen } {}
-  Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
+  FLATBUSH_CONSTEXPR_14 Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
   constexpr Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
   constexpr const Type* data() const noexcept { return mPtr; }
   constexpr size_t size() const noexcept { return mLen; }
   constexpr bool empty() const noexcept { return mLen == 0; }
-  Type* begin() noexcept { return mPtr; }
+  FLATBUSH_CONSTEXPR_14 Type* begin() noexcept { return mPtr; }
   constexpr const Type* begin() const noexcept { return mPtr; }
-  Type* end() noexcept { return mPtr + mLen; }
+  FLATBUSH_CONSTEXPR_14 Type* end() noexcept { return mPtr + mLen; }
   constexpr const Type* end() const noexcept { return mPtr + mLen; }
 };
 #endif  // FLATBUSH_SPAN
@@ -192,7 +200,7 @@ inline void prefetchNode(const BoxType* iBoxes, size_t iCount) noexcept {
   }
 }
 
-inline uint32_t Interleave(uint32_t v) {
+FLATBUSH_CONSTEXPR_14 inline uint32_t Interleave(uint32_t v) {
   v = (v | (v << 8U)) & 0x00FF00FF;
   v = (v | (v << 4U)) & 0x0F0F0F0F;
   v = (v | (v << 2U)) & 0x33333333;
@@ -201,7 +209,7 @@ inline uint32_t Interleave(uint32_t v) {
 }
 
 // From https://github.com/rawrunprotected/hilbert_curves (public domain)
-inline uint32_t HilbertXYToIndex(uint32_t x, uint32_t y) {
+FLATBUSH_CONSTEXPR_14 inline uint32_t HilbertXYToIndex(uint32_t x, uint32_t y) {
   // Initial prefix scan round, prime with x and y
   uint32_t a = x ^ y;
   uint32_t b = 0xFFFF ^ a;
@@ -367,7 +375,7 @@ constexpr bool boxContains(const Box<ArrayType>& iQuery, const Box<ArrayType>& i
 }
 
 template <typename ArrayType>
-inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
+FLATBUSH_CONSTEXPR_14 inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noexcept {
   // Only float and double specialize below; hand-vectorising the integer types measured no
   // faster here, and slower for 8-bit boxes, which fit in a general purpose register anyway
   ioSrc.mMinX = std::min(ioSrc.mMinX, iBox.mMinX);
@@ -377,7 +385,7 @@ inline void updateBounds(Box<ArrayType>& ioSrc, const Box<ArrayType>& iBox) noex
 }
 
 template <typename ArrayType>
-inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
+FLATBUSH_CONSTEXPR_14 inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noexcept {
   const auto wValue = static_cast<double>(iValue);
   const auto wMin = static_cast<double>(iMin);
   const auto wMax = static_cast<double>(iMax);
@@ -385,12 +393,13 @@ inline double axisDistance(ArrayType iValue, ArrayType iMin, ArrayType iMax) noe
 }
 
 template <typename ArrayType>
-inline bool acceptAllFilter(size_t, const Box<ArrayType>&) noexcept {
+constexpr bool acceptAllFilter(size_t, const Box<ArrayType>&) noexcept {
   return true;
 }
 
 template <typename ArrayType>
-inline double computeDistanceSquared(const Point<ArrayType>& iPoint, const Box<ArrayType>& iBox) noexcept {
+FLATBUSH_CONSTEXPR_14 inline double computeDistanceSquared(const Point<ArrayType>& iPoint,
+                                                           const Box<ArrayType>& iBox) noexcept {
   const auto wDistX = axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX);
   const auto wDistY = axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
   return wDistX * wDistX + wDistY * wDistY;
@@ -398,7 +407,8 @@ inline double computeDistanceSquared(const Point<ArrayType>& iPoint, const Box<A
 
 // Distance to the farthest corner, so an upper bound on the distance to anything inside the box
 template <typename ArrayType>
-inline double computeMaxDistanceSquared(const Point<ArrayType>& iPoint, const Box<ArrayType>& iBox) noexcept {
+FLATBUSH_CONSTEXPR_14 inline double computeMaxDistanceSquared(const Point<ArrayType>& iPoint,
+                                                              const Box<ArrayType>& iBox) noexcept {
   const auto wX = static_cast<double>(iPoint.mX);
   const auto wY = static_cast<double>(iPoint.mY);
   const auto wDistX = std::max(wX - static_cast<double>(iBox.mMinX), static_cast<double>(iBox.mMaxX) - wX);
@@ -796,8 +806,10 @@ inline HilbertValues computeHilbertValues(size_t iNumItems,
 }
 
 template <typename ArrayType>
-bool tryCalculateDataSize(size_t iNumItems, uint16_t iNodeSize, size_t& oDataSize) noexcept {
-  static constexpr auto kMaxChildPosition = std::numeric_limits<WideIndexType>::max() / 4UL;
+FLATBUSH_CONSTEXPR_14 inline bool tryCalculateDataSize(size_t iNumItems,
+                                                       uint16_t iNodeSize,
+                                                       size_t& oDataSize) noexcept {
+  constexpr auto kMaxChildPosition = std::numeric_limits<WideIndexType>::max() / 4UL;
   if (iNumItems > std::numeric_limits<uint32_t>::max()) return false;
 
   uint64_t wLevelStart = 0U;
