@@ -59,7 +59,14 @@ auto foundIds = index.search(boundingBox);
 // make a bounding box query using a filter function 
 auto filterEven = [](size_t id, const Box<double>&){ return id % 2 == 0; };
 auto evenIds = index.search({40, 40, 60, 60}, filterEven);
+
+// stop after 100 accepted matches
+auto firstEvenIds = index.search(boundingBox, filterEven, 100);
 ```
+
+An omitted limit returns all matches; zero returns none. Results follow tree traversal order.
+
+Filters and distance callbacks must be callable through a const reference.
 
 ### Searching for nearest neighbors
 
@@ -71,7 +78,7 @@ auto neighborIds = index.neighbors(targetPoint);
 // make a k-nearest-neighbors query with a maximum result threshold
 auto neighborIds = index.neighbors({40, 60}, maxResults);
 
-// make a k-nearest-neighbors query with a maximum result threshold and limit the distance 
+// make a k-nearest-neighbors query with a maximum result threshold and limit the distance
 auto neighborIds = index.neighbors(targetPoint, maxResults, maxDistance);
 
 // make a k-nearest-neighbors query using a filter function
@@ -92,7 +99,7 @@ expressed in index units. Passing a distance callback replaces that metric, in w
 auto haversine = [](const Point<double>& point, const Box<double>& box) -> double {
     return distanceToBoxInMetres(point, box);
 };
-auto nearbyIds = index.neighbors({13.4, 52.5}, 10, haversine, 5000.0);
+auto nearbyIds = index.neighbors({13.4, 52.5}, 10, 5000.0, {}, haversine);
 ```
 
 The callback must return a **lower bound** of the distance from the point to any point inside the
