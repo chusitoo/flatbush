@@ -46,7 +46,7 @@ struct MoveOnlyFilter {
   MoveOnlyFilter(MoveOnlyFilter&&) = default;
   MoveOnlyFilter& operator=(MoveOnlyFilter&&) = default;
 
-  bool operator()(size_t iValue, const flatbush::Box<double>&) { return iValue % 2UL == 0UL; }
+  bool operator()(size_t iValue, const flatbush::Box<double>&) const { return iValue % 2UL == 0UL; }
 };
 
 struct MoveOnlyDistance {
@@ -56,7 +56,7 @@ struct MoveOnlyDistance {
   MoveOnlyDistance(MoveOnlyDistance&&) = default;
   MoveOnlyDistance& operator=(MoveOnlyDistance&&) = default;
 
-  double operator()(const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
+  double operator()(const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) const {
     return flatbush::detail::computeDistanceSquared(iPoint, iBox);
   }
 };
@@ -88,9 +88,6 @@ static_assert(flatbush::detail::axisDistance(5, 0, 3) == 2.0, "Axis distance mus
 static_assert(flatbush::detail::computeDistanceSquared(flatbush::Point<int64_t> { 3, 4 },
                                                        flatbush::Box<int64_t> { 0, 0, 1, 1 }) == 13.0,
               "Squared distance must be constant-evaluable");
-static_assert(flatbush::detail::computeMaxDistanceSquared(flatbush::Point<int> { 1, 1 },
-                                                          flatbush::Box<int> { 0, 0, 3, 4 }) == 13.0,
-              "Maximum squared distance must be constant-evaluable");
 static_assert(canCalculateDataSizeAtCompileTime(), "Serialized size calculation must be constant-evaluable");
 #endif
 
@@ -389,52 +386,17 @@ TEST(FlatbushTest, NeighborsQueryFilterFunc) {
   EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
-TEST(FlatbushTest, NeighborsBuiltInMetricAsDistanceCallback) {
-  auto wIndex = createIndex();
-  const flatbush::Point<double> wQuery { 50, 50 };
-  const auto wBuiltIn = [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
-    return flatbush::detail::computeDistanceSquared(iPoint, iBox);
-  };
-
-  EXPECT_EQ(wIndex.neighbors(wQuery, 10), wIndex.neighbors(wQuery, 10, wBuiltIn, flatbush::gMaxDistance));
-
-  // Without a callback maxDistance is squared internally, so a squared metric needs the squared threshold
-  EXPECT_EQ(wIndex.neighbors(wQuery, flatbush::gMaxResults, 12),
-            wIndex.neighbors(wQuery, flatbush::gMaxResults, wBuiltIn, 144.0));
-}
-
-TEST(FlatbushTest, NeighborsFilterAndDistanceCallbacks) {
-  auto wIndex = createIndex();
-  auto wIds = wIndex.neighbors(
-      { 50, 50 },
-      6,
-      [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
-        return flatbush::detail::computeDistanceSquared(iPoint, iBox);
-      },
-      flatbush::gMaxDistance,
-      [](size_t iValue, const flatbush::Box<double>&) {
-        return iValue % 2 == 0;
-      });
-  std::vector<size_t> wExpected = { 6, 16, 18, 24, 54, 80 };
-
-  EXPECT_EQ(wExpected.size(), wIds.size());
-  std::sort(wExpected.begin(), wExpected.end());
-  std::sort(wIds.begin(), wIds.end());
-
-  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
-}
-
 TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   auto wIndex = createIndex();
   size_t wCalls = 0;
-  auto wIds = wIndex.neighbors(
-      { 50, 50 },
-      3,
-      [&wCalls](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
-        ++wCalls;
-        return flatbush::detail::computeDistanceSquared(iPoint, iBox);
-      },
-      flatbush::gMaxDistance);
+  auto wIds = wIndex.neighbors({ 50, 50 },
+                               3,
+                               flatbush::gMaxDistance,
+                               flatbush::detail::acceptAllFilter<double>,
+                               [&wCalls](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
+                                 ++wCalls;
+                                 return flatbush::detail::computeDistanceSquared(iPoint, iBox);
+                               });
 
   EXPECT_EQ(wIds.size(), 3UL);
   EXPECT_GT(wCalls, 0UL);
@@ -442,14 +404,39 @@ TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   EXPECT_LT(wCalls, wIndex.indexSize());
 }
 
+TEST(FlatbushTest, QueryCallbackDefaults) {
+  flatbush::FlatbushBuilder<double> wBuilder(3, 2);
+  wBuilder.add(flatbush::Point<double> { 3.0, 4.0 });
+  wBuilder.add(flatbush::Point<double> { 6.0, 8.0 });
+  wBuilder.add(flatbush::Point<double> { 1.0, 1.0 });
+  const auto wIndex = wBuilder.finish();
+  const auto& wFilter = flatbush::detail::acceptAllFilter<double>;
+  const auto wSearchIds = wIndex.search(wIndex.bounds());
+  ASSERT_EQ(wSearchIds.size(), wIndex.numItems());
+  EXPECT_EQ(wIndex.search(wIndex.bounds(), wFilter, 1), (std::vector<size_t> { wSearchIds.front() }));
+  EXPECT_TRUE(wIndex.search(wIndex.bounds(), wFilter, 0).empty());
+
+  const flatbush::Point<double> wPoint { 0.0, 0.0 };
+  const auto wFarFilter = +[](size_t iId, const flatbush::Box<double>&) noexcept {
+    return iId == 1UL;
+  };
+  const auto wLinearDistance = [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) noexcept {
+    return std::sqrt(flatbush::detail::computeDistanceSquared(iPoint, iBox));
+  };
+  const std::vector<size_t> wWithinRadius { 2UL, 0UL };
+  EXPECT_EQ(wIndex.neighbors(wPoint, 3, 6), wWithinRadius);
+  EXPECT_EQ(wIndex.neighbors(wPoint, 3, 6, wFilter, wLinearDistance), wWithinRadius);
+  EXPECT_EQ(wIndex.neighbors(wPoint, 1, flatbush::gMaxDistance, wFarFilter), (std::vector<size_t> { 1UL }));
+}
+
 TEST(FlatbushTest, QueryCallbacksCanBeMoveOnly) {
   auto wIndex = createIndex();
   const auto wSearchIds = wIndex.search({ 0.0, 0.0, 100.0, 100.0 }, MoveOnlyFilter {});
   const auto wNeighborIds = wIndex.neighbors({ 50.0, 50.0 },
                                              6,
-                                             MoveOnlyDistance {},
                                              flatbush::gMaxDistance,
-                                             MoveOnlyFilter {});
+                                             MoveOnlyFilter {},
+                                             MoveOnlyDistance {});
 
   EXPECT_EQ(wSearchIds.size(), wIndex.numItems() / 2UL);
   for (const auto wId : wSearchIds) {
@@ -498,14 +485,15 @@ TEST(FlatbushTest, NeighborsDistanceExceptionsPropagate) {
 
   EXPECT_THROW(
       {
-        static_cast<void>(wIndex.neighbors(
-            { 50.0, 50.0 },
-            3,
-            [&wCalls](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) -> double {
-              if (++wCalls > 1UL) throw std::runtime_error("distance failure");
-              return flatbush::detail::computeDistanceSquared(iPoint, iBox);
-            },
-            flatbush::gMaxDistance));
+        static_cast<void>(wIndex.neighbors({ 50.0, 50.0 },
+                                           3,
+                                           flatbush::gMaxDistance,
+                                           flatbush::detail::acceptAllFilter<double>,
+                                           [&wCalls](const flatbush::Point<double>& iPoint,
+                                                     const flatbush::Box<double>& iBox) -> double {
+                                             if (++wCalls > 1UL) throw std::runtime_error("distance failure");
+                                             return flatbush::detail::computeDistanceSquared(iPoint, iBox);
+                                           }));
       },
       std::runtime_error);
   EXPECT_GT(wCalls, 1UL);
@@ -1152,13 +1140,13 @@ TEST(FlatbushTest, NeighborsSupportsUnboundedAndSubnormalDistance) {
 
   EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 }, 1, std::numeric_limits<double>::infinity()), std::vector<size_t> { 0UL });
   EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 }, 1, std::numeric_limits<double>::denorm_min()), std::vector<size_t> { 0UL });
-  EXPECT_EQ(wIndex.neighbors(
-                { 0.0, 0.0 },
-                1,
-                [](const flatbush::Point<double>&, const flatbush::Box<double>&) {
-                  return std::numeric_limits<double>::infinity();
-                },
-                std::numeric_limits<double>::infinity()),
+  EXPECT_EQ(wIndex.neighbors({ 0.0, 0.0 },
+                             1,
+                             std::numeric_limits<double>::infinity(),
+                             flatbush::detail::acceptAllFilter<double>,
+                             [](const flatbush::Point<double>&, const flatbush::Box<double>&) {
+                               return std::numeric_limits<double>::infinity();
+                             }),
             std::vector<size_t> { 0UL });
 
   flatbush::FlatbushBuilder<double> wFarBuilder(1);
