@@ -522,9 +522,12 @@ TEST(FlatbushTest, NeighborsFilterDoesNotBoundOnRejectedItems) {
   wBuilder.add(flatbush::Point<double> { 10, 10 });
   auto wIndex = wBuilder.finish();
 
-  const auto wIds = wIndex.neighbors({ 0, 0 }, 1, flatbush::gMaxDistance, [](size_t iId, const flatbush::Box<double>&) {
-    return iId == 1UL;
-  });
+  const auto wIds = wIndex.neighbors({ 0, 0 },
+                                     1,
+                                     flatbush::gMaxDistance,
+                                     [](size_t iId, const flatbush::Box<double>& iBox) {
+                                       return iId == 1UL && iBox.mMinX == 10.0 && iBox.mMinY == 10.0;
+                                     });
 
   EXPECT_EQ(wIds, std::vector<size_t> { 1UL });
 }
