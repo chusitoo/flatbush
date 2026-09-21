@@ -1296,7 +1296,7 @@ class Flatbush {
   bool visitContained(size_t iNodeIndex, size_t iEnd, size_t iLevel, Visitor& iVisitorFn) const;
 
   template <bool IsWideIndex, typename Visitor>
-  bool visitSearchImpl(const Box<ArrayType>& iBounds, Visitor& iVisitorFn) const;
+  bool searchImpl(const Box<ArrayType>& iBounds, Visitor& iVisitorFn) const;
 
   template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn>
   std::vector<size_t> neighborsImpl(const Point<ArrayType>& iPoint,
@@ -1306,11 +1306,11 @@ class Flatbush {
                                     const DistanceFn& iDistanceFn) const;
 
   template <bool IsWideIndex, bool UseHeap, bool CanBound, bool AcceptsAll, typename DistanceFn, typename Visitor>
-  bool visitNeighborsImpl(const Point<ArrayType>& iPoint,
-                          size_t iMaxResults,
-                          double iThreshold,
-                          const DistanceFn& iDistanceFn,
-                          Visitor& iVisitorFn) const;
+  bool neighborsImpl(const Point<ArrayType>& iPoint,
+                     size_t iMaxResults,
+                     double iThreshold,
+                     const DistanceFn& iDistanceFn,
+                     Visitor& iVisitorFn) const;
 
   struct IndexDistance {
     // Left uninitialized on purpose: a default member initializer would make the default
@@ -1806,7 +1806,7 @@ bool Flatbush<ArrayType>::visitContained(size_t iNodeIndex, size_t iEnd, size_t 
 
 template <typename ArrayType>
 template <bool IsWideIndex, typename Visitor>
-bool Flatbush<ArrayType>::visitSearchImpl(const Box<ArrayType>& iBounds, Visitor& iVisitorFn) const {
+bool Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds, Visitor& iVisitorFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   size_t wNodeIndex = mBoxes.size() - 1UL;
@@ -1868,10 +1868,10 @@ auto Flatbush<ArrayType>::search(Visitor&& iVisitorFn, const Box<ArrayType>& iBo
   }
 
   if (mIsWideIndex) {
-    return visitSearchImpl<true>(iBounds, iVisitorFn);
+    return searchImpl<true>(iBounds, iVisitorFn);
   }
 
-  return visitSearchImpl<false>(iBounds, iVisitorFn);
+  return searchImpl<false>(iBounds, iVisitorFn);
 }
 
 template <typename ArrayType>
@@ -2088,11 +2088,11 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
 
 template <typename ArrayType>
 template <bool IsWideIndex, bool UseHeap, bool CanBound, bool AcceptsAll, typename DistanceFn, typename Visitor>
-bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
-                                             size_t iMaxResults,
-                                             double iThreshold,
-                                             const DistanceFn& iDistanceFn,
-                                             Visitor& iVisitorFn) const {
+bool Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& iPoint,
+                                        size_t iMaxResults,
+                                        double iThreshold,
+                                        const DistanceFn& iDistanceFn,
+                                        Visitor& iVisitorFn) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   size_t wNodeIndex = mBoxes.size() - 1UL;
@@ -2198,18 +2198,18 @@ auto Flatbush<ArrayType>::neighbors(Visitor&& iVisitorFn, const Point<ArrayType>
   }
 
   if (mIsWideIndex) {
-    return visitNeighborsImpl<kWideIndex, kUseHeap, kCanBound, kAcceptsAll>(iPoint,
-                                                                            gMaxResults,
-                                                                            gMaxDistance,
-                                                                            wDistanceFn,
-                                                                            wVisit);
+    return neighborsImpl<kWideIndex, kUseHeap, kCanBound, kAcceptsAll>(iPoint,
+                                                                       gMaxResults,
+                                                                       gMaxDistance,
+                                                                       wDistanceFn,
+                                                                       wVisit);
   }
 
-  return visitNeighborsImpl<!kWideIndex, kUseHeap, kCanBound, kAcceptsAll>(iPoint,
-                                                                           gMaxResults,
-                                                                           gMaxDistance,
-                                                                           wDistanceFn,
-                                                                           wVisit);
+  return neighborsImpl<!kWideIndex, kUseHeap, kCanBound, kAcceptsAll>(iPoint,
+                                                                      gMaxResults,
+                                                                      gMaxDistance,
+                                                                      wDistanceFn,
+                                                                      wVisit);
 }
 
 }  // namespace flatbush
