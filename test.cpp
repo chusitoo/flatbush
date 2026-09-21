@@ -321,35 +321,38 @@ TEST(FlatbushTest, PerformBoxSearch) {
   EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wResults.begin()));
 }
 
-TEST(FlatbushTest, VisitSearchMatchesSearch) {
+TEST(FlatbushTest, SearchVisitorMatchesSearch) {
   auto wIndex = createIndex();
   const flatbush::Box<double> wQuery { 40, 40, 60, 60 };
   const auto wExpected = wIndex.search(wQuery);
   std::vector<size_t> wVisited;
 
-  const auto wCompleted = wIndex.visitSearch(wQuery, [&wVisited](size_t iId, const flatbush::Box<double>& iBox) {
+  auto wVisitor = [&wVisited](size_t iId, const flatbush::Box<double>& iBox) {
     wVisited.push_back(iId);
     EXPECT_EQ(iBox.mMinX, gData[iId * 4]);
     EXPECT_EQ(iBox.mMinY, gData[iId * 4 + 1]);
     EXPECT_EQ(iBox.mMaxX, gData[iId * 4 + 2]);
     EXPECT_EQ(iBox.mMaxY, gData[iId * 4 + 3]);
     return true;
-  });
+  };
+  const auto wCompleted = wIndex.search(wVisitor, wQuery);
 
   EXPECT_TRUE(wCompleted);
   EXPECT_EQ(wVisited, wExpected);
 }
 
-TEST(FlatbushTest, VisitSearchStopsInsideContainedSubtree) {
+TEST(FlatbushTest, SearchVisitorStopsInsideContainedSubtree) {
   auto wIndex = createIndex();
   const flatbush::Box<double> wQuery { 0, 1, 96, 95 };
   const auto wExpected = wIndex.search(wQuery);
   std::vector<size_t> wVisited;
 
-  const auto wCompleted = wIndex.visitSearch(wQuery, [&wVisited](size_t iId, const flatbush::Box<double>&) {
-    wVisited.push_back(iId);
-    return wVisited.size() < 3UL;
-  });
+  const auto wCompleted = wIndex.search(
+      [&wVisited](size_t iId, const flatbush::Box<double>&) {
+        wVisited.push_back(iId);
+        return wVisited.size() < 3UL;
+      },
+      wQuery);
 
   ASSERT_GE(wExpected.size(), wVisited.size());
   EXPECT_FALSE(wCompleted);
@@ -357,16 +360,18 @@ TEST(FlatbushTest, VisitSearchStopsInsideContainedSubtree) {
   EXPECT_TRUE(std::equal(wVisited.begin(), wVisited.end(), wExpected.begin()));
 }
 
-TEST(FlatbushTest, VisitSearchStopsDuringLeafTraversal) {
+TEST(FlatbushTest, SearchVisitorStopsDuringLeafTraversal) {
   auto wIndex = createIndex();
   const flatbush::Box<double> wQuery { 45, 42, 45, 42 };
   const auto wExpected = wIndex.search(wQuery);
   std::vector<size_t> wVisited;
 
-  const auto wCompleted = wIndex.visitSearch(wQuery, [&wVisited](size_t iId, const flatbush::Box<double>&) {
-    wVisited.push_back(iId);
-    return false;
-  });
+  const auto wCompleted = wIndex.search(
+      [&wVisited](size_t iId, const flatbush::Box<double>&) {
+        wVisited.push_back(iId);
+        return false;
+      },
+      wQuery);
 
   ASSERT_FALSE(wExpected.empty());
   ASSERT_EQ(wVisited.size(), 1UL);
@@ -374,15 +379,16 @@ TEST(FlatbushTest, VisitSearchStopsDuringLeafTraversal) {
   EXPECT_EQ(wVisited.front(), wExpected.front());
 }
 
-TEST(FlatbushTest, VisitSearchCompletesWithoutMatches) {
+TEST(FlatbushTest, SearchVisitorCompletesWithoutMatches) {
   auto wIndex = createIndex();
   size_t wCalls = 0UL;
 
-  const auto wCompleted = wIndex.visitSearch({ 1000, 1000, 1010, 1010 },
-                                             [&wCalls](size_t, const flatbush::Box<double>&) {
-                                               ++wCalls;
-                                               return true;
-                                             });
+  const auto wCompleted = wIndex.search(
+      [&wCalls](size_t, const flatbush::Box<double>&) {
+        ++wCalls;
+        return true;
+      },
+      { 1000, 1000, 1010, 1010 });
 
   EXPECT_TRUE(wCompleted);
   EXPECT_EQ(wCalls, 0UL);
@@ -427,36 +433,39 @@ TEST(FlatbushTest, NeighborsQueryAllItems) {
   EXPECT_EQ(wIds.size(), wIndex.numItems());
 }
 
-TEST(FlatbushTest, VisitNeighborsMatchesNeighborsAndReportsSquaredDistance) {
+TEST(FlatbushTest, NeighborsVisitorMatchesNeighborsAndReportsSquaredDistance) {
   auto wIndex = createIndex();
   const flatbush::Point<double> wQuery { 50, 50 };
   const auto wExpected = wIndex.neighbors(wQuery);
   std::vector<size_t> wVisited;
   auto wPreviousDistance = 0.0;
 
-  const auto wCompleted = wIndex.visitNeighbors(wQuery, [&](size_t iId, double iDistanceSquared) {
+  auto wVisitor = [&](size_t iId, double iDistanceSquared) {
     const flatbush::Box<double> wBox { gData[iId * 4], gData[iId * 4 + 1], gData[iId * 4 + 2], gData[iId * 4 + 3] };
     EXPECT_DOUBLE_EQ(iDistanceSquared, flatbush::detail::computeDistanceSquared(wQuery, wBox));
     EXPECT_GE(iDistanceSquared, wPreviousDistance);
     wPreviousDistance = iDistanceSquared;
     wVisited.push_back(iId);
     return true;
-  });
+  };
+  const auto wCompleted = wIndex.neighbors(wVisitor, wQuery);
 
   EXPECT_TRUE(wCompleted);
   EXPECT_EQ(wVisited, wExpected);
 }
 
-TEST(FlatbushTest, VisitNeighborsStopsImmediately) {
+TEST(FlatbushTest, NeighborsVisitorStopsImmediately) {
   auto wIndex = createIndex();
   const flatbush::Point<double> wQuery { 50, 50 };
   auto wExpected = wIndex.neighbors(wQuery, 3);
   std::vector<size_t> wVisited;
 
-  const auto wCompleted = wIndex.visitNeighbors(wQuery, [&wVisited](size_t iId, double) {
-    wVisited.push_back(iId);
-    return wVisited.size() < 3UL;
-  });
+  const auto wCompleted = wIndex.neighbors(
+      [&wVisited](size_t iId, double) {
+        wVisited.push_back(iId);
+        return wVisited.size() < 3UL;
+      },
+      wQuery);
 
   std::sort(wExpected.begin(), wExpected.end());
   std::sort(wVisited.begin(), wVisited.end());
@@ -464,28 +473,32 @@ TEST(FlatbushTest, VisitNeighborsStopsImmediately) {
   EXPECT_EQ(wVisited, wExpected);
 }
 
-TEST(FlatbushTest, VisitNeighborsGuardPathCompletesWithoutResults) {
+TEST(FlatbushTest, NeighborsVisitorGuardPathCompletesWithoutResults) {
   auto wIndex = createIndex();
   const auto wNaN = std::numeric_limits<double>::quiet_NaN();
   size_t wCalls = 0UL;
 
-  const auto wCompleted = wIndex.visitNeighbors({ wNaN, 50.0 }, [&wCalls](size_t, double) {
-    ++wCalls;
-    return true;
-  });
+  const auto wCompleted = wIndex.neighbors(
+      [&wCalls](size_t, double) {
+        ++wCalls;
+        return true;
+      },
+      { wNaN, 50.0 });
 
   EXPECT_TRUE(wCompleted);
   EXPECT_EQ(wCalls, 0UL);
 }
 
-TEST(FlatbushTest, VisitNeighborsExceptionsPropagate) {
+TEST(FlatbushTest, NeighborsVisitorExceptionsPropagate) {
   auto wIndex = createIndex();
 
   EXPECT_THROW(
       {
-        static_cast<void>(wIndex.visitNeighbors({ 50.0, 50.0 }, [](size_t, double) -> bool {
-          throw std::runtime_error("visitor failure");
-        }));
+        static_cast<void>(wIndex.neighbors(
+            [](size_t, double) -> bool {
+              throw std::runtime_error("visitor failure");
+            },
+            { 50.0, 50.0 }));
       },
       std::runtime_error);
 }
@@ -598,7 +611,8 @@ TEST(FlatbushTest, QueryCallbackDefaults) {
   EXPECT_EQ(wIndex.search(wIndex.bounds(), wFilter, 1), (std::vector<size_t> { wSearchIds.front() }));
   EXPECT_TRUE(wIndex.search(wIndex.bounds(), wFilter, 0).empty());
 
-  const flatbush::Point<double> wPoint { 0.0, 0.0 };
+  flatbush::Point<double> wPoint { 0.0, 0.0 };
+  EXPECT_TRUE(wIndex.neighbors(wPoint, {}).empty());
   const auto wFarFilter = +[](size_t iId, const flatbush::Box<double>&) noexcept {
     return iId == 1UL;
   };

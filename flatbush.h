@@ -1049,7 +1049,8 @@ class Flatbush {
 
   // Visits intersecting items until the visitor returns false. Returns true if traversal completed.
   template <typename Visitor>
-  bool visitSearch(const Box<ArrayType>& iBounds, Visitor&& iVisitorFn) const;
+  auto search(Visitor&& iVisitorFn, const Box<ArrayType>& iBounds) const
+      -> decltype(static_cast<bool>(iVisitorFn(size_t {}, iBounds)));
 
   // The default metric takes a Euclidean radius; explicit callbacks use their output units.
   template <typename FilterFn = DefaultFilterFn, typename DistanceFn = DefaultDistanceFn>
@@ -1062,7 +1063,8 @@ class Flatbush {
   // Visits all items in nearest-first order until the visitor returns false.
   // The visitor receives the item index and its squared Euclidean distance.
   template <typename Visitor>
-  bool visitNeighbors(const Point<ArrayType>& iPoint, Visitor&& iVisitorFn) const;
+  auto neighbors(Visitor&& iVisitorFn, const Point<ArrayType>& iPoint) const
+      -> decltype(static_cast<bool>(iVisitorFn(size_t {}, double {})));
 
   FLATBUSH_NODISCARD inline size_t nodeSize() const noexcept {
     return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2);
@@ -1615,7 +1617,8 @@ bool Flatbush<ArrayType>::visitSearchImpl(const Box<ArrayType>& iBounds, Visitor
 
 template <typename ArrayType>
 template <typename Visitor>
-bool Flatbush<ArrayType>::visitSearch(const Box<ArrayType>& iBounds, Visitor&& iVisitorFn) const {
+auto Flatbush<ArrayType>::search(Visitor&& iVisitorFn, const Box<ArrayType>& iBounds) const
+    -> decltype(static_cast<bool>(iVisitorFn(size_t {}, iBounds))) {
   if (!canDoSearch(iBounds)) {
     return true;
   }
@@ -1752,7 +1755,8 @@ bool Flatbush<ArrayType>::visitNeighborsImpl(const Point<ArrayType>& iPoint,
 
 template <typename ArrayType>
 template <typename Visitor>
-bool Flatbush<ArrayType>::visitNeighbors(const Point<ArrayType>& iPoint, Visitor&& iVisitorFn) const {
+auto Flatbush<ArrayType>::neighbors(Visitor&& iVisitorFn, const Point<ArrayType>& iPoint) const
+    -> decltype(static_cast<bool>(iVisitorFn(size_t {}, double {}))) {
   static constexpr auto kWideIndex = true;
   static constexpr auto kUseHeap = true;
   static constexpr auto kCanBound = true;

@@ -70,14 +70,17 @@ Filters and distance callbacks must be callable through a const reference.
 
 ### Visiting bounding box results
 
-`visitSearch` invokes a callback for each matching item without constructing a result vector. Return `true` from the callback to continue or `false` to stop immediately. The method returns whether the traversal completed.
+`search(visitor, bounds)` invokes a callback for each matching item without constructing a result vector. Return
+`true` from the callback to continue or `false` to stop immediately. The method returns whether the traversal
+completed. The visitor goes first to distinguish it from the filtering overload, `search(bounds, filter)`.
 
 ```cpp
-auto completed = index.visitSearch({40, 40, 60, 60},
-                                   [](size_t id, const Box<double>& box) {
-                                       process(id, box);
-                                       return shouldContinue();
-                                   });
+auto completed = index.search(
+    [](size_t id, const Box<double>& box) {
+        process(id, box);
+        return shouldContinue();
+    },
+    {40, 40, 60, 60});
 ```
 
 ### Searching for nearest neighbors
@@ -102,16 +105,17 @@ auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 
 ### Visiting nearest neighbors
 
-`visitNeighbors` invokes a callback for each item in nearest-first order without constructing a result vector. The
+`neighbors(visitor, point)` invokes a callback for each item in nearest-first order without constructing a result vector. The
 callback receives the item ID and its squared Euclidean distance. Return `true` to continue or `false` to stop;
 the method returns whether every item was visited.
 
 ```cpp
-auto completed = index.visitNeighbors(targetPoint,
-                                      [](size_t id, double distanceSquared) {
-                                          process(id, distanceSquared);
-                                          return shouldContinue();
-                                      });
+auto completed = index.neighbors(
+    [](size_t id, double distanceSquared) {
+        process(id, distanceSquared);
+        return shouldContinue();
+    },
+    targetPoint);
 ```
 
 ### Searching for nearest neighbors with a custom metric
