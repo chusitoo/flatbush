@@ -440,9 +440,12 @@ TEST(FlatbushTest, NeighborsVisitorMatchesNeighborsAndReportsSquaredDistance) {
   std::vector<size_t> wVisited;
   auto wPreviousDistance = 0.0;
 
-  auto wVisitor = [&](size_t iId, double iDistanceSquared) {
-    const flatbush::Box<double> wBox { gData[iId * 4], gData[iId * 4 + 1], gData[iId * 4 + 2], gData[iId * 4 + 3] };
-    EXPECT_DOUBLE_EQ(iDistanceSquared, flatbush::detail::computeDistanceSquared(wQuery, wBox));
+  auto wVisitor = [&](size_t iId, const flatbush::Box<double>& iBox, double iDistanceSquared) {
+    EXPECT_EQ(iBox.mMinX, gData[iId * 4]);
+    EXPECT_EQ(iBox.mMinY, gData[iId * 4 + 1]);
+    EXPECT_EQ(iBox.mMaxX, gData[iId * 4 + 2]);
+    EXPECT_EQ(iBox.mMaxY, gData[iId * 4 + 3]);
+    EXPECT_DOUBLE_EQ(iDistanceSquared, flatbush::detail::computeDistanceSquared(wQuery, iBox));
     EXPECT_GE(iDistanceSquared, wPreviousDistance);
     wPreviousDistance = iDistanceSquared;
     wVisited.push_back(iId);
@@ -461,7 +464,7 @@ TEST(FlatbushTest, NeighborsVisitorStopsImmediately) {
   std::vector<size_t> wVisited;
 
   const auto wCompleted = wIndex.neighbors(
-      [&wVisited](size_t iId, double) {
+      [&wVisited](size_t iId, const flatbush::Box<double>&, double) {
         wVisited.push_back(iId);
         return wVisited.size() < 3UL;
       },
@@ -479,7 +482,7 @@ TEST(FlatbushTest, NeighborsVisitorGuardPathCompletesWithoutResults) {
   size_t wCalls = 0UL;
 
   const auto wCompleted = wIndex.neighbors(
-      [&wCalls](size_t, double) {
+      [&wCalls](size_t, const flatbush::Box<double>&, double) {
         ++wCalls;
         return true;
       },
@@ -495,7 +498,7 @@ TEST(FlatbushTest, NeighborsVisitorExceptionsPropagate) {
   EXPECT_THROW(
       {
         static_cast<void>(wIndex.neighbors(
-            [](size_t, double) -> bool {
+            [](size_t, const flatbush::Box<double>&, double) -> bool {
               throw std::runtime_error("visitor failure");
             },
             { 50.0, 50.0 }));

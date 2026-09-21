@@ -106,13 +106,13 @@ auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ### Visiting nearest neighbors
 
 `neighbors(visitor, point)` invokes a callback for each item in nearest-first order without constructing a result vector. The
-callback receives the item ID and its squared Euclidean distance. Return `true` to continue or `false` to stop;
+callback receives the item ID, its box, and its squared Euclidean distance. Return `true` to continue or `false` to stop;
 the method returns whether every item was visited.
 
 ```cpp
 auto completed = index.neighbors(
-    [](size_t id, double distanceSquared) {
-        process(id, distanceSquared);
+    [](size_t id, const Box<double>& box, double distanceSquared) {
+        process(id, box, distanceSquared);
         return shouldContinue();
     },
     targetPoint);
