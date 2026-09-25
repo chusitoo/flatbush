@@ -1,0 +1,109 @@
+name: "Extended Checks"
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  linux-32:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install 32-bit toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-multilib
+
+      - name: Configure CMake
+        run: >
+          cmake -S . -B build-32
+          -DWITH_TESTS=ON
+          -DCMAKE_CXX_COMPILER=g++
+          -DCMAKE_CXX_STANDARD=11
+          -DCMAKE_CXX_STANDARD_REQUIRED=ON
+          -DCMAKE_C_FLAGS=-m32
+          -DCMAKE_CXX_FLAGS=-m32
+          -DCMAKE_EXE_LINKER_FLAGS=-m32
+
+      - name: Build
+        run: cmake --build build-32 -j "$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build-32 --output-on-failure
+
+  sanitizer:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure CMake
+        run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON -DCMAKE_CXX_STANDARD=11 -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=all -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined,float-cast-overflow"
+
+      - name: Build
+        working-directory: ${{github.workspace}}/build
+        run: cmake --build . -j $(nproc)
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        run: ctest --rerun-failed --output-on-failure
+
+  avx512-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler: ["g++", "clang++"]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Compile
+        run: ${{matrix.compiler}} -std=c++11 -DFLATBUSH_SPAN -mavx512f -mavx512dq -mavx512vl -I${{github.workspace}} -c ${{github.workspace}}/tests/package/main.cpp -o ${{runner.temp}}/flatbush-avx512.o
+
+  libstdcxx-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure CMake
+        run: cmake -B ${{github.workspace}}/build -DWITH_TESTS=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_STANDARD=11 -DCMAKE_CXX_FLAGS="-D_GLIBCXX_DEBUG -D_GLIBCXX_DEBUG_PEDANTIC"
+
+      - name: Build
+        working-directory: ${{github.workspace}}/build
+        run: cmake --build . -j $(nproc)
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        run: ctest --rerun-failed --output-on-failure
+
+  package:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - standard: 11
+            with_span: "ON"
+          - standard: 20
+            with_span: "OFF"
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install package
+        run: |
+          cmake -B ${{github.workspace}}/build/package -DWITH_SPAN=${{matrix.with_span}} -DCMAKE_INSTALL_PREFIX=${{runner.temp}}/flatbush
+          cmake --install ${{github.workspace}}/build/package
+
+      - name: Configure consumer
+        run: cmake -S ${{github.workspace}}/tests/package -B ${{github.workspace}}/build/consumer -DCMAKE_PREFIX_PATH=${{runner.temp}}/flatbush -DCMAKE_CXX_STANDARD=${{matrix.standard}} -DCMAKE_CXX_STANDARD_REQUIRED=ON -DCMAKE_CXX_EXTENSIONS=OFF
+
+      - name: Build consumer
+        run: cmake --build ${{github.workspace}}/build/consumer -j $(nproc)
+
+      - name: Test consumer
+        run: ctest --test-dir ${{github.workspace}}/build/consumer --output-on-failure
