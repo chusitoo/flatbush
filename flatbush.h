@@ -1032,9 +1032,9 @@ class Flatbush {
   Flatbush& operator=(Flatbush&&) noexcept = default;
   ~Flatbush() = default;
 
-  template <typename FilterFn = decltype(detail::acceptAllFilter<ArrayType>)>
+  template <typename FilterFn = DefaultFilterFn>
   FLATBUSH_NODISCARD std::vector<size_t> search(const Box<ArrayType>& iBounds,
-                                                const FilterFn& iFilterFn = detail::acceptAllFilter<ArrayType>,
+                                                const FilterFn& iFilterFn = FilterFn {},
                                                 size_t iMaxResults = gMaxResults) const;
 
   // The default metric takes a Euclidean radius; explicit callbacks use their output units.
