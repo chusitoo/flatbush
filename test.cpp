@@ -747,6 +747,61 @@ TEST(FlatbushTest, FromSupportsIndexWidthBoundary) {
   }
 }
 
+TEST(FlatbushTest, FromMisalignedBuffer) {
+  for (const auto wNumItems : { 15358U, 15359U }) {
+    flatbush::FlatbushBuilder<uint32_t> wBuilder(wNumItems);
+    for (uint32_t wIdx = 0U; wIdx < wNumItems; ++wIdx) {
+      wBuilder.add({ wIdx, wIdx, wIdx, wIdx });
+    }
+
+    const auto wIndex = wBuilder.finish();
+    const auto wIsWideIndex = wIndex.indexSize() > flatbush::gMaxNumNodes;
+    ASSERT_EQ(wIsWideIndex, wNumItems == 15359U);
+    const auto wIndexByteSize = wIsWideIndex ? sizeof(flatbush::WideIndexType) : sizeof(flatbush::NarrowIndexType);
+    const auto wRootIndexOffset = flatbush::gHeaderByteSize + wIndex.indexSize() * sizeof(flatbush::Box<uint32_t>) +
+                                  (wIndex.indexSize() - 1UL) * wIndexByteSize;
+    auto wVector = std::vector<uint8_t>(wIndex.data().size() + alignof(uint32_t));
+
+    for (size_t wOffset = 1UL; wOffset < alignof(uint32_t); ++wOffset) {
+      std::memcpy(wVector.data() + wOffset, wIndex.data().data(), wIndex.data().size());
+      const auto wBytes = flatbush::span<const uint8_t> { wVector.data() + wOffset, wIndex.data().size() };
+      const auto wRestored = flatbush::FlatbushBuilder<uint32_t>::from(wBytes.data(), wBytes.size());
+
+      EXPECT_FALSE(wRestored.isView());
+      EXPECT_NE(wRestored.data().data(), wBytes.data());
+      EXPECT_EQ(wRestored.numItems(), wNumItems);
+      EXPECT_EQ(wRestored.nodeSize(), wIndex.nodeSize());
+      EXPECT_EQ(wRestored.indexSize(), wIndex.indexSize());
+      ASSERT_EQ(wRestored.data().size(), wBytes.size());
+      EXPECT_TRUE(std::equal(wBytes.begin(), wBytes.end(), wRestored.data().begin()));
+      EXPECT_EQ(wRestored.search({ wNumItems - 1U, wNumItems - 1U, wNumItems - 1U, wNumItems - 1U }),
+                std::vector<size_t> { wNumItems - 1UL });
+      EXPECT_EQ(wRestored.neighbors({ wNumItems - 1U, wNumItems - 1U }, 1UL), std::vector<size_t> { wNumItems - 1UL });
+      EXPECT_THROW(
+          { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::fromView(wBytes)); }, std::invalid_argument);
+
+      wVector[wOffset + wRootIndexOffset] ^= 1U;
+      EXPECT_THROW(
+          { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wBytes.data(), wBytes.size())); },
+          std::invalid_argument);
+    }
+  }
+}
+
+TEST(FlatbushTest, FromMisalignedInvalidHeader) {
+  for (const auto wFieldOffset : { 2UL, 4UL }) {
+    auto wVector = std::vector<uint8_t>(gFlatbush.size() + 1UL);
+    auto* const wData = wVector.data() + 1UL;
+    std::memcpy(wData, gFlatbush.data(), gFlatbush.size());
+    const auto wFieldSize = wFieldOffset == 2UL ? sizeof(uint16_t) : sizeof(uint32_t);
+    std::memset(wData + wFieldOffset, 0, wFieldSize);
+
+    EXPECT_THROW(
+        { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData, gFlatbush.size())); },
+        std::invalid_argument);
+  }
+}
+
 TEST(FlatbushTest, FromSupportsSingleItemIndex) {
   flatbush::FlatbushBuilder<double> wBuilder(1U);
   wBuilder.add({ 1.0, 2.0, 3.0, 4.0 });

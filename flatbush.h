@@ -129,7 +129,8 @@ class span {
 
 using NarrowIndexType = uint16_t;
 using WideIndexType = uint32_t;
-
+constexpr auto NarrowIndexSize = sizeof(NarrowIndexType);
+constexpr auto WideIndexSize = sizeof(WideIndexType);
 constexpr double gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = std::numeric_limits<double>::infinity();
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
@@ -822,7 +823,7 @@ FLATBUSH_CONSTEXPR_14 inline bool tryCalculateDataSize(size_t iNumItems,
     wNumNodes += wCount;
   } while (wCount > 1U);
 
-  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? sizeof(WideIndexType) : sizeof(NarrowIndexType);
+  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? WideIndexSize : NarrowIndexSize;
   const auto wDataSize = static_cast<uint64_t>(gHeaderByteSize) + wNumNodes * (sizeof(Box<ArrayType>) + wIndexByteSize);
   if (wDataSize > std::numeric_limits<size_t>::max()) {
     return false;
@@ -920,8 +921,7 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(std::vector<uint8_t>&& iDat
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBytes) {
-  // Unlike the owning overloads, external bytes carry no alignment guarantee, so this has to
-  // clear before validate reads the header through it
+  // Zero-copy queries access boxes and indexes through typed views, so external bytes must be aligned.
   static constexpr auto kAlignment = alignof(Box<ArrayType>) > alignof(uint32_t) ? alignof(Box<ArrayType>)
                                                                                  : alignof(uint32_t);
 
@@ -936,8 +936,8 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBy
 
 template <typename ArrayType>
 void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
-  static constexpr auto kNarrowNodeByteSize = kBoxByteSize + sizeof(NarrowIndexType);
-  static constexpr auto kWideNodeByteSize = kBoxByteSize + sizeof(WideIndexType);
+  static constexpr auto kNarrowNodeByteSize = kBoxByteSize + NarrowIndexSize;
+  static constexpr auto kWideNodeByteSize = kBoxByteSize + WideIndexSize;
 
   static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
                 "Unexpected typed array class. Expecting non 64-bit integral "
@@ -971,12 +971,14 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
                                     .append(detail::arrayTypeName(wExpectedType)));
   }
 
-  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(&iData[2]);
+  uint16_t wNodeSize {};
+  std::memcpy(&wNodeSize, iData + sizeof(uint16_t), sizeof(uint16_t));
   if (wNodeSize < gMinNodeSize) {
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
 
-  const auto wNumItems = *detail::bit_cast<const uint32_t*>(&iData[4]);
+  uint32_t wNumItems {};
+  std::memcpy(&wNumItems, iData + sizeof(uint32_t), sizeof(uint32_t));
   if (wNumItems == 0U) {
     throw std::invalid_argument("Num items cannot be 0.");
   }
@@ -996,8 +998,6 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   const auto wIsWideIndex = wPayloadSize > (gMaxNumNodes * kNarrowNodeByteSize);
   const auto wNumNodes = wPayloadSize / (wIsWideIndex ? kWideNodeByteSize : kNarrowNodeByteSize);
   const auto wIndexes = iData + gHeaderByteSize + wNumNodes * kBoxByteSize;
-  const auto wNarrowIndexes = detail::bit_cast<const NarrowIndexType*>(wIndexes);
-  const auto wWideIndexes = detail::bit_cast<const WideIndexType*>(wIndexes);
   size_t wChildStart = 0UL;
   size_t wChildEnd = wNumItems;
   size_t wParentIndex = wNumItems;
@@ -1006,7 +1006,17 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   while (wParentIndex < wNumNodes) {
     for (auto wChildIndex = wChildStart; wChildIndex < wChildEnd; wChildIndex += wNodeSize, ++wParentIndex) {
       const size_t wExpectedIndex = wChildIndex << 2U;
-      const size_t wStoredIndex = wIsWideIndex ? wWideIndexes[wParentIndex] : wNarrowIndexes[wParentIndex];
+      size_t wStoredIndex;
+
+      if (wIsWideIndex) {
+        WideIndexType wIndexValue;
+        std::memcpy(&wIndexValue, wIndexes + wParentIndex * WideIndexSize, WideIndexSize);
+        wStoredIndex = wIndexValue;
+      } else {
+        NarrowIndexType wIndexValue;
+        std::memcpy(&wIndexValue, wIndexes + wParentIndex * NarrowIndexSize, NarrowIndexSize);
+        wStoredIndex = wIndexValue;
+      }
 
       if (wStoredIndex != wExpectedIndex) {
         throw std::invalid_argument("Data contains an invalid internal node index.");
