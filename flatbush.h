@@ -1553,7 +1553,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
                                                     size_t iMaxResults) const {
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  auto wNodeIndex = mBoxes.size() - 1UL;
+  size_t wNodeIndex = mBoxes.size() - 1UL;
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
@@ -1655,7 +1655,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  auto wNodeIndex = mBoxes.size() - 1UL;
+  size_t wNodeIndex = mBoxes.size() - 1UL;
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
