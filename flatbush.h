@@ -1144,14 +1144,6 @@ class Flatbush {
   inline size_t levelOf(size_t iNodeIndex) const noexcept;
 
   template <bool IsWideIndex, typename FilterFn>
-  void collectContained(size_t iNodeIndex,
-                        size_t iEnd,
-                        size_t iLevel,
-                        size_t iMaxResults,
-                        const FilterFn& iFilterFn,
-                        std::vector<size_t>& oResults) const;
-
-  template <bool IsWideIndex, typename FilterFn>
   std::vector<size_t> searchImpl(const Box<ArrayType>& iBounds, const FilterFn& iFilterFn, size_t iMaxResults) const;
 
   template <bool IsWideIndex, bool UseHeap, typename FilterFn, typename DistanceFn>
@@ -1522,40 +1514,6 @@ size_t Flatbush<ArrayType>::levelOf(size_t iNodeIndex) const noexcept {
   return wLevel;
 }
 
-// Packing the tree bottom-up leaves every leaf of a subtree in one contiguous run, so a
-// subtree the query swallows whole collapses to a descent to its first leaf and a flat sweep
-template <typename ArrayType>
-template <bool IsWideIndex, typename FilterFn>
-void Flatbush<ArrayType>::collectContained(size_t iNodeIndex,
-                                           size_t iEnd,
-                                           size_t iLevel,
-                                           size_t iMaxResults,
-                                           const FilterFn& iFilterFn,
-                                           std::vector<size_t>& oResults) const {
-  const auto wNumItems = numItems();
-  const auto wNodeSize = nodeSize();
-  auto wPosition = iNodeIndex;
-  auto wCount = iEnd - iNodeIndex;
-
-  for (auto wDepth = iLevel; wDepth > 0UL; --wDepth) {
-    wPosition = getIndex<IsWideIndex>(wPosition) >> 2U;
-    wCount = std::min(wCount * wNodeSize, wNumItems);
-  }
-
-  const auto wEnd = std::min(wPosition + wCount, wNumItems);
-
-  for (; wPosition < wEnd; ++wPosition) {
-    const auto wIndex = getIndex<IsWideIndex>(wPosition);
-
-    if (iFilterFn(wIndex, mBoxes[wPosition])) {
-      oResults.push_back(wIndex);
-      if (oResults.size() >= iMaxResults) {
-        return;
-      }
-    }
-  }
-}
-
 template <typename ArrayType>
 template <bool IsWideIndex, typename FilterFn>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
@@ -1577,11 +1535,29 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
     const auto wLevel = levelOf(wNodeIndex);
     const size_t wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
 
+    // Each subtree's leaves occupy a contiguous range in the packed tree. If the query fully contains
+    // the subtree, descend to its first leaf and scan that range without further intersection checks.
     if (wContained) {
-      // A swallowed leaf is just a subtree of depth zero, so one sweep covers both
-      collectContained<IsWideIndex>(wNodeIndex, wEnd, wLevel, iMaxResults, iFilterFn, wResults);
-      if (wResults.size() >= iMaxResults) {
-        return wResults;
+      // At leaf level, no descent is needed.
+      auto wPosition = wNodeIndex;
+      auto wCount = wEnd - wNodeIndex;
+
+      for (auto wDepth = wLevel; wDepth > 0UL; --wDepth) {
+        wPosition = getIndex<IsWideIndex>(wPosition) >> 2U;
+        wCount = std::min(wCount * wNodeSize, wNumItems);
+      }
+
+      const auto wLeafEnd = std::min(wPosition + wCount, wNumItems);
+
+      for (; wPosition < wLeafEnd; ++wPosition) {
+        const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+        if (iFilterFn(wIndex, mBoxes[wPosition])) {
+          wResults.push_back(wIndex);
+          if (wResults.size() >= iMaxResults) {
+            return wResults;
+          }
+        }
       }
     } else if (wIsInternalNode) {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
