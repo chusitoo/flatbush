@@ -1298,7 +1298,8 @@ TEST(FlatbushTest, ApproximateResultsSizeEdgeCases) {
 }
 
 TEST(FlatbushTest, NeighborsUsesBothStrategyBranches) {
-  const uint32_t wNumItems = 300;
+  static constexpr size_t kMergeThreshold = 131072UL;
+  const uint32_t wNumItems = kMergeThreshold + 2UL;
   flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
   for (uint32_t wIdx = 0; wIdx < wNumItems; ++wIdx) {
     const auto wVal = static_cast<double>(wIdx);
@@ -1306,14 +1307,15 @@ TEST(FlatbushTest, NeighborsUsesBothStrategyBranches) {
   }
   const auto wIndex = wBuilder.finish();
 
-  const auto wSmallLimit = wIndex.neighbors({ 50.0, 50.0 }, 127);
-  const auto wLargeLimit = wIndex.neighbors({ 50.0, 50.0 }, 129);
+  const auto wSmallLimit = wIndex.neighbors({ 50.0, 50.0 }, kMergeThreshold - 1UL);
+  auto wLargeLimit = wIndex.neighbors({ 50.0, 50.0 }, kMergeThreshold + 1UL);
 
-  EXPECT_EQ(wSmallLimit.size(), 127UL);
-  EXPECT_EQ(wLargeLimit.size(), 129UL);
+  EXPECT_EQ(wSmallLimit.size(), kMergeThreshold - 1UL);
+  EXPECT_EQ(wLargeLimit.size(), kMergeThreshold + 1UL);
 
+  std::sort(wLargeLimit.begin(), wLargeLimit.end());
   for (const auto wId : wSmallLimit) {
-    EXPECT_NE(std::find(wLargeLimit.begin(), wLargeLimit.end(), wId), wLargeLimit.end());
+    EXPECT_TRUE(std::binary_search(wLargeLimit.begin(), wLargeLimit.end(), wId));
   }
 }
 

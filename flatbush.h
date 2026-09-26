@@ -1742,8 +1742,8 @@ std::vector<size_t> Flatbush<ArrayType>::neighbors(const Point<ArrayType>& iPoin
                                                    const DistanceFn& iDistanceFn) const {
   static constexpr auto kWideIndex = true;
   static constexpr auto kUseHeap = true;
-  static constexpr auto kMergeThreshold = 128UL;
-  const auto wNeedHeap = iMaxResults > kMergeThreshold;
+  static constexpr auto kMergeThreshold = 128UL * 1024UL;
+  const auto wNeedHeap = std::min(iMaxResults, numItems()) > kMergeThreshold;
 
   if (mIsWideIndex) {
     if (wNeedHeap) {
