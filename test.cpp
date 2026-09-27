@@ -1188,6 +1188,15 @@ TEST(FlatbushTest, NeighborsGuardPathsReturnEmpty) {
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, -1.0).empty());
 }
 
+TEST(FlatbushTest, AxisDistanceSelectsPositiveDeltas) {
+  const auto wInfinity = std::numeric_limits<double>::infinity();
+  const auto wNaN = std::numeric_limits<double>::quiet_NaN();
+
+  EXPECT_DOUBLE_EQ(flatbush::detail::axisDistance(0.0, -wInfinity, wInfinity), 0.0);
+  EXPECT_DOUBLE_EQ(flatbush::detail::axisDistance(wInfinity, 0.0, 1.0), wInfinity);
+  EXPECT_DOUBLE_EQ(flatbush::detail::axisDistance(wNaN, 0.0, 1.0), 0.0);
+}
+
 TEST(FlatbushTest, NeighborsSupportsUnboundedAndSubnormalDistance) {
   flatbush::FlatbushBuilder<double> wBuilder(1);
   wBuilder.add({ 0.0, 0.0, 0.0, 0.0 });
