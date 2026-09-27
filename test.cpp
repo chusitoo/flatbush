@@ -24,6 +24,7 @@ SOFTWARE.
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
@@ -402,6 +403,37 @@ TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   EXPECT_GT(wCalls, 0UL);
   // Pruning means the traversal stops well short of measuring every node
   EXPECT_LT(wCalls, wIndex.indexSize());
+}
+
+TEST(FlatbushTest, NeighborsWithHaversineDistance) {
+  const auto wHaversineMeters = [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
+    if (iBox.mMinX != iBox.mMaxX || iBox.mMinY != iBox.mMaxY) {
+      return 0.0;
+    }
+
+    const auto wRadiansPerDegree = std::acos(-1.0) / 180.0;
+    const auto wEarthRadiusMeters = 6378160.187;
+    const auto wLatitude = iPoint.mY * wRadiansPerDegree;
+    const auto wOtherLatitude = iBox.mMinY * wRadiansPerDegree;
+    const auto wSinHalfLatitude = std::sin((wOtherLatitude - wLatitude) * 0.5);
+    const auto wSinHalfLongitude = std::sin((iBox.mMinX - iPoint.mX) * wRadiansPerDegree * 0.5);
+    const auto wHaversine = wSinHalfLatitude * wSinHalfLatitude +
+                            std::cos(wLatitude) * std::cos(wOtherLatitude) * wSinHalfLongitude * wSinHalfLongitude;
+    return 2.0 * wEarthRadiusMeters * std::asin(std::sqrt(std::min(1.0, std::max(0.0, wHaversine))));
+  };
+
+  flatbush::FlatbushBuilder<double> wBuilder(3, 2);
+  wBuilder.add(flatbush::Point<double> { -179.5, 80.0 });
+  wBuilder.add(flatbush::Point<double> { -177.5, 80.0 });
+  wBuilder.add(flatbush::Point<double> { 170.0, 80.0 });
+  const auto wIndex = wBuilder.finish();
+  const flatbush::Point<double> wQuery { 179.5, 80.0 };
+
+  EXPECT_EQ(wIndex.neighbors(wQuery, 1, flatbush::gMaxDistance), (std::vector<size_t> { 2UL }));
+  EXPECT_EQ(wIndex.neighbors(wQuery, 1, flatbush::gMaxDistance, {}, wHaversineMeters), (std::vector<size_t> { 0UL }));
+  EXPECT_EQ(wIndex.neighbors(wQuery, 3, flatbush::gMaxDistance, {}, wHaversineMeters),
+            (std::vector<size_t> { 0UL, 1UL, 2UL }));
+  EXPECT_EQ(wIndex.neighbors(wQuery, 3, 40000.0, {}, wHaversineMeters), (std::vector<size_t> { 0UL }));
 }
 
 TEST(FlatbushTest, QueryCallbackDefaults) {
