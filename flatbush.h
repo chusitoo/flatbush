@@ -1519,6 +1519,7 @@ template <bool IsWideIndex, typename FilterFn>
 std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBounds,
                                                     const FilterFn& iFilterFn,
                                                     size_t iMaxResults) const {
+  static constexpr auto kDefaultFilterFn = std::is_same<typename std::decay<FilterFn>::type, DefaultFilterFn>::value;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   size_t wNodeIndex = mBoxes.size() - 1UL;
@@ -1549,13 +1550,17 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 
       const auto wLeafEnd = std::min(wPosition + wCount, wNumItems);
 
-      for (; wPosition < wLeafEnd; ++wPosition) {
-        const auto wIndex = getIndex<IsWideIndex>(wPosition);
+      if (kDefaultFilterFn) {
+        using IndexType = typename std::conditional<IsWideIndex, WideIndexType, NarrowIndexType>::type;
+        const auto wBegin = detail::bit_cast<const IndexType*>(mWideIndexes.data()) + wPosition;
+        const auto wCopyCount = std::min(wLeafEnd - wPosition, iMaxResults - wResults.size());
+        wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
+      } else {
+        for (; wPosition < wLeafEnd && wResults.size() < iMaxResults; ++wPosition) {
+          const auto wIndex = getIndex<IsWideIndex>(wPosition);
 
-        if (iFilterFn(wIndex, mBoxes[wPosition])) {
-          wResults.push_back(wIndex);
-          if (wResults.size() >= iMaxResults) {
-            return wResults;
+          if (iFilterFn(wIndex, mBoxes[wPosition])) {
+            wResults.push_back(wIndex);
           }
         }
       }
@@ -1567,7 +1572,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
         }
       }
     } else {
-      for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+      for (size_t wPosition = wNodeIndex; wPosition < wEnd && wResults.size() < iMaxResults; ++wPosition) {
         if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           continue;
         }
@@ -1576,14 +1581,11 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
 
         if (iFilterFn(wIndex, mBoxes[wPosition])) {
           wResults.push_back(wIndex);
-          if (wResults.size() >= iMaxResults) {
-            return wResults;
-          }
         }
       }
     }
 
-    if (wQueue.empty()) {
+    if (wQueue.empty() || wResults.size() >= iMaxResults) {
       break;
     }
 

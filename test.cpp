@@ -27,6 +27,7 @@ SOFTWARE.
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -585,6 +586,60 @@ TEST(FlatbushTest, SearchQueryFilterFunc) {
   EXPECT_EQ(wIds.front(), 6);
 }
 
+class FlatbushSearchContainedRangesTest : public ::testing::TestWithParam<std::tuple<size_t, bool, size_t>> {};
+
+TEST_P(FlatbushSearchContainedRangesTest, PreserveOrderAndLimits) {
+  const auto wNumItems = std::get<0>(GetParam());
+  const auto wFullBounds = std::get<1>(GetParam());
+  flatbush::FlatbushBuilder<int32_t> wBuilder(wNumItems, 16);
+  for (size_t wId = 0UL; wId < wNumItems; ++wId) {
+    wBuilder.add(flatbush::Point<int32_t> { static_cast<int32_t>(wNumItems - wId), static_cast<int32_t>(wId % 31UL) });
+  }
+  const auto wIndex = wBuilder.finish();
+  const auto wQuery = wFullBounds ? wIndex.bounds()
+                                  : flatbush::Box<int32_t> {
+                                      1, 0, static_cast<int32_t>(std::max<size_t>(1UL, wNumItems / 2UL)), 31
+                                    };
+  ASSERT_EQ(wIndex.search(wIndex.bounds()).size(), wNumItems);
+
+  auto wExpected = wIndex.search(wQuery, flatbush::detail::acceptAllFilter<int32_t>);
+  EXPECT_EQ(wIndex.search(wQuery), wExpected);
+
+  const auto wLimit = std::get<2>(GetParam());
+  wExpected.resize(std::min(wLimit, wExpected.size()));
+  EXPECT_EQ(wIndex.search(wQuery, {}, wLimit), wExpected);
+
+  size_t wCalls = 0UL;
+  const auto wFilter = [&wCalls](size_t, const flatbush::Box<int32_t>&) {
+    ++wCalls;
+    return true;
+  };
+  EXPECT_EQ(wIndex.search(wQuery, wFilter, wLimit), wExpected);
+  EXPECT_EQ(wCalls, wExpected.size());
+}
+
+INSTANTIATE_TEST_SUITE_P(NumItemsQueryAndLimit,
+                         FlatbushSearchContainedRangesTest,
+                         ::testing::Combine(::testing::Values(1UL, 17UL, 65537UL),
+                                            ::testing::Values(true, false),
+                                            ::testing::Values(0UL,
+                                                              1UL,
+                                                              2UL,
+                                                              7UL,
+                                                              8UL,
+                                                              9UL,
+                                                              15UL,
+                                                              16UL,
+                                                              17UL,
+                                                              18UL,
+                                                              100UL,
+                                                              256UL,
+                                                              32768UL,
+                                                              32769UL,
+                                                              65537UL,
+                                                              65538UL,
+                                                              flatbush::gMaxResults)));
+
 TEST(FlatbushTest, ReconstructIndexFromJSArrayBuffer) {
   auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), gFlatbush.size());
   auto wIndexBuffer = wIndex.data();
@@ -1083,6 +1138,32 @@ TEST(FlatbushTest, QuickSortWorksOnDuplicates) {
   EXPECT_EQ(wIds2.size(), 1);
 }
 
+#if defined(FLATBUSH_USE_SIMD)
+TEST(FlatbushTest, SimdHilbertMatchesScalar) {
+  for (uint32_t wValue = 0U; wValue < 65536U; ++wValue) {
+    const std::array<uint32_t, 4> wX {
+      wValue, wValue ^ 65535U, (wValue * 17U) & 65535U, (wValue * 313U + 17U) & 65535U
+    };
+    const std::array<uint32_t, 4> wY {
+      (wValue * 73U + 19U) & 65535U, wValue, wValue ^ 65535U, (wValue * 53U) & 65535U
+    };
+    const auto wPackedX = _mm_loadu_si128(flatbush::detail::bit_cast<const __m128i*>(wX.data()));
+    const auto wPackedY = _mm_loadu_si128(flatbush::detail::bit_cast<const __m128i*>(wY.data()));
+    std::array<uint32_t, 4> wInterleaved {};
+    std::array<uint32_t, 4> wHilbert {};
+    _mm_storeu_si128(flatbush::detail::bit_cast<__m128i*>(wInterleaved.data()), flatbush::detail::Interleave(wPackedX));
+    _mm_storeu_si128(flatbush::detail::bit_cast<__m128i*>(wHilbert.data()),
+                     flatbush::detail::HilbertXYToIndex(wPackedX, wPackedY));
+
+    for (size_t wLane = 0UL; wLane < wX.size(); ++wLane) {
+      ASSERT_EQ(wInterleaved[wLane], flatbush::detail::Interleave(wX[wLane])) << wValue << ", lane " << wLane;
+      ASSERT_EQ(wHilbert[wLane], flatbush::detail::HilbertXYToIndex(wX[wLane], wY[wLane]))
+          << wValue << ", lane " << wLane;
+    }
+  }
+}
+#endif
+
 TEST(FlatbushTest, DegenerateBoundsMapToZeroHilbertCoordinates) {
   static constexpr auto kNumItems = 17UL;
   const auto wExpected = flatbush::detail::HilbertXYToIndex(0U, 0U);
@@ -1304,6 +1385,38 @@ TEST(FlatbushTest, NarrowIntegerMetricWidensCorrectly) {
   EXPECT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(flatbush::Point<uint16_t> { 0U, 0U },
                                                             flatbush::Box<uint16_t> { 65535U, 65535U, 65535U, 65535U }),
                    2.0 * 65535.0 * 65535.0);
+}
+
+TEST(FlatbushTest, ByteDistancesMatchScalarAcrossCoordinateRange) {
+  for (int wPointValue = 0; wPointValue < 256; ++wPointValue) {
+    const flatbush::Point<uint8_t> wPoint { static_cast<uint8_t>(wPointValue),
+                                            static_cast<uint8_t>((wPointValue * 73 + 19) & 255) };
+    const flatbush::Point<int8_t> wSignedPoint { static_cast<int8_t>(static_cast<int>(wPoint.mX) - 128),
+                                                 static_cast<int8_t>(static_cast<int>(wPoint.mY) - 128) };
+
+    for (int wBoxValue = 0; wBoxValue < 256; ++wBoxValue) {
+      const auto wFirstX = static_cast<uint8_t>(wBoxValue);
+      const auto wSecondX = static_cast<uint8_t>((wBoxValue * 17 + 43) & 255);
+      const auto wFirstY = static_cast<uint8_t>((wBoxValue * 53 + 11) & 255);
+      const auto wSecondY = static_cast<uint8_t>((wBoxValue * 97 + 61) & 255);
+      const flatbush::Box<uint8_t> wBox { std::min(wFirstX, wSecondX),
+                                          std::min(wFirstY, wSecondY),
+                                          std::max(wFirstX, wSecondX),
+                                          std::max(wFirstY, wSecondY) };
+      const flatbush::Box<int8_t> wSignedBox { static_cast<int8_t>(static_cast<int>(wBox.mMinX) - 128),
+                                               static_cast<int8_t>(static_cast<int>(wBox.mMinY) - 128),
+                                               static_cast<int8_t>(static_cast<int>(wBox.mMaxX) - 128),
+                                               static_cast<int8_t>(static_cast<int>(wBox.mMaxY) - 128) };
+      const auto wDistanceX = flatbush::detail::axisDistance(wPoint.mX, wBox.mMinX, wBox.mMaxX);
+      const auto wDistanceY = flatbush::detail::axisDistance(wPoint.mY, wBox.mMinY, wBox.mMaxY);
+      const auto wExpected = wDistanceX * wDistanceX + wDistanceY * wDistanceY;
+
+      ASSERT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wPoint, wBox), wExpected)
+          << wPointValue << ", " << wBoxValue;
+      ASSERT_DOUBLE_EQ(flatbush::detail::computeDistanceSquared(wSignedPoint, wSignedBox), wExpected)
+          << wPointValue << ", " << wBoxValue;
+    }
+  }
 }
 
 TEST(FlatbushTest, SearchOutsideGlobalBoundsReturnsEmpty) {
