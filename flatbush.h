@@ -129,8 +129,8 @@ class span {
 
 using NarrowIndexType = uint16_t;
 using WideIndexType = uint32_t;
-constexpr auto NarrowIndexSize = sizeof(NarrowIndexType);
-constexpr auto WideIndexSize = sizeof(WideIndexType);
+constexpr auto gNarrowIndexSize = sizeof(NarrowIndexType);
+constexpr auto gWideIndexSize = sizeof(WideIndexType);
 constexpr double gMaxHilbert = std::numeric_limits<uint16_t>::max();
 constexpr auto gMaxDistance = std::numeric_limits<double>::infinity();
 constexpr auto gMaxResults = std::numeric_limits<size_t>::max();
@@ -823,7 +823,7 @@ FLATBUSH_CONSTEXPR_14 inline bool tryCalculateDataSize(size_t iNumItems,
     wNumNodes += wCount;
   } while (wCount > 1U);
 
-  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? WideIndexSize : NarrowIndexSize;
+  const auto wIndexByteSize = (wNumNodes > gMaxNumNodes) ? gWideIndexSize : gNarrowIndexSize;
   const auto wDataSize = static_cast<uint64_t>(gHeaderByteSize) + wNumNodes * (sizeof(Box<ArrayType>) + wIndexByteSize);
   if (wDataSize > std::numeric_limits<size_t>::max()) {
     return false;
@@ -936,8 +936,8 @@ Flatbush<ArrayType> FlatbushBuilder<ArrayType>::fromView(span<const uint8_t> iBy
 
 template <typename ArrayType>
 void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
-  static constexpr auto kNarrowNodeByteSize = kBoxByteSize + NarrowIndexSize;
-  static constexpr auto kWideNodeByteSize = kBoxByteSize + WideIndexSize;
+  static constexpr auto kNarrowNodeByteSize = kBoxByteSize + gNarrowIndexSize;
+  static constexpr auto kWideNodeByteSize = kBoxByteSize + gWideIndexSize;
 
   static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
                 "Unexpected typed array class. Expecting non 64-bit integral "
@@ -1010,11 +1010,11 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
 
       if (wIsWideIndex) {
         WideIndexType wIndexValue;
-        std::memcpy(&wIndexValue, wIndexes + wParentIndex * WideIndexSize, WideIndexSize);
+        std::memcpy(&wIndexValue, wIndexes + wParentIndex * gWideIndexSize, gWideIndexSize);
         wStoredIndex = wIndexValue;
       } else {
         NarrowIndexType wIndexValue;
-        std::memcpy(&wIndexValue, wIndexes + wParentIndex * NarrowIndexSize, NarrowIndexSize);
+        std::memcpy(&wIndexValue, wIndexes + wParentIndex * gNarrowIndexSize, gNarrowIndexSize);
         wStoredIndex = wIndexValue;
       }
 
