@@ -1128,17 +1128,26 @@ class Flatbush {
   void swap(detail::HilbertValues& iValues, size_t iLeft, size_t iRight) noexcept;
 
   template <bool IsWideIndex>
+  using IndexType = typename std::conditional<IsWideIndex, WideIndexType, NarrowIndexType>::type;
+
+  template <bool IsWideIndex>
+  inline const IndexType<IsWideIndex>* indexes() const noexcept {
+    return detail::bit_cast<const IndexType<IsWideIndex>*>(mIndexes);
+  }
+
+  template <bool IsWideIndex>
+  inline IndexType<IsWideIndex>* indexes() noexcept {
+    return detail::bit_cast<IndexType<IsWideIndex>*>(mIndexes);
+  }
+
+  template <bool IsWideIndex>
   inline size_t getIndex(size_t iPosition) const noexcept {
-    return IsWideIndex ? static_cast<size_t>(mWideIndexes[iPosition]) : static_cast<size_t>(mNarrowIndexes[iPosition]);
+    return indexes<IsWideIndex>()[iPosition];
   }
 
   template <bool IsWideIndex>
   inline void setIndex(size_t iPosition, size_t iValue) noexcept {
-    if (IsWideIndex) {
-      mWideIndexes[iPosition] = static_cast<WideIndexType>(iValue);
-    } else {
-      mNarrowIndexes[iPosition] = static_cast<NarrowIndexType>(iValue);
-    }
+    indexes<IsWideIndex>()[iPosition] = static_cast<IndexType<IsWideIndex>>(iValue);
   }
 
   inline size_t levelOf(size_t iNodeIndex) const noexcept;
@@ -1172,8 +1181,7 @@ class Flatbush {
   std::vector<uint8_t> mData;  // backing store, empty when the packed bytes are managed externally
   span<const uint8_t> mBytes;
   span<Box<ArrayType>> mBoxes;
-  span<NarrowIndexType> mNarrowIndexes;
-  span<WideIndexType> mWideIndexes;
+  uint8_t* mIndexes = nullptr;
   // pick appropriate index view
   bool mIsWideIndex = false;
   // box stuff
@@ -1230,8 +1238,7 @@ void Flatbush<ArrayType>::init(bool iIsPacked) {
 
   const size_t wNodesByteSize = wNumNodes * sizeof(Box<ArrayType>);
   mBoxes = { detail::bit_cast<Box<ArrayType>*>(wBase + gHeaderByteSize), wNumNodes };
-  mNarrowIndexes = { detail::bit_cast<NarrowIndexType*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
-  mWideIndexes = { detail::bit_cast<WideIndexType*>(wBase + gHeaderByteSize + wNodesByteSize), wNumNodes };
+  mIndexes = wBase + gHeaderByteSize + wNodesByteSize;
 
   // Already-packed bytes leave nothing to fill in, so the tree starts out complete
   if (iIsPacked && wNumNodes > 0UL) {
@@ -1496,11 +1503,8 @@ void Flatbush<ArrayType>::swap(detail::HilbertValues& iValues, size_t iLeft, siz
   std::swap(iValues[iLeft], iValues[iRight]);
   std::swap(mBoxes[iLeft], mBoxes[iRight]);
 
-  if (IsWideIndex) {
-    std::swap(mWideIndexes[iLeft], mWideIndexes[iRight]);
-  } else {
-    std::swap(mNarrowIndexes[iLeft], mNarrowIndexes[iRight]);
-  }
+  auto wIndexes = indexes<IsWideIndex>();
+  std::swap(wIndexes[iLeft], wIndexes[iRight]);
 }
 
 template <typename ArrayType>
@@ -1551,8 +1555,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       const auto wLeafEnd = std::min(wPosition + wCount, wNumItems);
 
       if (kDefaultFilterFn) {
-        using IndexType = typename std::conditional<IsWideIndex, WideIndexType, NarrowIndexType>::type;
-        const auto wBegin = detail::bit_cast<const IndexType*>(mWideIndexes.data()) + wPosition;
+        const auto wBegin = indexes<IsWideIndex>() + wPosition;
         const auto wCopyCount = std::min(wLeafEnd - wPosition, iMaxResults - wResults.size());
         wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
       } else {
