@@ -1646,11 +1646,28 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
+  const auto wReturnAll = UseHeap && kCanBound && iMaxResults >= wNumItems && iMaxDistance >= gMaxDistance;
   size_t wNodeIndex = mBoxes.size() - 1UL;
   std::vector<IndexDistance> wQueue;
-  wQueue.reserve(wNodeSize << 2U);
+  wQueue.reserve(wReturnAll ? wNumItems : (wNodeSize << 2U));
   std::vector<size_t> wResults;
   wResults.reserve(std::min(wNumItems, iMaxResults));
+
+  if (wReturnAll) {
+    for (size_t wPosition = 0UL; wPosition < wNumItems; ++wPosition) {
+      wQueue.emplace_back(getIndex<IsWideIndex>(wPosition),
+                          static_cast<double>(iDistanceFn(iPoint, mBoxes[wPosition])));
+    }
+
+    std::sort(wQueue.begin(), wQueue.end());
+
+    for (auto wItem = wQueue.rbegin(); wItem != wQueue.rend(); ++wItem) {
+      wResults.push_back(wItem->mId);
+    }
+
+    return wResults;
+  }
+
   // Wanting a single result makes the closest leaf seen so far a valid bound: nothing
   // farther away can displace it, so anything beyond it need not be queued at all
   const auto wTrackNearest = iMaxResults == 1UL;
