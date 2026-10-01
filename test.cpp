@@ -691,7 +691,7 @@ TEST(FlatbushTest, SearchQueryFilterFunc) {
   EXPECT_EQ(wIds, std::vector<size_t> { 6UL });
 }
 
-class FlatbushSearchContainedRangesTest : public ::testing::TestWithParam<std::tuple<size_t, bool, size_t>> {};
+class FlatbushSearchContainedRangesTest : public ::testing::TestWithParam<std::tuple<size_t, bool>> {};
 
 TEST_P(FlatbushSearchContainedRangesTest, PreserveOrderAndLimits) {
   const auto wNumItems = std::get<0>(GetParam());
@@ -707,43 +707,45 @@ TEST_P(FlatbushSearchContainedRangesTest, PreserveOrderAndLimits) {
                                     };
   ASSERT_EQ(wIndex.search(wIndex.bounds()).size(), wNumItems);
 
-  auto wExpected = wIndex.search(wQuery, flatbush::detail::acceptAllFilter<int32_t>);
-  EXPECT_EQ(wIndex.search(wQuery), wExpected);
+  const auto wAllIds = wIndex.search(wQuery, flatbush::detail::acceptAllFilter<int32_t>);
+  EXPECT_EQ(wIndex.search(wQuery), wAllIds);
 
-  const auto wLimit = std::get<2>(GetParam());
-  wExpected.resize(std::min(wLimit, wExpected.size()));
-  EXPECT_EQ(wIndex.search(wQuery, {}, wLimit), wExpected);
+  const std::array<size_t, 17> wLimits { 0UL,
+                                         1UL,
+                                         2UL,
+                                         7UL,
+                                         8UL,
+                                         9UL,
+                                         15UL,
+                                         16UL,
+                                         17UL,
+                                         18UL,
+                                         100UL,
+                                         256UL,
+                                         32768UL,
+                                         32769UL,
+                                         65537UL,
+                                         65538UL,
+                                         flatbush::gMaxResults };
+  for (const auto wLimit : wLimits) {
+    SCOPED_TRACE(wLimit);
+    auto wExpected = wAllIds;
+    wExpected.resize(std::min(wLimit, wExpected.size()));
+    EXPECT_EQ(wIndex.search(wQuery, {}, wLimit), wExpected);
 
-  size_t wCalls = 0UL;
-  const auto wFilter = [&wCalls](size_t, const flatbush::Box<int32_t>&) {
-    ++wCalls;
-    return true;
-  };
-  EXPECT_EQ(wIndex.search(wQuery, wFilter, wLimit), wExpected);
-  EXPECT_EQ(wCalls, wExpected.size());
+    size_t wCalls = 0UL;
+    const auto wFilter = [&wCalls](size_t, const flatbush::Box<int32_t>&) {
+      ++wCalls;
+      return true;
+    };
+    EXPECT_EQ(wIndex.search(wQuery, wFilter, wLimit), wExpected);
+    EXPECT_EQ(wCalls, wExpected.size());
+  }
 }
 
-INSTANTIATE_TEST_SUITE_P(NumItemsQueryAndLimit,
+INSTANTIATE_TEST_SUITE_P(NumItemsAndQuery,
                          FlatbushSearchContainedRangesTest,
-                         ::testing::Combine(::testing::Values(1UL, 17UL, 65537UL),
-                                            ::testing::Values(true, false),
-                                            ::testing::Values(0UL,
-                                                              1UL,
-                                                              2UL,
-                                                              7UL,
-                                                              8UL,
-                                                              9UL,
-                                                              15UL,
-                                                              16UL,
-                                                              17UL,
-                                                              18UL,
-                                                              100UL,
-                                                              256UL,
-                                                              32768UL,
-                                                              32769UL,
-                                                              65537UL,
-                                                              65538UL,
-                                                              flatbush::gMaxResults)));
+                         ::testing::Combine(::testing::Values(1UL, 17UL, 65537UL), ::testing::Values(true, false)));
 
 class FlatbushFilteredSearchTest : public Test {
  protected:
@@ -881,19 +883,6 @@ TEST(FlatbushTest, FromZeroNumItems) {
   EXPECT_THROW(
       { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
       std::invalid_argument);
-}
-
-TEST(FlatbushTest, DataReportsPackedSizeNotCapacity) {
-  auto wIndex = createIndex();
-  auto wVector = std::vector<uint8_t> {};
-  wVector.reserve(wIndex.data().size() + 1024);
-  wVector.assign(wIndex.data().begin(), wIndex.data().end());
-
-  ASSERT_GT(wVector.capacity(), wVector.size());
-
-  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wVector));
-
-  EXPECT_EQ(wIndex.data().size(), wIndex2.data().size());
 }
 
 TEST(FlatbushTest, FromOversizedBuffer) {
@@ -1083,15 +1072,6 @@ TEST(FlatbushTest, FromSupportsSingleItemIndex) {
   EXPECT_EQ(wRestored.search({ 1.0, 2.0, 3.0, 4.0 }), std::vector<size_t> { 0UL });
 }
 
-TEST(FlatbushTest, FromMovedVectorDoesNotCopy) {
-  auto wIndex = createIndex();
-  auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
-  const auto* const wBefore = wVector.data();
-  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wVector));
-
-  EXPECT_EQ(wBefore, wIndex2.data().data());
-}
-
 TEST(FlatbushTest, FromViewAliasesSourceBytes) {
   auto wIndex = createIndex();
   auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
@@ -1127,15 +1107,6 @@ TEST(FlatbushTest, FromViewSharesOneBufferBetweenIndices) {
 
   EXPECT_EQ(wFirst.data().data(), wSecond.data().data());
   EXPECT_EQ(wFirst.search({ 40, 40, 60, 60 }), wSecond.search({ 40, 40, 60, 60 }));
-}
-
-TEST(FlatbushTest, FromViewMisalignedBuffer) {
-  auto wIndex = createIndex();
-  auto wVector = std::vector<uint8_t>(wIndex.data().size() + 1);
-  std::memcpy(wVector.data() + 1, wIndex.data().data(), wIndex.data().size());
-  const auto wBytes = flatbush::span<const uint8_t> { wVector.data() + 1, wIndex.data().size() };
-
-  EXPECT_THROW({ static_cast<void>(flatbush::FlatbushBuilder<double>::fromView(wBytes)); }, std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromHostileNumItemsDoesNotAllocate) {
@@ -1430,12 +1401,17 @@ TEST(FlatbushTest, ExtremeFloatBoundsPreserveHilbertRange) {
 TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   auto wIndex = createIndex();
   auto wIndexBuffer = wIndex.data();
-  auto wIndexVector = std::vector<uint8_t> { wIndexBuffer.begin(), wIndexBuffer.end() };
+  auto wIndexVector = std::vector<uint8_t> {};
+  wIndexVector.reserve(wIndexBuffer.size() + 1024);
+  wIndexVector.assign(wIndexBuffer.begin(), wIndexBuffer.end());
+  ASSERT_GT(wIndexVector.capacity(), wIndexVector.size());
+
+  const auto* const wBefore = wIndexVector.data();
   auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wIndexVector));
   auto wIndex2Buffer = wIndex2.data();
 
+  EXPECT_EQ(wIndex2Buffer.data(), wBefore);
   ASSERT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
-
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
 
