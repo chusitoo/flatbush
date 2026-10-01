@@ -998,6 +998,25 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   const auto wIsWideIndex = wPayloadSize > (gMaxNumNodes * kNarrowNodeByteSize);
   const auto wNumNodes = wPayloadSize / (wIsWideIndex ? kWideNodeByteSize : kNarrowNodeByteSize);
   const auto wIndexes = iData + gHeaderByteSize + wNumNodes * kBoxByteSize;
+
+  for (size_t wPosition = 0UL; wPosition < wNumItems; ++wPosition) {
+    size_t wLeafId;
+
+    if (wIsWideIndex) {
+      WideIndexType wValue;
+      std::memcpy(&wValue, wIndexes + wPosition * gWideIndexSize, gWideIndexSize);
+      wLeafId = wValue;
+    } else {
+      NarrowIndexType wValue;
+      std::memcpy(&wValue, wIndexes + wPosition * gNarrowIndexSize, gNarrowIndexSize);
+      wLeafId = wValue;
+    }
+
+    if (wLeafId >= wNumItems) {
+      throw std::invalid_argument("Data contains an invalid leaf item index.");
+    }
+  }
+
   size_t wChildStart = 0UL;
   size_t wChildEnd = wNumItems;
   size_t wParentIndex = wNumItems;
