@@ -22,6 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
+#include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -35,7 +36,9 @@ SOFTWARE.
 
 #include "flatbush.h"
 
+using ::testing::HasSubstr;
 using ::testing::Test;
+using ::testing::ThrowsMessage;
 using ::testing::Types;
 
 struct ThrowingNumber {
@@ -600,21 +603,21 @@ TEST(FlatbushTest, QueryCallbacksCanBeMoveOnly) {
 TEST(FlatbushTest, SearchFilterExceptionsPropagate) {
   auto wIndex = createIndex();
 
-  EXPECT_THROW(
-      {
+  EXPECT_THAT(
+      [&] {
         static_cast<void>(wIndex.search({ 0.0, 0.0, 100.0, 100.0 }, [](size_t, const flatbush::Box<double>&) -> bool {
           throw std::runtime_error("filter failure");
         }));
       },
-      std::runtime_error);
+      ThrowsMessage<std::runtime_error>("filter failure"));
   EXPECT_EQ(wIndex.search({ 0.0, 0.0, 100.0, 100.0 }).size(), wIndex.numItems());
 }
 
 TEST(FlatbushTest, NeighborsFilterExceptionsPropagate) {
   auto wIndex = createIndex();
 
-  EXPECT_THROW(
-      {
+  EXPECT_THAT(
+      [&] {
         static_cast<void>(wIndex.neighbors({ 50.0, 50.0 },
                                            3,
                                            flatbush::gMaxDistance,
@@ -622,7 +625,7 @@ TEST(FlatbushTest, NeighborsFilterExceptionsPropagate) {
                                              throw std::runtime_error("filter failure");
                                            }));
       },
-      std::runtime_error);
+      ThrowsMessage<std::runtime_error>("filter failure"));
   EXPECT_EQ(wIndex.neighbors({ 50.0, 50.0 }, 3).size(), 3UL);
 }
 
@@ -630,8 +633,8 @@ TEST(FlatbushTest, NeighborsDistanceExceptionsPropagate) {
   auto wIndex = createIndex();
   size_t wCalls = 0UL;
 
-  EXPECT_THROW(
-      {
+  EXPECT_THAT(
+      [&] {
         static_cast<void>(wIndex.neighbors({ 50.0, 50.0 },
                                            3,
                                            flatbush::gMaxDistance,
@@ -642,7 +645,7 @@ TEST(FlatbushTest, NeighborsDistanceExceptionsPropagate) {
                                              return flatbush::detail::computeDistanceSquared(iPoint, iBox);
                                            }));
       },
-      std::runtime_error);
+      ThrowsMessage<std::runtime_error>("distance failure"));
   EXPECT_GT(wCalls, 1UL);
   EXPECT_EQ(wIndex.neighbors({ 50.0, 50.0 }, 3).size(), 3UL);
 }
@@ -814,56 +817,68 @@ TEST(FlatbushTest, ReconstructIndexFromJSUint8ClampedArray) {
 
   const auto wClampedIndex = flatbush::FlatbushBuilder<uint8_t>::from(wData.data(), wData.size());
   EXPECT_EQ(wClampedIndex.search({ 0, 0, 255, 255 }), wIndex.search({ 0, 0, 255, 255 }));
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<int8_t>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<int8_t>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Expected type is uint8_t, but got template type int8_t"));
 }
 
 TEST(FlatbushTest, FromNull) {
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(nullptr, flatbush::gHeaderByteSize)); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(nullptr, flatbush::gHeaderByteSize));
+      },
+      ThrowsMessage<std::invalid_argument>("Data is incomplete or missing."));
 }
 
 TEST(FlatbushTest, FromWrongMagic) {
   auto wData = gFlatbush;
   wData[0] = 0xf1;
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Data does not appear to be in a Flatbush format."));
 }
 
 TEST(FlatbushTest, FromWrongVersion) {
   auto wData = gFlatbush;
   wData[1] ^= 0x10U;
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Got v2 data when expected v3."));
 }
 
 TEST(FlatbushTest, FromWrongEncodedType) {
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<int>::from(gFlatbush.data(), gFlatbush.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [] {
+        static_cast<void>(flatbush::FlatbushBuilder<int>::from(gFlatbush.data(), gFlatbush.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Expected type is double, but got template type int32_t"));
 }
 
 TEST(FlatbushTest, FromInvalidHeaderSize) {
-  EXPECT_THROW(
-      {
+  EXPECT_THAT(
+      [] {
         static_cast<void>(flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), flatbush::gHeaderByteSize - 1UL));
       },
-      std::invalid_argument);
+      ThrowsMessage<std::invalid_argument>("Data buffer size must be at least 8 bytes."));
 }
 
 TEST(FlatbushTest, FromInvalidNodeSize) {
   auto wData = gFlatbush;
   std::memset(wData.data() + 2, 0, sizeof(uint16_t));
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Node size cannot be < 2."));
 }
 
 TEST(FlatbushTest, FromInvalidNumItems) {
@@ -871,18 +886,22 @@ TEST(FlatbushTest, FromInvalidNumItems) {
   const uint32_t wNumItems = 13U;
   std::memcpy(wData.data() + 4, &wNumItems, sizeof(wNumItems));
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>(HasSubstr("Num items dictates a total size of ")));
 }
 
 TEST(FlatbushTest, FromZeroNumItems) {
   auto wData = gFlatbush;
   std::memset(wData.data() + 4, 0, sizeof(uint32_t));
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Num items cannot be 0."));
 }
 
 TEST(FlatbushTest, FromOversizedBuffer) {
@@ -890,11 +909,17 @@ TEST(FlatbushTest, FromOversizedBuffer) {
   auto wVector = std::vector<uint8_t> { wIndex.data().begin(), wIndex.data().end() };
   wVector.resize(wVector.size() + 512, 0xAB);
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wVector.data(), wVector.size())); },
-      std::invalid_argument);
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(std::move(wVector))); }, std::invalid_argument);
+  const auto wSizeMismatch = ThrowsMessage<std::invalid_argument>(HasSubstr("Num items dictates a total size of "));
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wVector.data(), wVector.size()));
+      },
+      wSizeMismatch);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(std::move(wVector)));
+      },
+      wSizeMismatch);
 }
 
 TEST(FlatbushTest, FromInvalidInternalNodeIndex) {
@@ -919,9 +944,11 @@ TEST(FlatbushTest, FromInvalidInternalNodeIndex) {
                 &wIndexValue,
                 sizeof(wIndexValue));
 
-    EXPECT_THROW(
-        { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wCorruptData.data(), wCorruptData.size())); },
-        std::invalid_argument);
+    EXPECT_THAT(
+        [&] {
+          static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wCorruptData.data(), wCorruptData.size()));
+        },
+        ThrowsMessage<std::invalid_argument>("Data contains an invalid internal node index."));
   }
 }
 
@@ -945,9 +972,11 @@ TEST(FlatbushTest, FromInvalidWideInternalNodeIndex) {
   std::memcpy(wData.data() + wIndicesOffset + wRootPosition * sizeof(wWrongRootIndex),
               &wWrongRootIndex,
               sizeof(wWrongRootIndex));
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wData.data(), wData.size())); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wData.data(), wData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Data contains an invalid internal node index."));
 }
 
 template <typename IndexType>
@@ -975,19 +1004,27 @@ using LeafIndexTypes = Types<flatbush::NarrowIndexType, flatbush::WideIndexType>
 TYPED_TEST_SUITE(FlatbushInvalidLeafTest, LeafIndexTypes);
 
 TYPED_TEST(FlatbushInvalidLeafTest, CopyRejectsOutOfRangeId) {
-  EXPECT_THROW(static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(this->mData.data(), this->mData.size())),
-               std::invalid_argument);
+  EXPECT_THAT(
+      [this] {
+        static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(this->mData.data(), this->mData.size()));
+      },
+      ThrowsMessage<std::invalid_argument>("Data contains an invalid leaf item index."));
 }
 
 TYPED_TEST(FlatbushInvalidLeafTest, MoveRejectsOutOfRangeId) {
-  EXPECT_THROW(static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(std::move(this->mData))),
-               std::invalid_argument);
+  EXPECT_THAT(
+      [this] {
+        static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(std::move(this->mData)));
+      },
+      ThrowsMessage<std::invalid_argument>("Data contains an invalid leaf item index."));
 }
 
 TYPED_TEST(FlatbushInvalidLeafTest, ViewRejectsOutOfRangeId) {
-  EXPECT_THROW(static_cast<void>(
-                   flatbush::FlatbushBuilder<uint32_t>::fromView({ this->mData.data(), this->mData.size() })),
-               std::invalid_argument);
+  EXPECT_THAT(
+      [this] {
+        static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::fromView({ this->mData.data(), this->mData.size() }));
+      },
+      ThrowsMessage<std::invalid_argument>("Data contains an invalid leaf item index."));
 }
 
 TEST(FlatbushTest, FromSupportsIndexWidthBoundary) {
@@ -1038,13 +1075,18 @@ TEST(FlatbushTest, FromMisalignedBuffer) {
       EXPECT_EQ(wRestored.search({ wNumItems - 1U, wNumItems - 1U, wNumItems - 1U, wNumItems - 1U }),
                 std::vector<size_t> { wNumItems - 1UL });
       EXPECT_EQ(wRestored.neighbors({ wNumItems - 1U, wNumItems - 1U }, 1UL), std::vector<size_t> { wNumItems - 1UL });
-      EXPECT_THROW(
-          { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::fromView(wBytes)); }, std::invalid_argument);
+      EXPECT_THAT(
+          [&] {
+            static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::fromView(wBytes));
+          },
+          ThrowsMessage<std::invalid_argument>(HasSubstr("Data buffer must be aligned to ")));
 
       wVector[wOffset + wRootIndexOffset] ^= 1U;
-      EXPECT_THROW(
-          { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wBytes.data(), wBytes.size())); },
-          std::invalid_argument);
+      EXPECT_THAT(
+          [&] {
+            static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wBytes.data(), wBytes.size()));
+          },
+          ThrowsMessage<std::invalid_argument>("Data contains an invalid internal node index."));
     }
   }
 }
@@ -1057,9 +1099,12 @@ TEST(FlatbushTest, FromMisalignedInvalidHeader) {
     const auto wFieldSize = wFieldOffset == 2UL ? sizeof(uint16_t) : sizeof(uint32_t);
     std::memset(wData + wFieldOffset, 0, wFieldSize);
 
-    EXPECT_THROW(
-        { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData, gFlatbush.size())); },
-        std::invalid_argument);
+    EXPECT_THAT(
+        [&] {
+          static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData, gFlatbush.size()));
+        },
+        ThrowsMessage<std::invalid_argument>(wFieldOffset == 2UL ? "Node size cannot be < 2."
+                                                                 : "Num items cannot be 0."));
   }
 }
 
@@ -1113,9 +1158,11 @@ TEST(FlatbushTest, FromHostileNumItemsDoesNotAllocate) {
   // Header claims ~4.29e9 items, which would otherwise size a ~164 GB allocation
   auto wHeader = std::vector<uint8_t> { 251, 56, 16, 0, 0xff, 0xff, 0xff, 0xff };
 
-  EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wHeader.data(), flatbush::gHeaderByteSize)); },
-      std::invalid_argument);
+  EXPECT_THAT(
+      [&] {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(wHeader.data(), flatbush::gHeaderByteSize));
+      },
+      ThrowsMessage<std::invalid_argument>("Data exceeds the serialized format or platform limits."));
 }
 
 TEST(FlatbushTest, TryCalculateDataSizeRejectsUnrepresentableLayout) {
@@ -1129,7 +1176,11 @@ TEST(FlatbushTest, TryCalculateDataSizeRejectsUnrepresentableLayout) {
 }
 
 TEST(FlatbushTest, BuilderRejectsUnrepresentableReservation) {
-  EXPECT_THROW({ flatbush::FlatbushBuilder<uint8_t> wBuilder(std::numeric_limits<size_t>::max()); }, std::length_error);
+  EXPECT_THAT(
+      [] {
+        flatbush::FlatbushBuilder<uint8_t> wBuilder(std::numeric_limits<size_t>::max());
+      },
+      ThrowsMessage<std::length_error>("Requested index exceeds the serialized format or platform limits."));
 }
 
 TEST(FlatbushTest, AdjustedNodeSize) {
