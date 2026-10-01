@@ -156,7 +156,7 @@ static const std::array<uint8_t, 518> gFlatbush {
 
 flatbush::Flatbush<double> createIndex() {
   auto wNumItems = gData.size() / 4;
-  flatbush::FlatbushBuilder<double> wBuilder;
+  flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
 
   for (size_t wIdx = 0; wIdx < gData.size(); wIdx += 4) {
     wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] });
@@ -184,9 +184,9 @@ flatbush::Flatbush<double> createSmallIndex(uint32_t iNumItems, uint16_t iNodeSi
   return wIndex;
 }
 
-TEST(FlatbushTest, IndexBunchOfRectangles) {
+TEST(FlatbushBaselineTest, IndexBunchOfRectangles) {
   auto wIndex = createIndex();
-  EXPECT_EQ(wIndex.indexSize() * 4 + wIndex.indexSize(), 540);
+  ASSERT_EQ(wIndex.indexSize() * 4 + wIndex.indexSize(), 540);
 
   const auto& wBounds = wIndex.bounds();
   EXPECT_EQ(wBounds.mMinX, 0);
@@ -206,7 +206,7 @@ TEST(FlatbushTest, IndexBunchOfRectangles) {
   EXPECT_EQ(wIndices[wIndex.indexSize() - 1], 400);
 }
 
-TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
+TEST(FlatbushBaselineTest, SkipSortingLessThanNodeSizeRectangles) {
   uint32_t wNumItems = 14;
   uint16_t wNodeSize = 16;
   auto wIndex = createSmallIndex(wNumItems, wNodeSize);
@@ -228,6 +228,7 @@ TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
   auto wData = wIndex.data();
   auto wBoxes = flatbush::detail::bit_cast<const double*>(&wData[flatbush::gHeaderByteSize]);
   size_t wBoxLen = wIndex.indexSize() * 4;
+  ASSERT_EQ(wBoxLen, (wSize + 1) * 4);
 
   auto wIndices = flatbush::detail::bit_cast<const flatbush::NarrowIndexType*>(&wBoxes[wBoxLen]);
   // sort should be skipped, ordered progressing indices expected
@@ -236,11 +237,207 @@ TEST(FlatbushTest, SkipSortingLessThanNodeSizeRectangles) {
   }
   EXPECT_EQ(wIndices[wSize], 0);
 
-  EXPECT_EQ(wBoxLen, (wSize + 1) * 4);
   EXPECT_EQ(wBoxes[wBoxLen - 4], wRootMinX);
   EXPECT_EQ(wBoxes[wBoxLen - 3], wRootMinY);
   EXPECT_EQ(wBoxes[wBoxLen - 2], wRootMaxX);
   EXPECT_EQ(wBoxes[wBoxLen - 1], wRootMaxY);
+}
+
+TEST(FlatbushBaselineTest, PerformBoxSearch) {
+  auto wIndex = createIndex();
+  flatbush::Box<double> box { 40, 40, 60, 60 };
+  auto wIds = wIndex.search(box);
+  std::vector<double> wExpected = { 57, 59, 58, 59, 48, 53, 52, 56, 40, 42, 43, 43, 43, 41, 47, 43 };
+  std::vector<double> wResults;
+
+  for (const auto wId : wIds) {
+    ASSERT_LT(wId, gData.size() / 4);
+    wResults.push_back(gData[4 * wId]);
+    wResults.push_back(gData[4 * wId + 1]);
+    wResults.push_back(gData[4 * wId + 2]);
+    wResults.push_back(gData[4 * wId + 3]);
+  }
+
+  std::sort(wExpected.begin(), wExpected.end());
+  std::sort(wResults.begin(), wResults.end());
+
+  EXPECT_EQ(wResults, wExpected);
+}
+
+TEST(FlatbushBaselineTest, ReconstructIndexFromArrayBuffer) {
+  auto wIndex = createIndex();
+  auto wIndexBuffer = wIndex.data();
+  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(wIndexBuffer.data(), wIndexBuffer.size());
+  auto wIndex2Buffer = wIndex2.data();
+
+  EXPECT_EQ(wIndex2.numItems(), wIndex.numItems());
+  EXPECT_EQ(wIndex2.nodeSize(), wIndex.nodeSize());
+  EXPECT_EQ(wIndex2.indexSize(), wIndex.indexSize());
+  ASSERT_EQ(wIndex2Buffer.size(), wIndexBuffer.size());
+  EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
+  EXPECT_EQ(wIndex2.search({ 40, 40, 60, 60 }), wIndex.search({ 40, 40, 60, 60 }));
+  EXPECT_EQ(wIndex2.neighbors({ 50, 50 }, 3), wIndex.neighbors({ 50, 50 }, 3));
+}
+
+TEST(FlatbushBaselineTest, FromViewRejectsMisalignedOffset) {
+  const auto wIndex = createIndex();
+  const size_t wByteOffset = alignof(double) > alignof(uint32_t) ? 12UL : 13UL;
+  auto wBuffer = std::vector<uint8_t>(wIndex.data().size() + wByteOffset);
+  std::memcpy(wBuffer.data() + wByteOffset, wIndex.data().data(), wIndex.data().size());
+  const auto wBytes = flatbush::span<const uint8_t> { wBuffer.data() + wByteOffset, wIndex.data().size() };
+
+  EXPECT_THROW({ static_cast<void>(flatbush::FlatbushBuilder<double>::fromView(wBytes)); }, std::invalid_argument);
+}
+
+TEST(FlatbushBaselineTest, ReconstructIndexFromBufferOffset) {
+  const auto wIndex = createIndex();
+  const size_t wByteOffset = 16UL;
+  auto wBuffer = std::vector<uint8_t>(wIndex.data().size() + wByteOffset);
+  std::memcpy(wBuffer.data() + wByteOffset, wIndex.data().data(), wIndex.data().size());
+  const auto wBytes = flatbush::span<const uint8_t> { wBuffer.data() + wByteOffset, wIndex.data().size() };
+  const auto wIndex2 = flatbush::FlatbushBuilder<double>::fromView(wBytes);
+
+  EXPECT_EQ(wIndex2.numItems(), wIndex.numItems());
+  EXPECT_EQ(wIndex2.nodeSize(), wIndex.nodeSize());
+  EXPECT_EQ(wIndex2.indexSize(), wIndex.indexSize());
+  ASSERT_EQ(wIndex2.data().size(), wIndex.data().size());
+  EXPECT_TRUE(std::equal(wIndex.data().begin(), wIndex.data().end(), wIndex2.data().begin()));
+  EXPECT_EQ(wIndex2.search({ 40, 40, 60, 60 }), wIndex.search({ 40, 40, 60, 60 }));
+  EXPECT_EQ(wIndex2.neighbors({ 50, 50 }, 3), wIndex.neighbors({ 50, 50 }, 3));
+  EXPECT_TRUE(wIndex2.isView());
+  EXPECT_EQ(wIndex2.data().data(), wBuffer.data() + wByteOffset);
+}
+
+TEST(FlatbushBaselineTest, AddPointWithoutMaxCoordinates) {
+  flatbush::FlatbushBuilder<double> wBuilder(1);
+  wBuilder.add(flatbush::Point<double> { 10, 10 });
+  const auto wIndex = wBuilder.finish();
+
+  EXPECT_EQ(wIndex.search({ 0, 0, 20, 20 }), std::vector<size_t> { 0UL });
+}
+
+TEST(FlatbushBaselineTest, FinishRejectsEmptyIndex) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double> wBuilder(gData.size() / 4);
+        static_cast<void>(wBuilder.finish());
+      },
+      std::invalid_argument);
+}
+
+TEST(FlatbushBaselineTest, DoesNotFreezeOnZeroNumItems) {
+  EXPECT_THROW(
+      {
+        flatbush::FlatbushBuilder<double> wBuilder(0);
+        static_cast<void>(wBuilder.finish());
+      },
+      std::invalid_argument);
+}
+
+TEST(FlatbushBaselineTest, PerformNeighborsQuery) {
+  auto wIndex = createIndex();
+  auto wIds = wIndex.neighbors({ 50, 50 }, 3);
+  std::vector<size_t> wExpected = { 31, 6, 75 };
+
+  std::sort(wExpected.begin(), wExpected.end());
+  std::sort(wIds.begin(), wIds.end());
+
+  EXPECT_EQ(wIds, wExpected);
+}
+
+TEST(FlatbushBaselineTest, NeighborsQueryMaxDistance) {
+  auto wIndex = createIndex();
+  auto wIds = wIndex.neighbors({ 50, 50 }, flatbush::gMaxResults, 12);
+  std::vector<size_t> wExpected = { 6, 29, 31, 75, 85 };
+
+  std::sort(wExpected.begin(), wExpected.end());
+  std::sort(wIds.begin(), wIds.end());
+
+  EXPECT_EQ(wIds, wExpected);
+}
+
+TEST(FlatbushBaselineTest, NeighborsQueryFilterFunc) {
+  auto wIndex = createIndex();
+  auto wIds = wIndex.neighbors({ 50, 50 }, 6, flatbush::gMaxDistance, [](size_t iValue, const flatbush::Box<double>&) {
+    return iValue % 2 == 0;
+  });
+  std::vector<size_t> wExpected = { 6, 16, 18, 24, 54, 80 };
+
+  std::sort(wExpected.begin(), wExpected.end());
+  std::sort(wIds.begin(), wIds.end());
+
+  EXPECT_EQ(wIds, wExpected);
+}
+
+TEST(FlatbushBaselineTest, NeighborsQueryAllItems) {
+  auto wIndex = createIndex();
+  auto wIds = wIndex.neighbors({ 50, 50 });
+
+  EXPECT_EQ(wIds.size(), gData.size() / 4);
+}
+
+TEST(FlatbushBaselineTest, ReturnIndexOfNewlyAddedRectangle) {
+  const size_t wCount = 5;
+  flatbush::FlatbushBuilder<double> wBuilder(wCount);
+  std::vector<size_t> wIds;
+
+  for (size_t wIdx = 0; wIdx < wCount; ++wIdx) {
+    wIds.push_back(wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] }));
+  }
+
+  EXPECT_EQ(wIds, (std::vector<size_t> { 0, 1, 2, 3, 4 }));
+}
+
+TEST(FlatbushBaselineTest, QuickSortImbalancedDataset) {
+  const uint32_t wNumItems = 15000;
+  flatbush::FlatbushBuilder<double> wBuilder(2 * wNumItems);
+
+  const auto linspace = [](double wStart, double wStop, uint32_t wNum) {
+    const auto wStep = (wStop - wStart) / (wNum - 1);
+    std::vector<double> wItems(wNum);
+    for (uint32_t wIndex = 0; wIndex < wNum; ++wIndex) {
+      wItems[wIndex] = wStart + wStep * static_cast<double>(wIndex);
+    }
+    return wItems;
+  };
+
+  const auto wItems = linspace(0, 1000, wNumItems);
+  const auto wItems2 = linspace(0, 1000, wNumItems);
+  for (const auto wItem : wItems) {
+    wBuilder.add({ wItem, 0, wItem, 0 });
+  }
+  for (const auto wItem : wItems2) {
+    wBuilder.add({ wItem, 0, wItem, 0 });
+  }
+
+  const auto wIndex = wBuilder.finish();
+  EXPECT_NO_THROW(static_cast<void>(wIndex.search({ -100, -1, 15000, 1 })));
+}
+
+TEST(FlatbushBaselineTest, QuickSortWorksOnDuplicates) {
+  uint32_t wNumItems = 55000 + 5500 + 7700;
+  flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
+  auto wX = 0.0;
+
+  for (uint32_t wCount = 0; wCount < 55000; ++wCount, ++wX) {
+    wBuilder.add({ wX, 3.0, wX, 3.0 });
+  }
+
+  for (uint32_t wCount = 0; wCount < 5500; ++wCount, ++wX) {
+    wBuilder.add({ wX, 4.0, wX, 4.0 });
+  }
+
+  for (uint32_t wCount = 0; wCount < 7700; ++wCount, ++wX) {
+    wBuilder.add({ wX, 5.0, wX, 5.0 });
+  }
+
+  const auto wIndex = wBuilder.finish();
+
+  const auto wIds = wIndex.search({ 0.5, -1, 6.5, 1 });
+  EXPECT_EQ(wIds.size(), 0);
+
+  const auto wIds2 = wIndex.search({ 55000, 4.0, 55000, 4.0 });
+  EXPECT_EQ(wIds2.size(), 1);
 }
 
 TEST(FlatbushTest, SkipSortingEqualHilbertValues) {
@@ -300,92 +497,6 @@ TEST(FlatbushTest, SkipSortingIncreasingHilbertValues) {
   for (auto wIdx = 0U; wIdx < kNumItems; ++wIdx) {
     EXPECT_EQ(wIndices[wIdx], wIdx);
   }
-}
-
-TEST(FlatbushTest, PerformBoxSearch) {
-  auto wIndex = createIndex();
-  flatbush::Box<double> box { 40, 40, 60, 60 };
-  auto wIds = wIndex.search(box);
-  std::vector<double> wExpected = { 57, 59, 58, 59, 48, 53, 52, 56, 40, 42, 43, 43, 43, 41, 47, 43 };
-  std::vector<double> wResults;
-
-  for (const auto wId : wIds) {
-    wResults.push_back(gData[4 * wId]);
-    wResults.push_back(gData[4 * wId + 1]);
-    wResults.push_back(gData[4 * wId + 2]);
-    wResults.push_back(gData[4 * wId + 3]);
-  }
-
-  EXPECT_EQ(wExpected.size(), wResults.size());
-  std::sort(wExpected.begin(), wExpected.end());
-  std::sort(wResults.begin(), wResults.end());
-
-  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wResults.begin()));
-}
-
-TEST(FlatbushTest, ReconstructIndexFromArrayBuffer) {
-  auto wIndex = createIndex();
-  auto wIndexBuffer = wIndex.data();
-  auto wIndex2 = flatbush::FlatbushBuilder<double>::from(wIndexBuffer.data(), wIndexBuffer.size());
-  auto wIndex2Buffer = wIndex2.data();
-
-  EXPECT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
-
-  EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
-}
-
-TEST(FlatbushTest, DoesNotFreezeOnZeroNumItems) {
-  EXPECT_THROW(
-      {
-        flatbush::FlatbushBuilder<double> wBuilder;
-        static_cast<void>(wBuilder.finish());
-      },
-      std::invalid_argument);
-}
-
-TEST(FlatbushTest, PerformNeighborsQuery) {
-  auto wIndex = createIndex();
-  auto wIds = wIndex.neighbors({ 50, 50 }, 3);
-  std::vector<size_t> wExpected = { 31, 6, 75 };
-
-  EXPECT_EQ(wExpected.size(), wIds.size());
-  std::sort(wExpected.begin(), wExpected.end());
-  std::sort(wIds.begin(), wIds.end());
-
-  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
-}
-
-TEST(FlatbushTest, NeighborsQueryAllItems) {
-  auto wIndex = createIndex();
-  auto wIds = wIndex.neighbors({ 50, 50 });
-
-  EXPECT_EQ(wIds.size(), wIndex.numItems());
-}
-
-TEST(FlatbushTest, NeighborsQueryMaxDistance) {
-  auto wIndex = createIndex();
-  auto wIds = wIndex.neighbors({ 50, 50 }, flatbush::gMaxResults, 12);
-  std::vector<size_t> wExpected = { 6, 29, 31, 75, 85 };
-
-  EXPECT_EQ(wExpected.size(), wIds.size());
-  std::sort(wExpected.begin(), wExpected.end());
-  std::sort(wIds.begin(), wIds.end());
-
-  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
-}
-
-TEST(FlatbushTest, NeighborsQueryFilterFunc) {
-  auto wIndex = createIndex();
-  auto wIds = wIndex.neighbors({ 50, 50 }, 6, flatbush::gMaxDistance, [](size_t iValue, const flatbush::Box<double>&) {
-    return iValue % 2 == 0;
-  });
-  std::vector<size_t> wExpected = { 6, 16, 18, 24, 54, 80 };
-
-  EXPECT_EQ(wExpected.size(), wIds.size());
-  std::sort(wExpected.begin(), wExpected.end());
-  std::sort(wIds.begin(), wIds.end());
-
-  EXPECT_TRUE(std::equal(wExpected.begin(), wExpected.end(), wIds.begin()));
 }
 
 TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
@@ -531,14 +642,6 @@ TEST(FlatbushTest, NeighborsDistanceExceptionsPropagate) {
       std::runtime_error);
   EXPECT_GT(wCalls, 1UL);
   EXPECT_EQ(wIndex.neighbors({ 50.0, 50.0 }, 3).size(), 3UL);
-}
-
-TEST(FlatbushTest, ReturnIndexOfNewlyAddedRectangle) {
-  flatbush::FlatbushBuilder<double> wBuilder;
-
-  for (size_t wIdx = 0; wIdx < 5; ++wIdx) {
-    EXPECT_EQ(wIdx, wBuilder.add({ gData[wIdx], gData[wIdx + 1], gData[wIdx + 2], gData[wIdx + 3] }));
-  }
 }
 
 TEST(FlatbushTest, AddPointAsZeroAreaBox) {
@@ -1088,7 +1191,7 @@ TEST(FlatbushTest, TestOneMillionItems) {
   EXPECT_EQ(wIds2.size(), wNumItems);
 }
 
-TEST(FlatbushTest, QuickSortImbalancedDataset) {
+TEST(FlatbushTest, QuickSortImbalancedDatasetStress) {
   static const auto linspace = [](double wStart, double wStop, uint32_t wNum) {
     const auto wStep = (wStop - wStart) / (wNum - 1);
     std::vector<double> wItems(wNum);
@@ -1110,32 +1213,6 @@ TEST(FlatbushTest, QuickSortImbalancedDataset) {
     }
     static_cast<void>(wBuilder.finish());
   });
-}
-
-TEST(FlatbushTest, QuickSortWorksOnDuplicates) {
-  uint32_t wNumItems = 55000 + 5500 + 7700;
-  flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
-  auto wX = 0.0;
-
-  for (uint32_t wCount = 0; wCount < 55000; ++wCount, ++wX) {
-    wBuilder.add({ wX, 3.0, wX, 3.0 });
-  }
-
-  for (uint32_t wCount = 0; wCount < 5500; ++wCount, ++wX) {
-    wBuilder.add({ wX, 4.0, wX, 4.0 });
-  }
-
-  for (uint32_t wCount = 0; wCount < 7700; ++wCount, ++wX) {
-    wBuilder.add({ wX, 5.0, wX, 5.0 });
-  }
-
-  const auto wIndex = wBuilder.finish();
-
-  const auto wIds = wIndex.search({ 0.5, -1, 6.5, 1 });
-  EXPECT_EQ(wIds.size(), 0);
-
-  const auto wIds2 = wIndex.search({ 55000, 4.0, 55000, 4.0 });
-  EXPECT_EQ(wIds2.size(), 1);
 }
 
 #if defined(FLATBUSH_USE_SIMD)
