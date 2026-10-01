@@ -84,6 +84,8 @@ constexpr bool canCalculateDataSizeAtCompileTime() {
   return flatbush::detail::tryCalculateDataSize<uint8_t>(2, 16, wDataSize) && wDataSize == 26;
 }
 
+static_assert(canMutateSpanAtCompileTime(), "Span mutation must be constant-evaluable");
+static_assert(canUpdateBoundsAtCompileTime(), "Bounds updates must be constant-evaluable");
 static_assert(flatbush::detail::Interleave(3) == 5, "Bit interleaving must be constant-evaluable");
 static_assert(flatbush::detail::HilbertXYToIndex(0, 0) == 0, "Hilbert mapping must be constant-evaluable");
 static_assert(flatbush::detail::axisDistance(5, 0, 3) == 2.0, "Axis distance must be constant-evaluable");
@@ -685,8 +687,7 @@ TEST(FlatbushTest, SearchQueryFilterFunc) {
   auto wIds = wIndex.search({ 40, 40, 60, 60 }, [](size_t iValue, const flatbush::Box<double>&) {
     return iValue % 2 == 0;
   });
-  EXPECT_EQ(wIds.size(), 1);
-  EXPECT_EQ(wIds.front(), 6);
+  EXPECT_EQ(wIds, std::vector<size_t> { 6UL });
 }
 
 class FlatbushSearchContainedRangesTest : public ::testing::TestWithParam<std::tuple<size_t, bool, size_t>> {};
@@ -747,7 +748,7 @@ TEST(FlatbushTest, ReconstructIndexFromJSArrayBuffer) {
   auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), gFlatbush.size());
   auto wIndexBuffer = wIndex.data();
 
-  EXPECT_EQ(wIndexBuffer.size(), gFlatbush.size());
+  ASSERT_EQ(wIndexBuffer.size(), gFlatbush.size());
 
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), gFlatbush.begin()));
 }
@@ -756,7 +757,7 @@ TEST(FlatbushTest, BuildMatchesJSArrayBuffer) {
   const auto wIndex = createSmallIndex(14, 16);
   auto wData = wIndex.data();
 
-  EXPECT_EQ(wData.size(), gFlatbush.size());
+  ASSERT_EQ(wData.size(), gFlatbush.size());
   EXPECT_TRUE(std::equal(wData.begin(), wData.end(), gFlatbush.begin()));
 }
 
@@ -784,20 +785,20 @@ TEST(FlatbushTest, FromNull) {
 }
 
 TEST(FlatbushTest, FromWrongMagic) {
+  auto wData = gFlatbush;
+  wData[0] = 0xf1;
+
   EXPECT_THROW(
-      {
-        static_cast<void>(
-            flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t> { 0xf1 }.data(), flatbush::gHeaderByteSize));
-      },
+      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
       std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromWrongVersion) {
+  auto wData = gFlatbush;
+  wData[1] ^= 0x10U;
+
   EXPECT_THROW(
-      {
-        static_cast<void>(flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t> { 0xfb, 2 << 4 }.data(),
-                                                                  flatbush::gHeaderByteSize));
-      },
+      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
       std::invalid_argument);
 }
 
@@ -809,32 +810,34 @@ TEST(FlatbushTest, FromWrongEncodedType) {
 
 TEST(FlatbushTest, FromInvalidHeaderSize) {
   EXPECT_THROW(
-      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t> { 251, 56, 0, 0 }.data(), 4)); },
+      {
+        static_cast<void>(flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), flatbush::gHeaderByteSize - 1UL));
+      },
       std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromInvalidNodeSize) {
+  auto wData = gFlatbush;
+  std::memset(wData.data() + 2, 0, sizeof(uint16_t));
+
   EXPECT_THROW(
-      {
-        static_cast<void>(
-            flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t> { 251, 56, 0, 0, 0, 0, 0, 0 }.data(),
-                                                    flatbush::gHeaderByteSize));
-      },
+      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
       std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromInvalidNumItems) {
+  auto wData = gFlatbush;
+  const uint32_t wNumItems = 13U;
+  std::memcpy(wData.data() + 4, &wNumItems, sizeof(wNumItems));
+
   EXPECT_THROW(
-      {
-        static_cast<void>(
-            flatbush::FlatbushBuilder<double>::from(std::vector<uint8_t> { 251, 56, 16, 0, 14, 0, 0, 0 }.data(),
-                                                    flatbush::gHeaderByteSize));
-      },
+      { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
       std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromZeroNumItems) {
-  const auto wData = std::vector<uint8_t> { 251, 56, 16, 0, 0, 0, 0, 0 };
+  auto wData = gFlatbush;
+  std::memset(wData.data() + 4, 0, sizeof(uint32_t));
 
   EXPECT_THROW(
       { static_cast<void>(flatbush::FlatbushBuilder<double>::from(wData.data(), wData.size())); },
@@ -1102,8 +1105,7 @@ TEST(FlatbushTest, SearchQuerySinglePointSmallNumItems) {
   EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 0, 0 });
-  EXPECT_EQ(wIds.size(), 1);
-  EXPECT_EQ(wIds.front(), 0);
+  EXPECT_EQ(wIds, std::vector<size_t> { 0UL });
 }
 
 TEST(FlatbushTest, SearchQuerySinglePointLargeNumItems) {
@@ -1122,8 +1124,7 @@ TEST(FlatbushTest, SearchQuerySinglePointLargeNumItems) {
   EXPECT_EQ(wIndex.nodeSize(), wNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 0, 0 });
-  EXPECT_EQ(wIds.size(), 1);
-  EXPECT_EQ(wIds.front(), 0);
+  EXPECT_EQ(wIds, std::vector<size_t> { 0UL });
 }
 
 TEST(FlatbushTest, SearchQueryMultiPointSmallNumItems) {
@@ -1141,7 +1142,7 @@ TEST(FlatbushTest, SearchQueryMultiPointSmallNumItems) {
   EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 1, 1 });
-  EXPECT_EQ(wIds.size(), 4);
+  ASSERT_EQ(wIds.size(), 4);
   EXPECT_EQ(wIds.front(), 0);
   EXPECT_EQ(wIds.back(), 3);
 }
@@ -1166,7 +1167,7 @@ TEST(FlatbushTest, SearchQueryMultiPointLargeNumItems) {
   EXPECT_EQ(wIndex.nodeSize(), wNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 1, 1 });
-  EXPECT_EQ(wIds.size(), 4);
+  ASSERT_EQ(wIds.size(), 4);
   EXPECT_EQ(wIds.front(), 0);
   EXPECT_EQ(wIds.back(), 1);
 }
@@ -1184,8 +1185,7 @@ TEST(FlatbushTest, TestOneMillionItems) {
   EXPECT_EQ(wIndex.nodeSize(), flatbush::gDefaultNodeSize);
 
   auto wIds = wIndex.search({ 0, 0, 0, 0 });
-  EXPECT_EQ(wIds.size(), 1);
-  EXPECT_EQ(wIds.front(), 0);
+  EXPECT_EQ(wIds, std::vector<size_t> { 0UL });
 
   auto wIds2 = wIndex.search({ 0, 0, wNumItems, wNumItems });
   EXPECT_EQ(wIds2.size(), wNumItems);
@@ -1355,7 +1355,7 @@ TEST(FlatbushTest, ReconstructIndexFromMovedVector) {
   auto wIndex2 = flatbush::FlatbushBuilder<double>::from(std::move(wIndexVector));
   auto wIndex2Buffer = wIndex2.data();
 
-  EXPECT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
+  ASSERT_EQ(wIndexBuffer.size(), wIndex2Buffer.size());
 
   EXPECT_TRUE(std::equal(wIndexBuffer.begin(), wIndexBuffer.end(), wIndex2Buffer.begin()));
 }
@@ -1558,8 +1558,7 @@ TEST(FlatbushTest, WideIndexSupportsSearchAndNeighbors) {
   const auto wIndex = wBuilder.finish();
 
   const auto wSearch = wIndex.search({ 12345U, 12345U, 12345U, 12345U });
-  EXPECT_EQ(wSearch.size(), 1UL);
-  EXPECT_EQ(wSearch.front(), 12345UL);
+  EXPECT_EQ(wSearch, std::vector<size_t> { 12345UL });
 
   const auto wNeighbors = wIndex.neighbors({ 12345U, 12345U }, 10);
   EXPECT_EQ(wNeighbors.size(), 10UL);
