@@ -26,6 +26,7 @@ SOFTWARE.
 
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -744,6 +745,44 @@ INSTANTIATE_TEST_SUITE_P(NumItemsQueryAndLimit,
                                                               65538UL,
                                                               flatbush::gMaxResults)));
 
+class FlatbushFilteredSearchTest : public Test {
+ protected:
+  const flatbush::Box<int32_t> mQuery { 1, 0, 3, 0 };
+  const flatbush::Flatbush<int32_t> mIndex = [] {
+    flatbush::FlatbushBuilder<int32_t> wBuilder(5);
+    for (int32_t wCoord = 0; wCoord < 5; ++wCoord) {
+      wBuilder.add(flatbush::Point<int32_t> { wCoord, 0 });
+    }
+    return wBuilder.finish();
+  }();
+};
+
+TEST_F(FlatbushFilteredSearchTest, MatchesQueryBounds) {
+  EXPECT_EQ(mIndex.search(mQuery), (std::vector<size_t> { 1UL, 2UL, 3UL }));
+}
+
+TEST_F(FlatbushFilteredSearchTest, LimitCountsAcceptedItems) {
+  size_t wCalls = 0UL;
+  const auto wFilter = [&wCalls](size_t iId, const flatbush::Box<int32_t>&) {
+    ++wCalls;
+    return iId % 2UL == 0UL;
+  };
+
+  EXPECT_EQ(mIndex.search(mQuery, wFilter, 1), std::vector<size_t> { 2UL });
+  EXPECT_EQ(wCalls, 2UL);
+}
+
+TEST_F(FlatbushFilteredSearchTest, RejectAllVisitsEveryMatch) {
+  size_t wCalls = 0UL;
+  const auto wFilter = [&wCalls](size_t, const flatbush::Box<int32_t>&) {
+    ++wCalls;
+    return false;
+  };
+
+  EXPECT_TRUE(mIndex.search(mQuery, wFilter, 1).empty());
+  EXPECT_EQ(wCalls, 3UL);
+}
+
 TEST(FlatbushTest, ReconstructIndexFromJSArrayBuffer) {
   auto wIndex = flatbush::FlatbushBuilder<double>::from(gFlatbush.data(), gFlatbush.size());
   auto wIndexBuffer = wIndex.data();
@@ -920,6 +959,46 @@ TEST(FlatbushTest, FromInvalidWideInternalNodeIndex) {
   EXPECT_THROW(
       { static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(wData.data(), wData.size())); },
       std::invalid_argument);
+}
+
+template <typename IndexType>
+class FlatbushInvalidLeafTest : public Test {
+ protected:
+  std::vector<uint8_t> mData;
+
+  void SetUp() override {
+    const uint32_t wNumItems = std::is_same<IndexType, flatbush::NarrowIndexType>::value ? 1U : 20000U;
+    flatbush::FlatbushBuilder<uint32_t> wBuilder(wNumItems);
+    for (uint32_t wId = 0U; wId < wNumItems; ++wId) {
+      wBuilder.add({ 0U, 0U, 0U, 0U });
+    }
+    const auto wIndex = wBuilder.finish();
+    mData.assign(wIndex.data().begin(), wIndex.data().end());
+
+    const auto wOffset = flatbush::gHeaderByteSize + wIndex.indexSize() * sizeof(flatbush::Box<uint32_t>) +
+                         (wNumItems - 1UL) * sizeof(IndexType);
+    const auto wInvalidId = static_cast<IndexType>(wNumItems);
+    std::memcpy(mData.data() + wOffset, &wInvalidId, sizeof(wInvalidId));
+  }
+};
+
+using LeafIndexTypes = Types<flatbush::NarrowIndexType, flatbush::WideIndexType>;
+TYPED_TEST_SUITE(FlatbushInvalidLeafTest, LeafIndexTypes);
+
+TYPED_TEST(FlatbushInvalidLeafTest, CopyRejectsOutOfRangeId) {
+  EXPECT_THROW(static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(this->mData.data(), this->mData.size())),
+               std::invalid_argument);
+}
+
+TYPED_TEST(FlatbushInvalidLeafTest, MoveRejectsOutOfRangeId) {
+  EXPECT_THROW(static_cast<void>(flatbush::FlatbushBuilder<uint32_t>::from(std::move(this->mData))),
+               std::invalid_argument);
+}
+
+TYPED_TEST(FlatbushInvalidLeafTest, ViewRejectsOutOfRangeId) {
+  EXPECT_THROW(static_cast<void>(
+                   flatbush::FlatbushBuilder<uint32_t>::fromView({ this->mData.data(), this->mData.size() })),
+               std::invalid_argument);
 }
 
 TEST(FlatbushTest, FromSupportsIndexWidthBoundary) {
@@ -1527,26 +1606,32 @@ TEST(FlatbushTest, ApproximateResultsSizeEdgeCases) {
   EXPECT_EQ(flatbush::detail::approximateResultsSize(wValidIndex, wQuarterSearch, 100), 37UL);
 }
 
-TEST(FlatbushTest, NeighborsUsesBothStrategyBranches) {
+class FlatbushLargeNeighborsTest : public Test {
+ protected:
   static constexpr size_t kMergeThreshold = 131072UL;
-  const uint32_t wNumItems = kMergeThreshold + 2UL;
-  flatbush::FlatbushBuilder<double> wBuilder(wNumItems);
-  for (uint32_t wIdx = 0; wIdx < wNumItems; ++wIdx) {
-    const auto wVal = static_cast<double>(wIdx);
-    wBuilder.add({ wVal, wVal, wVal, wVal });
-  }
-  const auto wIndex = wBuilder.finish();
+  const flatbush::Flatbush<double> mIndex = []() {
+    flatbush::FlatbushBuilder<double> wBuilder(kMergeThreshold + 2UL);
+    for (size_t wId = 0UL; wId < kMergeThreshold + 2UL; ++wId) {
+      const auto wCoord = static_cast<double>(wId);
+      wBuilder.add(flatbush::Point<double> { wCoord, wCoord });
+    }
+    return wBuilder.finish();
+  }();
+};
 
-  const auto wSmallLimit = wIndex.neighbors({ 50.0, 50.0 }, kMergeThreshold - 1UL);
-  auto wLargeLimit = wIndex.neighbors({ 50.0, 50.0 }, kMergeThreshold + 1UL);
+TEST_F(FlatbushLargeNeighborsTest, StrategyBoundaryPreservesOrder) {
+  std::vector<size_t> wExpected(kMergeThreshold);
+  std::iota(wExpected.begin(), wExpected.end(), 0UL);
+  EXPECT_EQ(mIndex.neighbors({ 0.0, 0.0 }, kMergeThreshold), wExpected);
 
-  EXPECT_EQ(wSmallLimit.size(), kMergeThreshold - 1UL);
-  EXPECT_EQ(wLargeLimit.size(), kMergeThreshold + 1UL);
+  wExpected.push_back(wExpected.size());
+  EXPECT_EQ(mIndex.neighbors({ 0.0, 0.0 }, kMergeThreshold + 1UL), wExpected);
+}
 
-  std::sort(wLargeLimit.begin(), wLargeLimit.end());
-  for (const auto wId : wSmallLimit) {
-    EXPECT_TRUE(std::binary_search(wLargeLimit.begin(), wLargeLimit.end(), wId));
-  }
+TEST_F(FlatbushLargeNeighborsTest, ReturnAllPreservesOrder) {
+  std::vector<size_t> wExpected(mIndex.numItems());
+  std::iota(wExpected.begin(), wExpected.end(), 0UL);
+  EXPECT_EQ(mIndex.neighbors({ 0.0, 0.0 }), wExpected);
 }
 
 TEST(FlatbushTest, WideIndexSupportsSearchAndNeighbors) {
@@ -1595,15 +1680,25 @@ TYPED_TEST(FlatbushTypedTest, BasicIndexCreationAndSearch) {
 TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
   using ArrayType = TypeParam;
 
-  flatbush::FlatbushBuilder<ArrayType> wBuilder;
-  for (size_t wIdx = 0; wIdx < 100; wIdx++) {
-    ArrayType wVal = static_cast<ArrayType>(wIdx);
-    wBuilder.add({ wVal, wVal, static_cast<ArrayType>(wVal + 10), static_cast<ArrayType>(wVal + 10) });
-  }
-  auto wIndex = wBuilder.finish();
+  flatbush::FlatbushBuilder<ArrayType> wBuilder(3, 2);
+  wBuilder.add(flatbush::Point<ArrayType> { 3, 0 });
+  wBuilder.add(flatbush::Point<ArrayType> { 1, 0 });
+  wBuilder.add(flatbush::Point<ArrayType> { 2, 0 });
+  const auto wIndex = wBuilder.finish();
 
-  auto wNeighbors = wIndex.neighbors({ static_cast<ArrayType>(50), static_cast<ArrayType>(50) }, 5);
-  EXPECT_EQ(wNeighbors.size(), 5);
+  EXPECT_EQ(wIndex.neighbors({ 0, 0 }, 2), (std::vector<size_t> { 1UL, 2UL }));
+}
+
+TYPED_TEST(FlatbushTypedTest, NeighborsReturnsEachTiedItemOnce) {
+  flatbush::FlatbushBuilder<TypeParam> wBuilder(3, 2);
+  for (size_t wId = 0UL; wId < 3UL; ++wId) {
+    wBuilder.add(flatbush::Point<TypeParam> { 1, 1 });
+  }
+  const auto wIndex = wBuilder.finish();
+
+  auto wIds = wIndex.neighbors({ 0, 0 });
+  std::sort(wIds.begin(), wIds.end());
+  EXPECT_EQ(wIds, (std::vector<size_t> { 0UL, 1UL, 2UL }));
 }
 
 TYPED_TEST(FlatbushTypedTest, NeighborsZeroRadius) {
