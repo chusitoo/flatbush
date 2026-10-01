@@ -1297,7 +1297,6 @@ TEST(FlatbushTest, NeighborsGuardPathsReturnEmpty) {
   EXPECT_TRUE(wIndex.neighbors({ wNaN, 50.0 }, 10).empty());
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 0).empty());
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, wNaN).empty());
-  EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, 0.0).empty());
   EXPECT_TRUE(wIndex.neighbors({ 50.0, 50.0 }, 10, -1.0).empty());
 }
 
@@ -1529,6 +1528,45 @@ TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
 
   auto wNeighbors = wIndex.neighbors({ static_cast<ArrayType>(50), static_cast<ArrayType>(50) }, 5);
   EXPECT_EQ(wNeighbors.size(), 5);
+}
+
+TYPED_TEST(FlatbushTypedTest, NeighborsZeroRadius) {
+  using ArrayType = TypeParam;
+  const flatbush::Point<ArrayType> wPoint { 2, 3 };
+  const std::vector<size_t> wExpected { 0UL, 1UL, 2UL, 3UL };
+
+  for (const auto wNodeSize : { uint16_t { 2 }, uint16_t { 16 } }) {
+    flatbush::FlatbushBuilder<ArrayType> wBuilder(5, wNodeSize);
+    wBuilder.add(wPoint);
+    wBuilder.add({ 1, 1, 4, 4 });
+    wBuilder.add({ 2, 0, 4, 4 });
+    wBuilder.add({ 0, 0, 2, 3 });
+    wBuilder.add({ 5, 5, 6, 6 });
+    const auto wIndex = wBuilder.finish();
+
+    for (const auto wRadius : { 0.0, -0.0 }) {
+      auto wIds = wIndex.neighbors(wPoint, flatbush::gMaxResults, wRadius);
+      std::sort(wIds.begin(), wIds.end());
+      EXPECT_EQ(wIds, wExpected);
+      EXPECT_EQ(wIndex.neighbors(wPoint, 2, wRadius).size(), 2UL);
+      EXPECT_TRUE(wIndex.neighbors(wPoint, 0, wRadius).empty());
+      EXPECT_TRUE(wIndex.neighbors({ 5, 1 }, flatbush::gMaxResults, wRadius).empty());
+      EXPECT_TRUE(wIndex.neighbors({ 10, 10 }, flatbush::gMaxResults, wRadius).empty());
+
+      const auto wFilteredIds = wIndex.neighbors(wPoint, 1, wRadius, [](size_t iId, const flatbush::Box<ArrayType>&) {
+        return iId == 2UL;
+      });
+      EXPECT_EQ(wFilteredIds, (std::vector<size_t> { 2UL }));
+
+      auto wCustomIds = wIndex.neighbors(wPoint,
+                                         flatbush::gMaxResults,
+                                         wRadius,
+                                         {},
+                                         flatbush::detail::computeDistanceSquared<ArrayType>);
+      std::sort(wCustomIds.begin(), wCustomIds.end());
+      EXPECT_EQ(wCustomIds, wExpected);
+    }
+  }
 }
 
 TYPED_TEST(FlatbushTypedTest, UpdateBounds) {

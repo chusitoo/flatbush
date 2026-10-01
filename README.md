@@ -87,6 +87,7 @@ auto oddIds = index.neighbors({40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
 `maxDistance` may be infinite, in which case no candidates are pruned by distance.
+A zero `maxDistance` searches for boxes containing or touching the query point.
 
 ### Searching for nearest neighbors with a custom metric
 

@@ -1109,7 +1109,7 @@ class Flatbush {
 
     const auto wDistance = static_cast<double>(iDistanceFn(iPoint, mBounds));
 
-    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance > 0.0 && !std::isnan(wDistance) &&
+    return !wIsNanPoint && iMaxResults != 0UL && iMaxDistance >= 0.0 && !std::isnan(wDistance) &&
            wDistance <= iThreshold;
   }
 
