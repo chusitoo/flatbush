@@ -3,8 +3,17 @@ name: "Extended Checks"
 on:
   push:
     branches: [master]
+    tags: ["v*"]
   pull_request:
     branches: [master]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without v (bump CMakeLists.txt first)"
+        required: true
+        type: string
 
 jobs:
   linux-32:
@@ -100,7 +109,18 @@ jobs:
           cmake --install ${{github.workspace}}/build/package
 
       - name: Configure consumer
-        run: cmake -S ${{github.workspace}}/tests/package -B ${{github.workspace}}/build/consumer -DCMAKE_PREFIX_PATH=${{runner.temp}}/flatbush -DCMAKE_CXX_STANDARD=${{matrix.standard}} -DCMAKE_CXX_STANDARD_REQUIRED=ON -DCMAKE_CXX_EXTENSIONS=OFF
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        shell: bash
+        run: |
+          version_args=()
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version_args+=("-DFLATBUSH_EXPECTED_VERSION=$RELEASE_VERSION")
+          elif [[ "$GITHUB_EVENT_NAME" == "release" || "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version_args+=("-DFLATBUSH_EXPECTED_VERSION=${RELEASE_TAG#v}")
+          fi
+          cmake -S ${{github.workspace}}/tests/package -B ${{github.workspace}}/build/consumer -DCMAKE_PREFIX_PATH=${{runner.temp}}/flatbush -DCMAKE_CXX_STANDARD=${{matrix.standard}} -DCMAKE_CXX_STANDARD_REQUIRED=ON -DCMAKE_CXX_EXTENSIONS=OFF "${version_args[@]}"
 
       - name: Build consumer
         run: cmake --build ${{github.workspace}}/build/consumer -j $(nproc)
