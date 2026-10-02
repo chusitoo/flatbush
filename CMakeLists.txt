@@ -4,7 +4,7 @@ project(flatbush VERSION 1.6.0 LANGUAGES CXX)
 
 set(FLATBUSH_TARGET ${PROJECT_NAME})
 
-option(WITH_SPAN "Use custom span if not available in the C++ standard" ON)
+option(WITH_SPAN "Force the custom span implementation" OFF)
 option(WITH_TESTS "Build unit tests" OFF)
 option(WITH_BENCHMARKS "Build benchmarks" OFF)
 
@@ -17,10 +17,10 @@ target_include_directories(${FLATBUSH_TARGET} INTERFACE
   "$<INSTALL_INTERFACE:include>"
 )
 
+target_compile_features(${FLATBUSH_TARGET} INTERFACE cxx_std_11)
+
 if(WITH_SPAN)
   target_compile_definitions(${FLATBUSH_TARGET} INTERFACE FLATBUSH_SPAN)
-else()
-  target_compile_features(${FLATBUSH_TARGET} INTERFACE cxx_std_20)
 endif()
 
 set(FLATBUSH_WARNING_FLAGS "")

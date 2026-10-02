@@ -32,14 +32,25 @@ SOFTWARE.
 #include <cstring>      // for size_t, memcpy
 #include <limits>       // for numeric_limits
 #include <queue>        // for priority_queue
-#ifndef FLATBUSH_SPAN
-#include <span>         // for span
-#endif
 #include <stdexcept>    // for invalid_argument
 #include <string>       // for operator+, to_string, allocator, basic_string, char_traits, string
 #include <type_traits>  // for enable_if, is_same, false_type, integral_constant
 #include <utility>      // for swap
 #include <vector>       // for vector
+
+#ifndef FLATBUSH_SPAN
+#if __cplusplus >= 202002L || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002L)
+#if defined(__has_include)
+#if __has_include(<span>)
+#include <span>
+#endif
+#endif
+#endif
+
+#if !defined(__cpp_lib_span) || __cpp_lib_span < 202002L
+#define FLATBUSH_SPAN
+#endif
+#endif
 
 #ifndef FLATBUSH_NODISCARD
 #if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)

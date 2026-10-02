@@ -148,7 +148,9 @@ an index borrows its bytes rather than owning them.
 ## Compiling
 This is a single header library with the aim to support C++11 and up.
 
-If the target compiler does not have support for C++20 features, namely the ```<span>``` header, a minimalistic implementation is available if **FLATBUSH_SPAN** flag is defined.
+The header automatically uses `std::span` in C++20 and later when supported by the standard library, and otherwise uses a minimalistic implementation. No configuration is required for older C++ standards.
+
+Define `FLATBUSH_SPAN` to force the custom implementation, or configure CMake with `-DWITH_SPAN=ON`. The default, `WITH_SPAN=OFF`, uses automatic selection and requires only C++11. Use the same span implementation across translation units that share Flatbush types.
 
 ### SIMD Optimizations
 The library automatically detects and uses SIMD instructions for improved performance. You can control the SIMD level with the following flags:
