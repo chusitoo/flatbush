@@ -613,6 +613,7 @@ TEST(FlatbushTest, SearchVisitorCompletesWithoutMatches) {
   EXPECT_TRUE(wCompleted);
   EXPECT_EQ(wCalls, 0UL);
 }
+
 TEST(FlatbushTest, NeighborsVisitorMatchesNeighborsAndReportsSquaredDistance) {
   auto wIndex = createIndex();
   const flatbush::Point<double> wQuery { 50, 50 };
@@ -639,7 +640,7 @@ TEST(FlatbushTest, NeighborsVisitorMatchesNeighborsAndReportsSquaredDistance) {
   EXPECT_EQ(wVisited, wExpected);
 }
 
-TEST(FlatbushTest, NeighborsVisitorStopsImmediately) {
+TEST(FlatbushTest, NeighborsVisitorStopsAfterThreeResults) {
   auto wIndex = createIndex();
   const flatbush::Point<double> wQuery { 50, 50 };
   auto wExpected = wIndex.neighbors(wQuery, 3);
@@ -687,6 +688,7 @@ TEST(FlatbushTest, NeighborsVisitorExceptionsPropagate) {
       },
       std::runtime_error);
 }
+
 TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   auto wIndex = createIndex();
   size_t wCalls = 0;
@@ -1826,10 +1828,29 @@ TEST(FlatbushTest, WideIndexSupportsSearchAndNeighbors) {
 
   const auto wSearch = wIndex.search({ 12345U, 12345U, 12345U, 12345U });
   EXPECT_EQ(wSearch, std::vector<size_t> { 12345UL });
+  std::vector<size_t> wVisitedSearch;
+  EXPECT_TRUE(wIndex.search(
+      [&wVisitedSearch](size_t iId, const flatbush::Box<uint32_t>&) {
+        wVisitedSearch.push_back(iId);
+        return true;
+      },
+      { 12345U, 12345U, 12345U, 12345U }));
+  EXPECT_EQ(wVisitedSearch, wSearch);
 
   const auto wNeighbors = wIndex.neighbors({ 12345U, 12345U }, 10);
   EXPECT_EQ(wNeighbors.size(), 10UL);
   EXPECT_NE(std::find(wNeighbors.begin(), wNeighbors.end(), 12345UL), wNeighbors.end());
+  std::vector<size_t> wVisitedNeighbors;
+  EXPECT_FALSE(wIndex.neighbors(
+      [&wVisitedNeighbors](size_t iId, const flatbush::Box<uint32_t>&, double) {
+        wVisitedNeighbors.push_back(iId);
+        return wVisitedNeighbors.size() < 10UL;
+      },
+      { 12345U, 12345U }));
+  auto wSortedNeighbors = wNeighbors;
+  std::sort(wSortedNeighbors.begin(), wSortedNeighbors.end());
+  std::sort(wVisitedNeighbors.begin(), wVisitedNeighbors.end());
+  EXPECT_EQ(wVisitedNeighbors, wSortedNeighbors);
 }
 
 template <typename T>
