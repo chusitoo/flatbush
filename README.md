@@ -162,7 +162,7 @@ The library automatically detects and uses SIMD instructions for improved perfor
 | **SSE4** | `-msse4`  | N/A |
 | **AVX** | `-mavx` | `/arch:AVX` |
 | **AVX2** | `-mavx2` | `/arch:AVX2` |
-| **AVX512** | `-mavx512f -mavx512dq -mavx512vl -mavx512bw` | `/arch:AVX512` |
+| **AVX512** | `-mavx512f -mavx512bw` | `/arch:AVX512` |
 
 ### Unit tests
     

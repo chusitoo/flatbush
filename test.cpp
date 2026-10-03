@@ -1316,32 +1316,6 @@ TEST(FlatbushTest, QuickSortImbalancedDatasetStress) {
   });
 }
 
-#if defined(FLATBUSH_USE_SIMD)
-TEST(FlatbushTest, SimdHilbertMatchesScalar) {
-  for (uint32_t wValue = 0U; wValue < 65536U; ++wValue) {
-    const std::array<uint32_t, 4> wX {
-      wValue, wValue ^ 65535U, (wValue * 17U) & 65535U, (wValue * 313U + 17U) & 65535U
-    };
-    const std::array<uint32_t, 4> wY {
-      (wValue * 73U + 19U) & 65535U, wValue, wValue ^ 65535U, (wValue * 53U) & 65535U
-    };
-    const auto wPackedX = _mm_loadu_si128(flatbush::detail::bit_cast<const __m128i*>(wX.data()));
-    const auto wPackedY = _mm_loadu_si128(flatbush::detail::bit_cast<const __m128i*>(wY.data()));
-    std::array<uint32_t, 4> wInterleaved {};
-    std::array<uint32_t, 4> wHilbert {};
-    _mm_storeu_si128(flatbush::detail::bit_cast<__m128i*>(wInterleaved.data()), flatbush::detail::Interleave(wPackedX));
-    _mm_storeu_si128(flatbush::detail::bit_cast<__m128i*>(wHilbert.data()),
-                     flatbush::detail::HilbertXYToIndex(wPackedX, wPackedY));
-
-    for (size_t wLane = 0UL; wLane < wX.size(); ++wLane) {
-      ASSERT_EQ(wInterleaved[wLane], flatbush::detail::Interleave(wX[wLane])) << wValue << ", lane " << wLane;
-      ASSERT_EQ(wHilbert[wLane], flatbush::detail::HilbertXYToIndex(wX[wLane], wY[wLane]))
-          << wValue << ", lane " << wLane;
-    }
-  }
-}
-#endif
-
 TEST(FlatbushTest, DegenerateBoundsMapToZeroHilbertCoordinates) {
   static constexpr auto kNumItems = 17UL;
   const auto wExpected = flatbush::detail::HilbertXYToIndex(0U, 0U);

@@ -77,7 +77,7 @@ SOFTWARE.
 #define FLATBUSH_USE_SSE2 1
 
 // SIMD intrinsics support detection
-#if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512VL__) && defined(__AVX512BW__)
+#if defined(__AVX512F__) && defined(__AVX512BW__)
 #define FLATBUSH_USE_SIMD FLATBUSH_USE_AVX512
 #include <immintrin.h>
 #pragma message("Detected AVX512 support")
@@ -445,21 +445,12 @@ static const auto kOffset32 = _mm_set1_epi32(std::numeric_limits<int32_t>::min()
 static const auto kUnsignedBiasPd = _mm_set1_pd(2147483648.0);
 static const auto kZeroPd = _mm_setzero_pd();
 
-static const auto kMaskAllOnes = _mm_set1_epi32(0xFFFF);
-static const auto kMaskInterleave1 = _mm_set1_epi32(0x00FF00FF);
-static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
-static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
-static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
-
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
 static const auto kLaneIndices32 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 // clang-format off
 static const auto kLaneIndices16 = _mm512_set_epi16(31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
                                                     15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0);
 // clang-format on
-static const auto kHilbertMinIndices = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
-static const auto kHilbertMaxIndices = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
-static const auto kHilbertPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
 static const auto kWideIndexBias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
 static const auto kLaneIndices32 = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
@@ -477,72 +468,6 @@ inline bool isNoneSet(__m128 iMask) noexcept {
 #else
   return _mm_movemask_ps(iMask) == 0;
 #endif
-}
-
-inline __m128i Interleave(__m128i v) {
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 8));
-  v = _mm_and_si128(v, kMaskInterleave1);
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 4));
-  v = _mm_and_si128(v, kMaskInterleave2);
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 2));
-  v = _mm_and_si128(v, kMaskInterleave3);
-  v = _mm_or_si128(v, _mm_slli_epi32(v, 1));
-  v = _mm_and_si128(v, kMaskInterleave4);
-  return v;
-}
-
-inline __m128i HilbertXYToIndex(__m128i x, __m128i y) {
-  // Initial prefix scan round
-  auto a = _mm_xor_si128(x, y);
-  auto b = _mm_xor_si128(kMaskAllOnes, a);
-  auto c = _mm_xor_si128(kMaskAllOnes, _mm_or_si128(x, y));
-  auto d = _mm_and_si128(x, _mm_xor_si128(y, kMaskAllOnes));
-  auto A = _mm_or_si128(a, _mm_srli_epi32(b, 1));
-  auto B = _mm_xor_si128(_mm_srli_epi32(a, 1), a);
-  auto C = _mm_xor_si128(_mm_xor_si128(_mm_srli_epi32(c, 1), _mm_and_si128(b, _mm_srli_epi32(d, 1))), c);
-  auto D = _mm_xor_si128(_mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 1)), _mm_srli_epi32(d, 1)), d);
-
-  a = A;
-  b = B;
-  c = C;
-  d = D;
-  A = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(a, 2)), _mm_and_si128(b, _mm_srli_epi32(b, 2)));
-  B = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(b, 2)), _mm_and_si128(b, _mm_srli_epi32(_mm_xor_si128(a, b), 2)));
-  C = _mm_xor_si128(C, _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 2)), _mm_and_si128(b, _mm_srli_epi32(d, 2))));
-  D = _mm_xor_si128(D,
-                    _mm_xor_si128(_mm_and_si128(b, _mm_srli_epi32(c, 2)),
-                                  _mm_and_si128(_mm_xor_si128(a, b), _mm_srli_epi32(d, 2))));
-
-  a = A;
-  b = B;
-  c = C;
-  d = D;
-  A = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(a, 4)), _mm_and_si128(b, _mm_srli_epi32(b, 4)));
-  B = _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(b, 4)), _mm_and_si128(b, _mm_srli_epi32(_mm_xor_si128(a, b), 4)));
-  C = _mm_xor_si128(C, _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 4)), _mm_and_si128(b, _mm_srli_epi32(d, 4))));
-  D = _mm_xor_si128(D,
-                    _mm_xor_si128(_mm_and_si128(b, _mm_srli_epi32(c, 4)),
-                                  _mm_and_si128(_mm_xor_si128(a, b), _mm_srli_epi32(d, 4))));
-
-  // Final round
-  a = A;
-  b = B;
-  c = C;
-  d = D;
-  C = _mm_xor_si128(C, _mm_xor_si128(_mm_and_si128(a, _mm_srli_epi32(c, 8)), _mm_and_si128(b, _mm_srli_epi32(d, 8))));
-  D = _mm_xor_si128(D,
-                    _mm_xor_si128(_mm_and_si128(b, _mm_srli_epi32(c, 8)),
-                                  _mm_and_si128(_mm_xor_si128(a, b), _mm_srli_epi32(d, 8))));
-
-  // Undo transformation
-  a = _mm_xor_si128(C, _mm_srli_epi32(C, 1));
-  b = _mm_xor_si128(D, _mm_srli_epi32(D, 1));
-
-  // Recover index bits and interleave
-  const auto i0 = _mm_xor_si128(x, y);
-  const auto i1 = _mm_or_si128(b, _mm_xor_si128(kMaskAllOnes, _mm_or_si128(i0, a)));
-
-  return _mm_or_si128(_mm_slli_epi32(Interleave(i1), 1), Interleave(i0));
 }
 
 template <>
@@ -743,95 +668,17 @@ inline HilbertValues computeHilbertValues(size_t iNumItems,
   const auto wHeight = static_cast<double>(iBounds.mMaxY) - wMinY;
   const auto wScaleX = wWidth == 0.0 ? 0.0 : kMaxHilbertRatio / wWidth;
   const auto wScaleY = wHeight == 0.0 ? 0.0 : kMaxHilbertRatio / wHeight;
-  const auto wCoordinateX = [=](const Box<ArrayType>& iBox) noexcept -> uint32_t {
-    const auto wCoordinate = wScaleX * (static_cast<double>(iBox.mMinX) - wMinX) +
-                             wScaleX * (static_cast<double>(iBox.mMaxX) - wMinX);
-    if (!std::isfinite(wCoordinate)) return 0U;
-
-    return static_cast<uint32_t>(std::max(0.0, std::min(gMaxHilbert, wCoordinate)));
-  };
-  const auto wCoordinateY = [=](const Box<ArrayType>& iBox) noexcept -> uint32_t {
-    const auto wCoordinate = wScaleY * (static_cast<double>(iBox.mMinY) - wMinY) +
-                             wScaleY * (static_cast<double>(iBox.mMaxY) - wMinY);
-    if (!std::isfinite(wCoordinate)) return 0U;
-
-    return static_cast<uint32_t>(std::max(0.0, std::min(gMaxHilbert, wCoordinate)));
-  };
   auto wHilbertValues = HilbertValues(iNumItems);
-  auto wIdx = 0UL;
 
-#if defined(FLATBUSH_USE_SIMD) && FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX
-  // Double boxes can be transposed directly; other types use the four-lane gather below.
-  const auto wUsePackedDoubles = std::is_same<ArrayType, double>::value && wWidth >= 0.0 && wHeight >= 0.0 &&
-                                 std::isfinite(wWidth) && std::isfinite(wHeight) && std::isfinite(wScaleX) &&
-                                 std::isfinite(wScaleY);
-  if (wUsePackedDoubles) {
-    const auto* wDoubleBoxes = bit_cast<const Box<double>*>(iBoxes.data());
-
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-    const auto wScaleXY = _mm512_mask_blend_pd(0xAA, _mm512_set1_pd(wScaleX), _mm512_set1_pd(wScaleY));
-    const auto wMinXY = _mm512_mask_blend_pd(0xAA, _mm512_set1_pd(wMinX), _mm512_set1_pd(wMinY));
-
-    for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
-      const auto wBoxes01 = _mm512_loadu_pd(&wDoubleBoxes[wIdx].mMinX);
-      const auto wBoxes23 = _mm512_loadu_pd(&wDoubleBoxes[wIdx + 2UL].mMinX);
-      const auto wMin = _mm512_permutex2var_pd(wBoxes01, kHilbertMinIndices, wBoxes23);
-      const auto wMax = _mm512_permutex2var_pd(wBoxes01, kHilbertMaxIndices, wBoxes23);
-      const auto wCoordinates = _mm512_add_pd(_mm512_mul_pd(wScaleXY, _mm512_sub_pd(wMin, wMinXY)),
-                                              _mm512_mul_pd(wScaleXY, _mm512_sub_pd(wMax, wMinXY)));
-      const auto wResult = _mm256_permutevar8x32_epi32(_mm512_cvttpd_epi32(wCoordinates), kHilbertPermuteXLoYHi);
-
-      _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
-                       HilbertXYToIndex(_mm256_castsi256_si128(wResult), _mm256_extracti128_si256(wResult, 1)));
-    }
-#else
-    const auto wScaleX256 = _mm256_set1_pd(wScaleX);
-    const auto wScaleY256 = _mm256_set1_pd(wScaleY);
-    const auto wMinX256 = _mm256_set1_pd(wMinX);
-    const auto wMinY256 = _mm256_set1_pd(wMinY);
-
-    for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
-      const auto wBox0 = _mm256_loadu_pd(&wDoubleBoxes[wIdx].mMinX);
-      const auto wBox1 = _mm256_loadu_pd(&wDoubleBoxes[wIdx + 1UL].mMinX);
-      const auto wBox2 = _mm256_loadu_pd(&wDoubleBoxes[wIdx + 2UL].mMinX);
-      const auto wBox3 = _mm256_loadu_pd(&wDoubleBoxes[wIdx + 3UL].mMinX);
-      const auto wBoxes01Lo = _mm256_shuffle_pd(wBox0, wBox1, 0x0);
-      const auto wBoxes01Hi = _mm256_shuffle_pd(wBox0, wBox1, 0xF);
-      const auto wBoxes23Lo = _mm256_shuffle_pd(wBox2, wBox3, 0x0);
-      const auto wBoxes23Hi = _mm256_shuffle_pd(wBox2, wBox3, 0xF);
-      const auto wMinXVector = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x20);
-      const auto wMinYVector = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x20);
-      const auto wMaxXVector = _mm256_permute2f128_pd(wBoxes01Lo, wBoxes23Lo, 0x31);
-      const auto wMaxYVector = _mm256_permute2f128_pd(wBoxes01Hi, wBoxes23Hi, 0x31);
-      const auto wCoordinatesX = _mm256_add_pd(_mm256_mul_pd(wScaleX256, _mm256_sub_pd(wMinXVector, wMinX256)),
-                                               _mm256_mul_pd(wScaleX256, _mm256_sub_pd(wMaxXVector, wMinX256)));
-      const auto wCoordinatesY = _mm256_add_pd(_mm256_mul_pd(wScaleY256, _mm256_sub_pd(wMinYVector, wMinY256)),
-                                               _mm256_mul_pd(wScaleY256, _mm256_sub_pd(wMaxYVector, wMinY256)));
-
-      _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
-                       HilbertXYToIndex(_mm256_cvttpd_epi32(wCoordinatesX), _mm256_cvttpd_epi32(wCoordinatesY)));
-    }
-#endif
-  }
-#endif
-
-#if defined(FLATBUSH_USE_SIMD)
-  for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
-    const auto wX = _mm_setr_epi32(static_cast<int32_t>(wCoordinateX(iBoxes[wIdx])),
-                                   static_cast<int32_t>(wCoordinateX(iBoxes[wIdx + 1UL])),
-                                   static_cast<int32_t>(wCoordinateX(iBoxes[wIdx + 2UL])),
-                                   static_cast<int32_t>(wCoordinateX(iBoxes[wIdx + 3UL])));
-    const auto wY = _mm_setr_epi32(static_cast<int32_t>(wCoordinateY(iBoxes[wIdx])),
-                                   static_cast<int32_t>(wCoordinateY(iBoxes[wIdx + 1UL])),
-                                   static_cast<int32_t>(wCoordinateY(iBoxes[wIdx + 2UL])),
-                                   static_cast<int32_t>(wCoordinateY(iBoxes[wIdx + 3UL])));
-    _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]), HilbertXYToIndex(wX, wY));
-  }
-#endif
-
-  for (; wIdx < iNumItems; ++wIdx) {
+  for (size_t wIdx = 0UL; wIdx < iNumItems; ++wIdx) {
     const auto& wBox = iBoxes[wIdx];
-    wHilbertValues[wIdx] = HilbertXYToIndex(wCoordinateX(wBox), wCoordinateY(wBox));
+    const auto wX = wScaleX * (static_cast<double>(wBox.mMinX) - wMinX) +
+                    wScaleX * (static_cast<double>(wBox.mMaxX) - wMinX);
+    const auto wY = wScaleY * (static_cast<double>(wBox.mMinY) - wMinY) +
+                    wScaleY * (static_cast<double>(wBox.mMaxY) - wMinY);
+    const auto wClampedX = std::isfinite(wX) ? static_cast<uint32_t>(std::max(0.0, std::min(gMaxHilbert, wX))) : 0U;
+    const auto wClampedY = std::isfinite(wY) ? static_cast<uint32_t>(std::max(0.0, std::min(gMaxHilbert, wY))) : 0U;
+    wHilbertValues[wIdx] = HilbertXYToIndex(wClampedX, wClampedY);
   }
 
   return wHilbertValues;
@@ -1455,9 +1302,10 @@ void Flatbush<ArrayType>::pack() {
 
   // map item centers into Hilbert coordinate space and calculate Hilbert values
   auto wHilbertValues = detail::computeHilbertValues(wNumItems, mBounds, mBoxes);
+
+  // sort items by their Hilbert value (for packing later)
   if (!std::is_sorted(wHilbertValues.begin(), wHilbertValues.end())) {
-    // sort items by their Hilbert value (for packing later); one buffer serves every range the
-    // radix hands down to the comparison sort
+    // one buffer serves every range the radix hands down to the comparison sort
     std::vector<size_t> wSortStack;
     sort<IsWideIndex>(wHilbertValues,
                       0U,
