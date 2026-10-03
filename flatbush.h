@@ -77,7 +77,7 @@ SOFTWARE.
 #define FLATBUSH_USE_SSE2 1
 
 // SIMD intrinsics support detection
-#if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512VL__)
+#if defined(__AVX512F__) && defined(__AVX512DQ__) && defined(__AVX512VL__) && defined(__AVX512BW__)
 #define FLATBUSH_USE_SIMD FLATBUSH_USE_AVX512
 #include <immintrin.h>
 #pragma message("Detected AVX512 support")
@@ -191,6 +191,15 @@ To bit_cast(From const& from) {
   To to;
   std::memcpy(&to, &from, sizeof(To));
   return to;
+}
+
+template <typename Type>
+inline Type readUnaligned(const uint8_t* iData) noexcept {
+  static_assert(std::is_trivially_copyable<Type>::value, "Type must be trivially copyable");
+
+  Type wValue;
+  std::memcpy(&wValue, iData, sizeof(wValue));
+  return wValue;
 }
 
 // A node is walked start to end, but it spans several cache lines and is reached by pointer
@@ -442,8 +451,23 @@ static const auto kMaskInterleave2 = _mm_set1_epi32(0x0F0F0F0F);
 static const auto kMaskInterleave3 = _mm_set1_epi32(0x33333333);
 static const auto kMaskInterleave4 = _mm_set1_epi32(0x55555555);
 
-#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
-static const auto kSignFlip256 = _mm256_broadcastd_epi32(detail::kOffset32);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+static const auto kLaneIndices32 = _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+// clang-format off
+static const auto kLaneIndices16 = _mm512_set_epi16(31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16,
+                                                    15, 14, 13, 12, 11, 10,  9,  8,  7,  6,  5,  4,  3,  2,  1,  0);
+// clang-format on
+static const auto kHilbertMinIndices = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
+static const auto kHilbertMaxIndices = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
+static const auto kHilbertPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+static const auto kWideIndexBias = _mm256_set1_epi32(std::numeric_limits<int32_t>::min());
+static const auto kLaneIndices32 = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+static const auto kLaneIndices16 = _mm256_setr_epi16(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
+static const auto kNarrowIndexBias = _mm256_set1_epi16(std::numeric_limits<int16_t>::min());
+#else
+static const auto kLaneIndices16 = _mm_setr_epi16(0, 1, 2, 3, 4, 5, 6, 7);
+static const auto kNarrowIndexBias = _mm_set1_epi16(std::numeric_limits<int16_t>::min());
 #endif
 
 // True when no lane of a comparison mask is set
@@ -745,20 +769,17 @@ inline HilbertValues computeHilbertValues(size_t iNumItems,
     const auto* wDoubleBoxes = bit_cast<const Box<double>*>(iBoxes.data());
 
 #if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
-    const auto wMinIndices = _mm512_setr_epi64(0, 1, 4, 5, 8, 9, 12, 13);
-    const auto wMaxIndices = _mm512_setr_epi64(2, 3, 6, 7, 10, 11, 14, 15);
-    const auto wPermuteXLoYHi = _mm256_setr_epi32(0, 2, 4, 6, 1, 3, 5, 7);
     const auto wScaleXY = _mm512_mask_blend_pd(0xAA, _mm512_set1_pd(wScaleX), _mm512_set1_pd(wScaleY));
     const auto wMinXY = _mm512_mask_blend_pd(0xAA, _mm512_set1_pd(wMinX), _mm512_set1_pd(wMinY));
 
     for (; wIdx + 3UL < iNumItems; wIdx += 4UL) {
       const auto wBoxes01 = _mm512_loadu_pd(&wDoubleBoxes[wIdx].mMinX);
       const auto wBoxes23 = _mm512_loadu_pd(&wDoubleBoxes[wIdx + 2UL].mMinX);
-      const auto wMin = _mm512_permutex2var_pd(wBoxes01, wMinIndices, wBoxes23);
-      const auto wMax = _mm512_permutex2var_pd(wBoxes01, wMaxIndices, wBoxes23);
+      const auto wMin = _mm512_permutex2var_pd(wBoxes01, kHilbertMinIndices, wBoxes23);
+      const auto wMax = _mm512_permutex2var_pd(wBoxes01, kHilbertMaxIndices, wBoxes23);
       const auto wCoordinates = _mm512_add_pd(_mm512_mul_pd(wScaleXY, _mm512_sub_pd(wMin, wMinXY)),
                                               _mm512_mul_pd(wScaleXY, _mm512_sub_pd(wMax, wMinXY)));
-      const auto wResult = _mm256_permutevar8x32_epi32(_mm512_cvttpd_epi32(wCoordinates), wPermuteXLoYHi);
+      const auto wResult = _mm256_permutevar8x32_epi32(_mm512_cvttpd_epi32(wCoordinates), kHilbertPermuteXLoYHi);
 
       _mm_storeu_si128(bit_cast<__m128i*>(&wHilbertValues[wIdx]),
                        HilbertXYToIndex(_mm256_castsi256_si128(wResult), _mm256_extracti128_si256(wResult, 1)));
@@ -886,6 +907,7 @@ class FlatbushBuilder {
 
  private:
   static void validate(const uint8_t* iData, size_t iSize);
+  static void validateStoredIndices(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems, uint16_t iNodeSize);
   uint16_t mNodeSize;
   std::vector<uint8_t> mData;
 };
@@ -982,14 +1004,12 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
                                     .append(detail::arrayTypeName(wExpectedType)));
   }
 
-  uint16_t wNodeSize {};
-  std::memcpy(&wNodeSize, iData + sizeof(uint16_t), sizeof(uint16_t));
+  const auto wNodeSize = detail::readUnaligned<uint16_t>(iData + sizeof(uint16_t));
   if (wNodeSize < gMinNodeSize) {
     throw std::invalid_argument("Node size cannot be < " + std::to_string(gMinNodeSize) + ".");
   }
 
-  uint32_t wNumItems {};
-  std::memcpy(&wNumItems, iData + sizeof(uint32_t), sizeof(uint32_t));
+  const auto wNumItems = detail::readUnaligned<uint32_t>(iData + sizeof(uint32_t));
   if (wNumItems == 0U) {
     throw std::invalid_argument("Num items cannot be 0.");
   }
@@ -1010,46 +1030,184 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   const auto wNumNodes = wPayloadSize / (wIsWideIndex ? kWideNodeByteSize : kNarrowNodeByteSize);
   const auto wIndexes = iData + gHeaderByteSize + wNumNodes * kBoxByteSize;
 
-  for (size_t wPosition = 0UL; wPosition < wNumItems; ++wPosition) {
-    size_t wLeafId;
+  validateStoredIndices(wIndexes, wNumNodes, wNumItems, wNodeSize);
+}
 
-    if (wIsWideIndex) {
-      WideIndexType wValue;
-      std::memcpy(&wValue, wIndexes + wPosition * gWideIndexSize, gWideIndexSize);
-      wLeafId = wValue;
-    } else {
-      NarrowIndexType wValue;
-      std::memcpy(&wValue, wIndexes + wPosition * gNarrowIndexSize, gNarrowIndexSize);
-      wLeafId = wValue;
+template <typename ArrayType>
+void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
+                                                       size_t iNumNodes,
+                                                       uint32_t iNumItems,
+                                                       uint16_t iNodeSize) {
+  static constexpr auto kInvalidLeafIndexMessage = "Data contains an invalid leaf item index.";
+  static constexpr auto kInvalidInternalIndexMessage = "Data contains an invalid internal node index.";
+  const auto wIsWideIndex = iNumNodes > gMaxNumNodes;
+  size_t wPosition = 0UL;
+
+#if defined(FLATBUSH_USE_SIMD)
+  if (wIsWideIndex) {
+    const auto wSignedNumItems = static_cast<int32_t>(iNumItems);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+    const auto wLimit = _mm512_set1_epi32(wSignedNumItems);
+    for (; wPosition + 16UL <= iNumItems; wPosition += 16UL) {
+      const auto wValues = _mm512_loadu_si512(iIndexes + wPosition * gWideIndexSize);
+      if (_mm512_cmp_epu32_mask(wValues, wLimit, _MM_CMPINT_NLT) != 0U) {
+        throw std::invalid_argument(kInvalidLeafIndexMessage);
+      }
     }
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+    const auto wLimit = _mm256_xor_si256(_mm256_set1_epi32(wSignedNumItems), detail::kWideIndexBias);
+    for (; wPosition + 8UL <= iNumItems; wPosition += 8UL) {
+      const auto wValues = _mm256_xor_si256(_mm256_loadu_si256(detail::bit_cast<const __m256i*>(
+                                                iIndexes + wPosition * gWideIndexSize)),
+                                            detail::kWideIndexBias);
+      if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi32(wLimit, wValues))) != 0xFFFFFFFFU) {
+        throw std::invalid_argument(kInvalidLeafIndexMessage);
+      }
+    }
+#else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
+    const auto wLimit = _mm_xor_si128(_mm_set1_epi32(wSignedNumItems), detail::kOffset32);
+    for (; wPosition + 4UL <= iNumItems; wPosition += 4UL) {
+      const auto wValues = _mm_xor_si128(_mm_loadu_si128(
+                                             detail::bit_cast<const __m128i*>(iIndexes + wPosition * gWideIndexSize)),
+                                         detail::kOffset32);
+      if (_mm_movemask_epi8(_mm_cmpgt_epi32(wLimit, wValues)) != 0xFFFF) {
+        throw std::invalid_argument(kInvalidLeafIndexMessage);
+      }
+    }
+#endif
+  } else {
+    const auto wSignedNumItems = static_cast<int16_t>(iNumItems);
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+    const auto wLimit = _mm512_set1_epi16(wSignedNumItems);
+    for (; wPosition + 32UL <= iNumItems; wPosition += 32UL) {
+      const auto wValues = _mm512_loadu_si512(iIndexes + wPosition * gNarrowIndexSize);
+      if (_mm512_cmp_epu16_mask(wValues, wLimit, _MM_CMPINT_NLT) != 0U) {
+        throw std::invalid_argument(kInvalidLeafIndexMessage);
+      }
+    }
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+    const auto wLimit = _mm256_xor_si256(_mm256_set1_epi16(wSignedNumItems), detail::kNarrowIndexBias);
+    for (; wPosition + 16UL <= iNumItems; wPosition += 16UL) {
+      const auto wValues = _mm256_xor_si256(_mm256_loadu_si256(detail::bit_cast<const __m256i*>(
+                                                iIndexes + wPosition * gNarrowIndexSize)),
+                                            detail::kNarrowIndexBias);
+      if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi16(wLimit, wValues))) != 0xFFFFFFFFU) {
+        throw std::invalid_argument(kInvalidLeafIndexMessage);
+      }
+    }
+#else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
+    const auto wLimit = _mm_xor_si128(_mm_set1_epi16(wSignedNumItems), detail::kNarrowIndexBias);
+    for (; wPosition + 8UL <= iNumItems; wPosition += 8UL) {
+      const auto wValues = _mm_xor_si128(_mm_loadu_si128(
+                                             detail::bit_cast<const __m128i*>(iIndexes + wPosition * gNarrowIndexSize)),
+                                         detail::kNarrowIndexBias);
+      if (_mm_movemask_epi8(_mm_cmpgt_epi16(wLimit, wValues)) != 0xFFFF) {
+        throw std::invalid_argument(kInvalidLeafIndexMessage);
+      }
+    }
+#endif
+  }
+#endif  // defined(FLATBUSH_USE_SIMD)
 
-    if (wLeafId >= wNumItems) {
-      throw std::invalid_argument("Data contains an invalid leaf item index.");
+  for (; wPosition < iNumItems; ++wPosition) {
+    const size_t wLeafId = wIsWideIndex
+                               ? detail::readUnaligned<WideIndexType>(iIndexes + wPosition * gWideIndexSize)
+                               : detail::readUnaligned<NarrowIndexType>(iIndexes + wPosition * gNarrowIndexSize);
+
+    if (wLeafId >= iNumItems) {
+      throw std::invalid_argument(kInvalidLeafIndexMessage);
     }
   }
 
   size_t wChildStart = 0UL;
-  size_t wChildEnd = wNumItems;
-  size_t wParentIndex = wNumItems;
+  size_t wChildEnd = iNumItems;
+  size_t wParentIndex = iNumItems;
 
   // Each parent follows its child level and points to the first child in its fixed-size group.
-  while (wParentIndex < wNumNodes) {
-    for (auto wChildIndex = wChildStart; wChildIndex < wChildEnd; wChildIndex += wNodeSize, ++wParentIndex) {
-      const size_t wExpectedIndex = wChildIndex << 2U;
-      size_t wStoredIndex;
+  while (wParentIndex < iNumNodes) {
+    auto wChildIndex = wChildStart;
 
-      if (wIsWideIndex) {
-        WideIndexType wIndexValue;
-        std::memcpy(&wIndexValue, wIndexes + wParentIndex * gWideIndexSize, gWideIndexSize);
-        wStoredIndex = wIndexValue;
-      } else {
-        NarrowIndexType wIndexValue;
-        std::memcpy(&wIndexValue, wIndexes + wParentIndex * gNarrowIndexSize, gNarrowIndexSize);
-        wStoredIndex = wIndexValue;
+#if defined(FLATBUSH_USE_SIMD)
+    if (wIsWideIndex) {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+      const auto wOffsets = _mm512_mullo_epi32(detail::kLaneIndices32,
+                                               _mm512_set1_epi32(static_cast<int32_t>(iNodeSize) * 4));
+      for (; wChildIndex + 15UL * iNodeSize < wChildEnd; wChildIndex += 16UL * iNodeSize, wParentIndex += 16UL) {
+        const auto wExpected = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(wChildIndex << 2U)), wOffsets);
+        const auto wStored = _mm512_loadu_si512(iIndexes + wParentIndex * gWideIndexSize);
+        if (_mm512_cmpneq_epi32_mask(wStored, wExpected) != 0U) {
+          throw std::invalid_argument(kInvalidInternalIndexMessage);
+        }
       }
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+      const auto wOffsets = _mm256_mullo_epi32(detail::kLaneIndices32,
+                                               _mm256_set1_epi32(static_cast<int32_t>(iNodeSize) * 4));
+      for (; wChildIndex + 7UL * iNodeSize < wChildEnd; wChildIndex += 8UL * iNodeSize, wParentIndex += 8UL) {
+        const auto wExpected = _mm256_add_epi32(_mm256_set1_epi32(static_cast<int32_t>(wChildIndex << 2U)), wOffsets);
+        const auto wStored = _mm256_loadu_si256(
+            detail::bit_cast<const __m256i*>(iIndexes + wParentIndex * gWideIndexSize));
+        if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi32(wStored, wExpected))) != 0xFFFFFFFFU) {
+          throw std::invalid_argument(kInvalidInternalIndexMessage);
+        }
+      }
+#else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
+      const auto wStride = static_cast<int32_t>(iNodeSize) * 4;
+      const auto wOffsets = _mm_setr_epi32(0, wStride, wStride * 2, wStride * 3);
+      for (; wChildIndex + 3UL * iNodeSize < wChildEnd; wChildIndex += 4UL * iNodeSize, wParentIndex += 4UL) {
+        const auto wExpected = _mm_add_epi32(_mm_set1_epi32(static_cast<int32_t>(wChildIndex << 2U)), wOffsets);
+        const auto wStored = _mm_loadu_si128(
+            detail::bit_cast<const __m128i*>(iIndexes + wParentIndex * gWideIndexSize));
+        if (_mm_movemask_epi8(_mm_cmpeq_epi32(wStored, wExpected)) != 0xFFFF) {
+          throw std::invalid_argument(kInvalidInternalIndexMessage);
+        }
+      }
+#endif
+    } else {
+#if FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX512
+      const auto wOffsets = _mm512_mullo_epi16(detail::kLaneIndices16,
+                                               _mm512_set1_epi16(static_cast<int16_t>(iNodeSize * 4U)));
+      for (; wChildIndex + 31UL * iNodeSize < wChildEnd; wChildIndex += 32UL * iNodeSize, wParentIndex += 32UL) {
+        const auto wExpected = _mm512_add_epi16(_mm512_set1_epi16(static_cast<int16_t>(wChildIndex << 2U)), wOffsets);
+        const auto wStored = _mm512_loadu_si512(iIndexes + wParentIndex * gNarrowIndexSize);
+        if (_mm512_cmpneq_epi16_mask(wStored, wExpected) != 0U) {
+          throw std::invalid_argument(kInvalidInternalIndexMessage);
+        }
+      }
+#elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
+      const auto wOffsets = _mm256_mullo_epi16(detail::kLaneIndices16,
+                                               _mm256_set1_epi16(static_cast<int16_t>(iNodeSize * 4U)));
+      for (; wChildIndex + 15UL * iNodeSize < wChildEnd; wChildIndex += 16UL * iNodeSize, wParentIndex += 16UL) {
+        const auto wExpected = _mm256_add_epi16(_mm256_set1_epi16(static_cast<int16_t>(wChildIndex << 2U)), wOffsets);
+        const auto wStored = _mm256_loadu_si256(
+            detail::bit_cast<const __m256i*>(iIndexes + wParentIndex * gNarrowIndexSize));
+        if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi16(wStored, wExpected))) != 0xFFFFFFFFU) {
+          throw std::invalid_argument(kInvalidInternalIndexMessage);
+        }
+      }
+#else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
+      const auto wOffsets = _mm_mullo_epi16(detail::kLaneIndices16,
+                                            _mm_set1_epi16(static_cast<int16_t>(iNodeSize * 4U)));
+      for (; wChildIndex + 7UL * iNodeSize < wChildEnd; wChildIndex += 8UL * iNodeSize, wParentIndex += 8UL) {
+        const auto wExpected = _mm_add_epi16(_mm_set1_epi16(static_cast<int16_t>(wChildIndex << 2U)), wOffsets);
+        const auto wStored = _mm_loadu_si128(
+            detail::bit_cast<const __m128i*>(iIndexes + wParentIndex * gNarrowIndexSize));
+        if (_mm_movemask_epi8(_mm_cmpeq_epi16(wStored, wExpected)) != 0xFFFF) {
+          throw std::invalid_argument(kInvalidInternalIndexMessage);
+        }
+      }
+#endif
+    }
+#endif  // defined(FLATBUSH_USE_SIMD)
+
+    for (; wChildIndex < wChildEnd; wChildIndex += iNodeSize, ++wParentIndex) {
+      const size_t wExpectedIndex = wChildIndex << 2U;
+      const size_t wStoredIndex = wIsWideIndex
+                                      ? detail::readUnaligned<WideIndexType>(iIndexes + wParentIndex * gWideIndexSize)
+                                      : detail::readUnaligned<NarrowIndexType>(iIndexes +
+                                                                               wParentIndex * gNarrowIndexSize);
 
       if (wStoredIndex != wExpectedIndex) {
-        throw std::invalid_argument("Data contains an invalid internal node index.");
+        throw std::invalid_argument(kInvalidInternalIndexMessage);
       }
     }
 
@@ -1086,11 +1244,11 @@ class Flatbush {
                                                    const DistanceFn& iDistanceFn = DistanceFn {}) const;
 
   FLATBUSH_NODISCARD inline size_t nodeSize() const noexcept {
-    return *detail::bit_cast<const uint16_t*>(mBytes.data() + 2);
+    return detail::readUnaligned<uint16_t>(mBytes.data() + 2);
   }
 
   FLATBUSH_NODISCARD inline size_t numItems() const noexcept {
-    return *detail::bit_cast<const uint32_t*>(mBytes.data() + 4);
+    return detail::readUnaligned<uint32_t>(mBytes.data() + 4);
   }
 
   FLATBUSH_NODISCARD inline size_t indexSize() const noexcept { return mBoxes.size(); }
@@ -1247,8 +1405,8 @@ template <typename ArrayType>
 void Flatbush<ArrayType>::init(bool iIsPacked) {
   // Const is shed only to bind the typed views; externally managed bytes are never written to
   const auto wBase = const_cast<uint8_t*>(mBytes.data());
-  const auto wNumItems = *detail::bit_cast<const uint32_t*>(wBase + 4);
-  const auto wNodeSize = *detail::bit_cast<const uint16_t*>(wBase + 2);
+  const auto wNumItems = numItems();
+  const auto wNodeSize = nodeSize();
 
   mBounds = { kMaxValue, kMaxValue, kMinValue, kMinValue };
 
@@ -1440,7 +1598,7 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
       static constexpr size_t kSortBatch = sizeof(__m256i) / sizeof(detail::HilbertValueType);
       const auto wPivotVecS256 = _mm256_xor_si256(_mm256_set1_epi32(static_cast<int32_t>(wPivot)),
-                                                  detail::kSignFlip256);
+                                                  detail::kWideIndexBias);
 #else
       static constexpr size_t kSortBatch = sizeof(__m128i) / sizeof(detail::HilbertValueType);
       const auto wPivotVecS128 = _mm_xor_si128(_mm_set1_epi32(static_cast<int32_t>(wPivot)), detail::kOffset32);
@@ -1457,7 +1615,7 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
           const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
           const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                                 _mm256_cmpgt_epi32(wPivotVecS256, _mm256_xor_si256(wVals, detail::kSignFlip256))))) &
+                                 _mm256_cmpgt_epi32(wPivotVecS256, _mm256_xor_si256(wVals, detail::kWideIndexBias))))) &
                              0xFFU;
 #else
           const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
@@ -1489,7 +1647,7 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
           const auto wVals = _mm256_loadu_si256(detail::bit_cast<const __m256i*>(&iValues[wPos]));
           const auto wMask = ~static_cast<unsigned>(_mm256_movemask_ps(_mm256_castsi256_ps(
-                                 _mm256_cmpgt_epi32(_mm256_xor_si256(wVals, detail::kSignFlip256), wPivotVecS256)))) &
+                                 _mm256_cmpgt_epi32(_mm256_xor_si256(wVals, detail::kWideIndexBias), wPivotVecS256)))) &
                              0xFFU;
 #else
           const auto wVals = _mm_loadu_si128(detail::bit_cast<const __m128i*>(&iValues[wPos]));
