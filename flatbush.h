@@ -1576,48 +1576,50 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
   static constexpr auto kDefaultFilterFn = std::is_same<typename std::decay<FilterFn>::type, DefaultFilterFn>::value;
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  size_t wNodeIndex = mBoxes.size() - 1UL;
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
   std::vector<size_t> wResults;
   wResults.reserve(std::min(iMaxResults, detail::approximateResultsSize(mBounds, iBounds, wNumItems)));
   // Node offsets are stored pre-multiplied by four, so the low bit is free to carry the flag
-  auto wContained = detail::boxContains(iBounds, mBounds);
+  wQueue.push_back(((mBoxes.size() - 1UL) << 2U) | static_cast<size_t>(detail::boxContains(iBounds, mBounds)));
 
-  while (true) {
+  while (!wQueue.empty() && wResults.size() < iMaxResults) {
+    const auto wEntry = wQueue.back();
+    wQueue.pop_back();
+    auto wNodeIndex = wEntry >> 2U;  // for binary compatibility with JS
+    const auto wContained = (wEntry & 1UL) != 0UL;
+    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
+
+    // Whenever the node just popped is a leaf it pushes no children, so the new top is the
+    // one after it; requesting it now gives the load a whole node of work to hide behind
+    if (!wQueue.empty()) {
+      const auto wNextIndex = wQueue.back() >> 2U;
+      detail::prefetchNode(&mBoxes[wNextIndex], std::min(wNodeSize, mBoxes.size() - wNextIndex));
+    }
+
     // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
-    const auto wIsInternalNode = wNodeIndex >= wNumItems;
     const auto wLevel = levelOf(wNodeIndex);
-    const size_t wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
+    auto wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
 
     // Each subtree's leaves occupy a contiguous range in the packed tree. If the query fully contains
     // the subtree, descend to its first leaf and scan that range without further intersection checks.
     if (wContained) {
       // At leaf level, no descent is needed.
-      auto wPosition = wNodeIndex;
       auto wCount = wEnd - wNodeIndex;
 
       for (auto wDepth = wLevel; wDepth > 0UL; --wDepth) {
-        wPosition = getIndex<IsWideIndex>(wPosition) >> 2U;
+        wNodeIndex = getIndex<IsWideIndex>(wNodeIndex) >> 2U;
         wCount = std::min(wCount * wNodeSize, wNumItems);
       }
 
-      const auto wLeafEnd = std::min(wPosition + wCount, wNumItems);
+      wEnd = std::min(wNodeIndex + wCount, wNumItems);
+    }
 
-      if (kDefaultFilterFn) {
-        const auto wBegin = indexes<IsWideIndex>() + wPosition;
-        const auto wCopyCount = std::min(wLeafEnd - wPosition, iMaxResults - wResults.size());
-        wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
-      } else {
-        for (; wPosition < wLeafEnd && wResults.size() < iMaxResults; ++wPosition) {
-          const auto wIndex = getIndex<IsWideIndex>(wPosition);
-
-          if (iFilterFn(wIndex, mBoxes[wPosition])) {
-            wResults.push_back(wIndex);
-          }
-        }
-      }
-    } else if (wIsInternalNode) {
+    if (wContained && kDefaultFilterFn) {
+      const auto wBegin = indexes<IsWideIndex>() + wNodeIndex;
+      const auto wCopyCount = std::min(wEnd - wNodeIndex, iMaxResults - wResults.size());
+      wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
+    } else if (wNodeIndex >= wNumItems) {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           wQueue.push_back(getIndex<IsWideIndex>(wPosition) | /* low bit carries contained flag */
@@ -1626,7 +1628,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       }
     } else {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd && wResults.size() < iMaxResults; ++wPosition) {
-        if (!detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
+        if (!wContained && !detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           continue;
         }
 
@@ -1636,22 +1638,6 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
           wResults.push_back(wIndex);
         }
       }
-    }
-
-    if (wQueue.empty() || wResults.size() >= iMaxResults) {
-      break;
-    }
-
-    wContained = (wQueue.back() & 1UL) != 0UL;
-    wNodeIndex = wQueue.back() >> 2U;  // for binary compatibility with JS
-    wQueue.pop_back();
-    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
-
-    // Whenever the node just popped is a leaf it pushes no children, so the new top is the
-    // one after it; requesting it now gives the load a whole node of work to hide behind
-    if (!wQueue.empty()) {
-      const auto wNextIndex = wQueue.back() >> 2U;
-      detail::prefetchNode(&mBoxes[wNextIndex], std::min(wNodeSize, mBoxes.size() - wNextIndex));
     }
   }
 
@@ -1697,7 +1683,6 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
   const auto wReturnAll = UseHeap && kCanBound && iMaxResults >= wNumItems && iMaxDistance >= gMaxDistance;
-  size_t wNodeIndex = mBoxes.size() - 1UL;
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wReturnAll ? wNumItems : (wNodeSize << 2U));
   std::vector<size_t> wResults;
@@ -1730,7 +1715,21 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
     wItems = std::min(wItems * wNodeSize, wNumItems);
   }
 
-  while (true) {
+  wQueue.emplace_back((mBoxes.size() - 1UL) << 3U, 0.0);
+
+  while (!wQueue.empty() && wResults.size() < iMaxResults) {
+    if (UseHeap) std::pop_heap(wQueue.begin(), wQueue.end());
+    const auto wId = wQueue.back().mId;
+    wQueue.pop_back();
+
+    if (wId & 1U) {
+      wResults.push_back(wId >> 1U);
+      continue;
+    }
+
+    const auto wNodeIndex = wId >> 3U;  // 1 undo indexing + 2 for binary compatibility with JS
+    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
+
     // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
     const auto wIsInternalNode = wNodeIndex >= wNumItems;
     const auto wLevel = levelOf(wNodeIndex);
@@ -1764,42 +1763,11 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
       }
     }
 
-    if (UseHeap) {  // Heap strategy: push_heap after each insert, pop from front
-      while (!wQueue.empty() && (wQueue.front().mId & 1U)) {
-        wResults.push_back(wQueue.front().mId >> 1U);
-        std::pop_heap(wQueue.begin(), wQueue.end());
-        wQueue.pop_back();
-
-        if (wResults.size() >= iMaxResults) {
-          return wResults;
-        }
-      }
-
-      if (!wQueue.empty()) std::pop_heap(wQueue.begin(), wQueue.end());
-    } else {  // Sorted-vector strategy: batch insert, sort+merge, pop from back
-      if (wQueue.size() > wQueueSize) {
-        const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wQueueSize);
-        std::sort(wMid, wQueue.end());
-        std::inplace_merge(wQueue.begin(), wMid, wQueue.end());
-      }
-
-      while (!wQueue.empty() && (wQueue.back().mId & 1U)) {
-        wResults.push_back(wQueue.back().mId >> 1U);
-        wQueue.pop_back();
-
-        if (wResults.size() >= iMaxResults) {
-          return wResults;
-        }
-      }
+    if (!UseHeap && wQueue.size() > wQueueSize) {
+      const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wQueueSize);
+      std::sort(wMid, wQueue.end());
+      std::inplace_merge(wQueue.begin(), wMid, wQueue.end());
     }
-
-    if (wQueue.empty()) {
-      break;
-    }
-
-    wNodeIndex = wQueue.back().mId >> 3U;  // 1 undo indexing + 2 for binary compatibility with JS
-    wQueue.pop_back();
-    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
   }
 
   return wResults;

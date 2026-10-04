@@ -777,6 +777,17 @@ TEST_F(FlatbushFilteredSearchTest, LimitCountsAcceptedItems) {
   EXPECT_EQ(wCalls, 2UL);
 }
 
+TEST_F(FlatbushFilteredSearchTest, ContainedLimitCountsAcceptedItems) {
+  size_t wCalls = 0UL;
+  const auto wFilter = [&wCalls](size_t iId, const flatbush::Box<int32_t>&) {
+    ++wCalls;
+    return iId % 2UL != 0UL;
+  };
+
+  EXPECT_EQ(mIndex.search(mIndex.bounds(), wFilter, 2), (std::vector<size_t> { 1UL, 3UL }));
+  EXPECT_EQ(wCalls, 4UL);
+}
+
 TEST_F(FlatbushFilteredSearchTest, RejectAllVisitsEveryMatch) {
   size_t wCalls = 0UL;
   const auto wFilter = [&wCalls](size_t, const flatbush::Box<int32_t>&) {
