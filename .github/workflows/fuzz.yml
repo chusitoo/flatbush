@@ -5,16 +5,32 @@ on:
     branches: [master]
   pull_request:
     branches: [master]
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Duration per fuzz target (32 targets)"
+        required: true
+        default: "2m"
+        type: choice
+        options: ["30s", "2m", "5m"]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
       - uses: actions/checkout@v3
 
       - name: Configure CMake
-        run: cmake -B ${{github.workspace}}/build -DWITH_FUZZING=ON -DFUZZTEST_FUZZING_MODE=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+        run: >
+          cmake -B ${{github.workspace}}/build
+          -DWITH_FUZZING=ON -DFUZZTEST_FUZZING_MODE=ON
+          -DCMAKE_CXX_STANDARD=17
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DCMAKE_CXX_FLAGS="-fsanitize=undefined,float-cast-overflow -fno-sanitize-recover=all"
+          -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=undefined,float-cast-overflow"
 
       - name: Build
         working-directory: ${{github.workspace}}/build
@@ -22,4 +38,6 @@ jobs:
 
       - name: Fuzz
         working-directory: ${{github.workspace}}/build
-        run: ./fuzz_test --fuzz_for=30s
+        env:
+          FUZZ_DURATION: ${{ inputs.duration || '30s' }}
+        run: ./fuzz_test --fuzz_for="$FUZZ_DURATION"
