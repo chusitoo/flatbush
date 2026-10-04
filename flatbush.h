@@ -38,6 +38,14 @@ SOFTWARE.
 #include <utility>      // for swap
 #include <vector>       // for vector
 
+#if __cplusplus >= 202002L || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002L)
+#if defined(__has_include)
+#if __has_include(<bit>)
+#include <bit>
+#endif
+#endif
+#endif
+
 #ifndef FLATBUSH_SPAN
 #if __cplusplus >= 202002L || (defined(_MSVC_LANG) && _MSVC_LANG >= 202002L)
 #if defined(__has_include)
@@ -183,15 +191,21 @@ struct Point {
 
 namespace detail {
 
+#if defined(__cpp_lib_bit_cast) && __cpp_lib_bit_cast >= 201806L
+using std::bit_cast;
+#else
 // From https://www.boost.org/doc/libs/1_81_0/boost/core/bit.hpp (modified)
 template <class To, class From>
-To bit_cast(From const& from) {
+inline To bit_cast(const From& from) noexcept {
+  static_assert(std::is_trivially_copyable<From>::value, "From type must be trivially copyable");
+  static_assert(std::is_trivially_copyable<To>::value, "To type must be trivially copyable");
   static_assert(sizeof(To) == sizeof(From), "Cannot cast types of different size");
 
   To to;
   std::memcpy(&to, &from, sizeof(To));
   return to;
 }
+#endif
 
 template <typename Type>
 inline Type readUnaligned(const uint8_t* iData) noexcept {
