@@ -1575,13 +1575,31 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
                                                     size_t iMaxResults) const {
   static constexpr auto kDefaultFilterFn = std::is_same<typename std::decay<FilterFn>::type, DefaultFilterFn>::value;
   const auto wNumItems = numItems();
+  std::vector<size_t> wResults;
+  wResults.reserve(std::min(iMaxResults, detail::approximateResultsSize(mBounds, iBounds, wNumItems)));
+
+  if (detail::boxContains(iBounds, mBounds)) {
+    if (kDefaultFilterFn) {
+      const auto wBegin = indexes<IsWideIndex>();
+      wResults.insert(wResults.end(), wBegin, wBegin + std::min(wNumItems, iMaxResults));
+    } else {
+      for (size_t wPosition = 0UL; wPosition < wNumItems && wResults.size() < iMaxResults; ++wPosition) {
+        const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+        if (iFilterFn(wIndex, mBoxes[wPosition])) {
+          wResults.push_back(wIndex);
+        }
+      }
+    }
+
+    return wResults;
+  }
+
   const auto wNodeSize = nodeSize();
   std::vector<size_t> wQueue;
   wQueue.reserve(wNodeSize << 2U);
-  std::vector<size_t> wResults;
-  wResults.reserve(std::min(iMaxResults, detail::approximateResultsSize(mBounds, iBounds, wNumItems)));
   // Node offsets are stored pre-multiplied by four, so the low bit is free to carry the flag
-  wQueue.push_back(((mBoxes.size() - 1UL) << 2U) | static_cast<size_t>(detail::boxContains(iBounds, mBounds)));
+  wQueue.push_back((mBoxes.size() - 1UL) << 2U);
 
   while (!wQueue.empty() && wResults.size() < iMaxResults) {
     const auto wEntry = wQueue.back();
