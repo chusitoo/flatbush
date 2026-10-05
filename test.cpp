@@ -713,23 +713,10 @@ TEST_P(FlatbushSearchContainedRangesTest, PreserveOrderAndLimits) {
   const auto wAllIds = wIndex.search(wQuery, flatbush::detail::acceptAllFilter<int32_t>);
   EXPECT_EQ(wIndex.search(wQuery), wAllIds);
 
-  const std::array<size_t, 17> wLimits { 0UL,
-                                         1UL,
-                                         2UL,
-                                         7UL,
-                                         8UL,
-                                         9UL,
-                                         15UL,
-                                         16UL,
-                                         17UL,
-                                         18UL,
-                                         100UL,
-                                         256UL,
-                                         32768UL,
-                                         32769UL,
-                                         65537UL,
-                                         65538UL,
-                                         flatbush::gMaxResults };
+  const std::array<size_t, 20> wLimits { 0UL,     1UL,     2UL,     7UL,     8UL,
+                                         9UL,     15UL,    16UL,    17UL,    18UL,
+                                         63UL,    64UL,    65UL,    100UL,   256UL,
+                                         32768UL, 32769UL, 65537UL, 65538UL, flatbush::gMaxResults };
   for (const auto wLimit : wLimits) {
     SCOPED_TRACE(wLimit);
     auto wExpected = wAllIds;

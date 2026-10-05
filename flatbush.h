@@ -216,6 +216,83 @@ inline Type readUnaligned(const uint8_t* iData) noexcept {
   return wValue;
 }
 
+template <typename MaskType>
+inline
+    typename std::enable_if<std::is_unsigned<MaskType>::value && (sizeof(MaskType) <= sizeof(uint32_t)), size_t>::type
+    lowestSetBitIndex(MaskType iMask) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  return static_cast<size_t>(__builtin_ctz(static_cast<uint32_t>(iMask)));
+#elif defined(_MSC_VER) && defined(FLATBUSH_USE_SIMD)
+  unsigned long wBitIndex;
+  _BitScanForward(&wBitIndex, iMask);
+  return static_cast<size_t>(wBitIndex);
+#else
+  size_t wBitIndex = 0UL;
+  for (; (iMask & 1U) == 0U; iMask >>= 1U) {
+    ++wBitIndex;
+  }
+  return wBitIndex;
+#endif
+}
+
+template <typename MaskType>
+inline
+    typename std::enable_if<std::is_unsigned<MaskType>::value && (sizeof(MaskType) == sizeof(uint64_t)), size_t>::type
+    lowestSetBitIndex(MaskType iMask) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  return static_cast<size_t>(__builtin_ctzll(static_cast<uint64_t>(iMask)));
+#elif defined(_MSC_VER) && defined(_M_X64)
+  unsigned long wBitIndex;
+  _BitScanForward64(&wBitIndex, iMask);
+  return static_cast<size_t>(wBitIndex);
+#else
+  size_t wBitIndex = 0UL;
+  for (; (iMask & 1U) == 0U; iMask >>= 1U) {
+    ++wBitIndex;
+  }
+  return wBitIndex;
+#endif
+}
+
+template <typename MaskType>
+inline
+    typename std::enable_if<std::is_unsigned<MaskType>::value && (sizeof(MaskType) <= sizeof(uint32_t)), size_t>::type
+    highestSetBitIndex(MaskType iMask) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  return static_cast<size_t>(std::numeric_limits<uint32_t>::digits - 1 - __builtin_clz(static_cast<uint32_t>(iMask)));
+#elif defined(_MSC_VER) && defined(FLATBUSH_USE_SIMD)
+  unsigned long wBitIndex;
+  _BitScanReverse(&wBitIndex, iMask);
+  return static_cast<size_t>(wBitIndex);
+#else
+  size_t wBitIndex = 0UL;
+  for (; iMask > 1U; iMask >>= 1U) {
+    ++wBitIndex;
+  }
+  return wBitIndex;
+#endif
+}
+
+template <typename MaskType>
+inline
+    typename std::enable_if<std::is_unsigned<MaskType>::value && (sizeof(MaskType) == sizeof(uint64_t)), size_t>::type
+    highestSetBitIndex(MaskType iMask) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  return static_cast<size_t>(std::numeric_limits<unsigned long long>::digits - 1 -
+                             __builtin_clzll(static_cast<unsigned long long>(iMask)));
+#elif defined(_MSC_VER) && defined(_M_X64)
+  unsigned long wBitIndex;
+  _BitScanReverse64(&wBitIndex, iMask);
+  return static_cast<size_t>(wBitIndex);
+#else
+  size_t wBitIndex = 0UL;
+  for (; iMask > 1U; iMask >>= 1U) {
+    ++wBitIndex;
+  }
+  return wBitIndex;
+#endif
+}
+
 // A node is walked start to end, but it spans several cache lines and is reached by pointer
 // chasing, so every line is requested up front rather than waiting for the stride detector
 template <typename BoxType>
@@ -1486,13 +1563,7 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
                              0xFU;
 #endif
           if (wMask) {
-#ifdef _MSC_VER
-            unsigned long wBitIdx;
-            _BitScanForward(&wBitIdx, wMask);
-            wPivotLeft = wPos + wBitIdx - 1;
-#else
-            wPivotLeft = wPos + static_cast<size_t>(__builtin_ctz(wMask)) - 1;
-#endif
+            wPivotLeft = wPos + detail::lowestSetBitIndex(wMask) - 1;
             break;
           }
         }
@@ -1518,13 +1589,7 @@ void Flatbush<ArrayType>::sort(detail::HilbertValues& iValues,
                              0xFU;
 #endif
           if (wMask) {
-#ifdef _MSC_VER
-            unsigned long wBitIdx;
-            _BitScanReverse(&wBitIdx, wMask);
-            wPivotRight = wPos + wBitIdx + 1;
-#else
-            wPivotRight = wPos + static_cast<size_t>(31 - __builtin_clz(wMask)) + 1;
-#endif
+            wPivotRight = wPos + detail::highestSetBitIndex(wMask) + 1;
             break;
           }
         }
@@ -1574,6 +1639,7 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
                                                     const FilterFn& iFilterFn,
                                                     size_t iMaxResults) const {
   static constexpr auto kDefaultFilterFn = std::is_same<typename std::decay<FilterFn>::type, DefaultFilterFn>::value;
+  static constexpr size_t kIntersectMaskSize = std::numeric_limits<uint64_t>::digits;
   const auto wNumItems = numItems();
   std::vector<size_t> wResults;
   wResults.reserve(std::min(iMaxResults, detail::approximateResultsSize(mBounds, iBounds, wNumItems)));
@@ -1633,11 +1699,11 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       wEnd = std::min(wNodeIndex + wCount, wNumItems);
     }
 
-    if (wContained && kDefaultFilterFn) {
+    if (wContained && kDefaultFilterFn) {  // contained and default filter function, blindly add to results
       const auto wBegin = indexes<IsWideIndex>() + wNodeIndex;
       const auto wCopyCount = std::min(wEnd - wNodeIndex, iMaxResults - wResults.size());
       wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
-    } else if (wNodeIndex >= wNumItems) {
+    } else if (wNodeIndex >= wNumItems) {  // internal node
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           wQueue.push_back(getIndex<IsWideIndex>(wPosition) | /* low bit carries contained flag */
@@ -1645,16 +1711,29 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
         }
       }
     } else {
-      for (size_t wPosition = wNodeIndex; wPosition < wEnd && wResults.size() < iMaxResults; ++wPosition) {
-        if (!wContained && !detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
-          continue;
+      for (auto wStart = wNodeIndex; wStart < wEnd && wResults.size() < iMaxResults;) {
+        // Cap candidates by remaining result slots so the filter loop needs no limit check.
+        const auto wCount = std::min({ kIntersectMaskSize, wEnd - wStart, iMaxResults - wResults.size() });
+        uint64_t wMask = 0U;
+        // One bit per hit separates intersection checks from filtering.
+        // Contained ranges already match, so their boxes need no intersection test.
+        for (size_t wLane = 0UL; wLane < wCount; ++wLane) {
+          const auto wIntersect = wContained || detail::boxesIntersect(iBounds, mBoxes[wStart + wLane]);
+          wMask |= static_cast<uint64_t>(wIntersect) << wLane;
+        }
+        // Find the lowest set bits to preserve result and callback order.
+        while (wMask != 0U) {
+          const auto wLane = detail::lowestSetBitIndex(wMask);
+          wMask &= wMask - 1U;
+          const auto wPosition = wStart + wLane;
+          const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+          if (iFilterFn(wIndex, mBoxes[wPosition])) {
+            wResults.push_back(wIndex);
+          }
         }
 
-        const auto wIndex = getIndex<IsWideIndex>(wPosition);
-
-        if (iFilterFn(wIndex, mBoxes[wPosition])) {
-          wResults.push_back(wIndex);
-        }
+        wStart += wCount;
       }
     }
   }
