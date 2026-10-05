@@ -1700,7 +1700,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  const auto wReturnAll = UseHeap && kCanBound && iMaxResults >= wNumItems && iMaxDistance >= gMaxDistance;
+  const auto wReturnAll = kCanBound && iMaxResults >= wNumItems && iMaxDistance >= gMaxDistance;
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wReturnAll ? wNumItems : (wNodeSize << 2U));
   std::vector<size_t> wResults;

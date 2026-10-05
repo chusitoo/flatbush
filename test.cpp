@@ -1699,6 +1699,8 @@ TYPED_TEST(FlatbushTypedTest, NeighborsQuery) {
   const auto wIndex = wBuilder.finish();
 
   EXPECT_EQ(wIndex.neighbors({ 0, 0 }, 2), (std::vector<size_t> { 1UL, 2UL }));
+  EXPECT_EQ(wIndex.neighbors({ 0, 0 }, 3), (std::vector<size_t> { 1UL, 2UL, 0UL }));
+  EXPECT_EQ(wIndex.neighbors({ 0, 0 }), (std::vector<size_t> { 1UL, 2UL, 0UL }));
 }
 
 TYPED_TEST(FlatbushTypedTest, NeighborsReturnsEachTiedItemOnce) {
