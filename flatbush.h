@@ -1779,7 +1779,9 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
 
   const auto wNumItems = numItems();
   const auto wNodeSize = nodeSize();
-  const auto wReturnAll = kCanBound && iMaxResults >= wNumItems && iMaxDistance >= gMaxDistance;
+  const auto wReturnAll = kCanBound && iMaxResults >= wNumItems &&
+                          (iMaxDistance >= gMaxDistance ||
+                           detail::computeMaxDistanceSquared(iPoint, mBounds) <= wThreshold);
   std::vector<IndexDistance> wQueue;
   wQueue.reserve(wReturnAll ? wNumItems : (wNodeSize << 2U));
   std::vector<size_t> wResults;
@@ -1812,59 +1814,113 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
     wItems = std::min(wItems * wNodeSize, wNumItems);
   }
 
-  wQueue.emplace_back((mBoxes.size() - 1UL) << 3U, 0.0);
+  // A greedy first descent finds a real leaf to bound by, queueing every sibling it scores on the way
+  if (kCanBound && !UseHeap && wTrackNearest && mLevelBounds.size() > 2UL) {
+    auto wNodeIndex = getIndex<IsWideIndex>(mBoxes.size() - 1UL) >> 2U;
 
-  while (!wQueue.empty() && wResults.size() < iMaxResults) {
-    if (UseHeap) std::pop_heap(wQueue.begin(), wQueue.end());
-    const auto wId = wQueue.back().mId;
-    wQueue.pop_back();
+    for (auto wLevel = mLevelBounds.size() - 2UL;; --wLevel) {
+      const auto wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
+      const auto wIsLeaf = wLevel == 0UL;
+      auto wBestSlot = wQueue.size();
+      auto wBestDist = gMaxDistance;
+      detail::prefetchNode(&mBoxes[wNodeIndex], wEnd - wNodeIndex);
+
+      for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        const auto wDistance = static_cast<double>(iDistanceFn(iPoint, mBoxes[wPosition]));
+        wQueue.emplace_back((getIndex<IsWideIndex>(wPosition) << 1U) + wIsLeaf, wDistance);
+        // ties pop newest first, so follow the last tied child just as the traversal would
+        const auto wIsBetter = wDistance <= wBestDist;
+        wBestDist = wIsBetter ? wDistance : wBestDist;
+        wBestSlot = wIsBetter ? wQueue.size() - 1UL : wBestSlot;
+      }
+
+      if (wIsLeaf) {
+        wBound = std::min(wBound, wBestDist);
+        break;
+      }
+
+      wNodeIndex = wQueue[wBestSlot].mId >> 3U;
+      wQueue.erase(wQueue.begin() + static_cast<ptrdiff_t>(wBestSlot));
+    }
+
+    const auto wOutOfBounds = [wBound](const IndexDistance& iItem) {
+      return iItem.mDistance > wBound;
+    };
+    wQueue.erase(std::remove_if(wQueue.begin(), wQueue.end(), wOutOfBounds), wQueue.end());
+    std::sort(wQueue.begin(), wQueue.end());
+  } else {
+    wQueue.emplace_back((mBoxes.size() - 1UL) << 3U, 0.0);
+  }
+
+  if (wQueue.empty()) {
+    return wResults;
+  }
+
+  auto wId = wQueue.back().mId;
+  wQueue.pop_back();
+
+  while (true) {
+    const auto wQueueSize = wQueue.size();
 
     if (wId & 1U) {
       wResults.push_back(wId >> 1U);
-      continue;
-    }
-
-    const auto wNodeIndex = wId >> 3U;  // 1 undo indexing + 2 for binary compatibility with JS
-    detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
-
-    // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
-    const auto wIsInternalNode = wNodeIndex >= wNumItems;
-    const auto wLevel = levelOf(wNodeIndex);
-    const auto wLevelEnd = mLevelBounds[wLevel];
-    const auto wLastAtLevel = wLevelEnd - 1UL;
-    const auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
-    const auto wQueueSize = wQueue.size();
-    // only a full node carries the count guarantee, and just the last of a level can be short
-    const auto wCanTighten = kCanBound && wIsInternalNode && wLevel >= wBoundLevel;
-
-    for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
-      const auto wDistance = static_cast<double>(iDistanceFn(iPoint, mBoxes[wPosition]));
-
-      if (wDistance > wBound) {
-        continue;
-      }
-
-      const auto wIndex = getIndex<IsWideIndex>(wPosition);
-
-      if (wIsInternalNode || iFilterFn(wIndex, mBoxes[wPosition])) {
-        wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
-        if (UseHeap) std::push_heap(wQueue.begin(), wQueue.end());
-
-        if (wTrackNearest && !wIsInternalNode && wDistance < wBound) {
-          wBound = wDistance;
-        }
-
-        if (wCanTighten && wPosition != wLastAtLevel) {
-          wBound = std::min(wBound, detail::computeMaxDistanceSquared(iPoint, mBoxes[wPosition]));
+    } else {
+      const auto wNodeIndex = wId >> 3U;  // 1 undo indexing + 2 for binary compatibility with JS
+      detail::prefetchNode(&mBoxes[wNodeIndex], std::min(wNodeSize, mBoxes.size() - wNodeIndex));
+      // If the next queued entry is a subtree, overlap its fetch with this node scan
+      if (!wTrackNearest && !wQueue.empty()) {
+        const auto wNextId = UseHeap ? wQueue.front().mId : wQueue.back().mId;
+        if ((wNextId & 1U) == 0U) {
+          const auto wNextIndex = wNextId >> 3U;
+          detail::prefetchNode(&mBoxes[wNextIndex], std::min(wNodeSize, mBoxes.size() - wNextIndex));
         }
       }
+
+      const auto wIsInternalNode = wNodeIndex >= wNumItems;
+      const auto wLevel = wIsInternalNode ? levelOf(wNodeIndex) : 0UL;
+      const auto wLevelEnd = wIsInternalNode ? mLevelBounds[wLevel] : wNumItems;
+      const auto wLastAtLevel = wLevelEnd - 1UL;
+      const auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
+      // only a full node carries the count guarantee, and just the last of a level can be short
+      const auto wCanTighten = kCanBound && wIsInternalNode && wLevel >= wBoundLevel;
+      const auto wCanTightenNearest = wTrackNearest && !wIsInternalNode;
+
+      for (auto wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
+        const auto wDistance = static_cast<double>(iDistanceFn(iPoint, mBoxes[wPosition]));
+
+        if (wDistance <= wBound) {
+          const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+          if (!wIsInternalNode && !iFilterFn(wIndex, mBoxes[wPosition])) {
+            continue;
+          }
+
+          wQueue.emplace_back((wIndex << 1U) + !wIsInternalNode, wDistance);
+          wBound = wCanTightenNearest ? wDistance : wBound;
+          wBound = wCanTighten && wPosition != wLastAtLevel
+                       ? std::min(wBound, detail::computeMaxDistanceSquared(iPoint, mBoxes[wPosition]))
+                       : wBound;
+        }
+      }
     }
 
-    if (!UseHeap && wQueue.size() > wQueueSize) {
+    if (wQueue.empty() || wResults.size() >= iMaxResults) {
+      break;
+    }
+
+    if (UseHeap) {
+      for (auto wSize = wQueueSize + 1UL; wSize <= wQueue.size(); ++wSize) {
+        std::push_heap(wQueue.begin(), wQueue.begin() + static_cast<ptrdiff_t>(wSize));
+      }
+      std::pop_heap(wQueue.begin(), wQueue.end());
+    } else if (wQueue.size() > wQueueSize) {
       const auto wMid = wQueue.begin() + static_cast<ptrdiff_t>(wQueueSize);
       std::sort(wMid, wQueue.end());
       std::inplace_merge(wQueue.begin(), wMid, wQueue.end());
     }
+
+    wId = wQueue.back().mId;
+    wQueue.pop_back();
   }
 
   return wResults;
