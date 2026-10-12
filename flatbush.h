@@ -1682,13 +1682,14 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
     }
 
     // A leaf needs no special case: levelOf returns 0 for one and mLevelBounds[0] is the item count
-    const auto wLevel = levelOf(wNodeIndex);
-    auto wEnd = std::min(wNodeIndex + wNodeSize, mLevelBounds[wLevel]);
+    const auto wIsInternalNode = wNodeIndex >= wNumItems;
+    const auto wLevel = wIsInternalNode ? levelOf(wNodeIndex) : 0UL;
+    const auto wLevelEnd = wIsInternalNode ? mLevelBounds[wLevel] : wNumItems;
+    auto wEnd = std::min(wNodeIndex + wNodeSize, wLevelEnd);
 
     // Each subtree's leaves occupy a contiguous range in the packed tree. If the query fully contains
     // the subtree, descend to its first leaf and scan that range without further intersection checks.
-    if (wContained) {
-      // At leaf level, no descent is needed.
+    if (wContained && wIsInternalNode) {  // At leaf level, no descent is needed.
       auto wCount = wEnd - wNodeIndex;
 
       for (auto wDepth = wLevel; wDepth > 0UL; --wDepth) {
@@ -1699,11 +1700,21 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
       wEnd = std::min(wNodeIndex + wCount, wNumItems);
     }
 
-    if (wContained && kDefaultFilterFn) {  // contained and default filter function, blindly add to results
-      const auto wBegin = indexes<IsWideIndex>() + wNodeIndex;
-      const auto wCopyCount = std::min(wEnd - wNodeIndex, iMaxResults - wResults.size());
-      wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
-    } else if (wNodeIndex >= wNumItems) {  // internal node
+    if (wContained) {
+      if (kDefaultFilterFn) {
+        const auto wBegin = indexes<IsWideIndex>() + wNodeIndex;
+        const auto wCopyCount = std::min(wEnd - wNodeIndex, iMaxResults - wResults.size());
+        wResults.insert(wResults.end(), wBegin, wBegin + wCopyCount);
+      } else {
+        for (size_t wPosition = wNodeIndex; wPosition < wEnd && wResults.size() < iMaxResults; ++wPosition) {
+          const auto wIndex = getIndex<IsWideIndex>(wPosition);
+
+          if (iFilterFn(wIndex, mBoxes[wPosition])) {
+            wResults.push_back(wIndex);
+          }
+        }
+      }
+    } else if (wIsInternalNode) {
       for (size_t wPosition = wNodeIndex; wPosition < wEnd; ++wPosition) {
         if (detail::boxesIntersect(iBounds, mBoxes[wPosition])) {
           wQueue.push_back(getIndex<IsWideIndex>(wPosition) | /* low bit carries contained flag */
@@ -1716,9 +1727,8 @@ std::vector<size_t> Flatbush<ArrayType>::searchImpl(const Box<ArrayType>& iBound
         const auto wCount = std::min({ kIntersectMaskSize, wEnd - wStart, iMaxResults - wResults.size() });
         uint64_t wMask = 0U;
         // One bit per hit separates intersection checks from filtering.
-        // Contained ranges already match, so their boxes need no intersection test.
         for (size_t wLane = 0UL; wLane < wCount; ++wLane) {
-          const auto wIntersect = wContained || detail::boxesIntersect(iBounds, mBoxes[wStart + wLane]);
+          const auto wIntersect = detail::boxesIntersect(iBounds, mBoxes[wStart + wLane]);
           wMask |= static_cast<uint64_t>(wIntersect) << wLane;
         }
         // Find the lowest set bits to preserve result and callback order.
