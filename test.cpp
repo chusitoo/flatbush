@@ -190,6 +190,27 @@ flatbush::Flatbush<double> createSmallIndex(uint32_t iNumItems, uint16_t iNodeSi
   return wIndex;
 }
 
+TEST(FlatbushBaselineTest, RoundTripClampedNodeSizes) {
+  // Baseline's 65536, 65537 and -1 are not representable by the uint16_t node size
+  for (const auto wNodeSize : { uint16_t { 16 }, uint16_t { 2 }, uint16_t { 65535 }, uint16_t { 0 }, uint16_t { 1 } }) {
+    flatbush::FlatbushBuilder<double> wBuilder(3, wNodeSize);
+    wBuilder.add(flatbush::Point<double> { 10, 0 });
+    wBuilder.add(flatbush::Point<double> { 100, 0 });
+    wBuilder.add(flatbush::Point<double> { 0, 0 });
+    const auto wIndex = wBuilder.finish();
+    EXPECT_EQ(wIndex.nodeSize(), std::max(wNodeSize, flatbush::gMinNodeSize));
+
+    const auto wRestored = flatbush::FlatbushBuilder<double>::from(wIndex.data().data(), wIndex.data().size());
+    EXPECT_EQ(wRestored.nodeSize(), wIndex.nodeSize());
+    EXPECT_EQ(wRestored.search({ 0, 0, 0, 0 }), wIndex.search({ 0, 0, 0, 0 }));
+
+    auto wIds = wRestored.search({ -1, -1, 101, 1 });
+    std::sort(wIds.begin(), wIds.end());
+    EXPECT_EQ(wIds, (std::vector<size_t> { 0UL, 1UL, 2UL }));
+    EXPECT_EQ(wRestored.neighbors({ 0, 0 }, 1), std::vector<size_t> { 2UL });
+  }
+}
+
 TEST(FlatbushBaselineTest, IndexBunchOfRectangles) {
   auto wIndex = createIndex();
   ASSERT_EQ(wIndex.indexSize() * 4 + wIndex.indexSize(), 540);
