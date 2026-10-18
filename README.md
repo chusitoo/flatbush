@@ -70,17 +70,21 @@ Filters and distance callbacks must be callable through a const reference.
 
 ### Visiting bounding box results
 
-`search(visitor, bounds)` invokes a callback for each matching item without constructing a result vector. Return
-`true` from the callback to continue or `false` to stop immediately. The method returns whether the traversal
-completed. The visitor goes first to distinguish it from the filtering overload, `search(bounds, filter)`.
+`search(visitor, bounds, filter, maxResults)` invokes a callback for each item that `search(bounds, filter, maxResults)`
+returns, in the same order, without constructing a result vector. The filter and limit are optional and behave as
+above. Return `true` from the callback to continue or `false` to stop immediately. The method returns `false` only when
+the callback stopped the traversal, so running out of matches or reaching `maxResults` both return `true`. The visitor
+goes first to distinguish it from the filtering overload, `search(bounds, filter)`.
 
 ```cpp
-auto completed = index.search(
-    [](size_t id, const Box<double>& box) {
-        process(id, box);
-        return shouldContinue();
-    },
-    {40, 40, 60, 60});
+auto visitBox = [](size_t id, const Box<double>& box) {
+    process(id, box);
+    return shouldContinue();
+};
+auto completed = index.search(visitBox, {40, 40, 60, 60});
+
+// visit at most 100 accepted matches
+auto completedEven = index.search(visitBox, boundingBox, filterEven, 100);
 ```
 
 ### Searching for nearest neighbors
@@ -106,17 +110,23 @@ A zero `maxDistance` searches for boxes containing or touching the query point.
 
 ### Visiting nearest neighbors
 
-`neighbors(visitor, point)` invokes a callback for each item in nearest-first order without constructing a result vector. The
-callback receives the item ID, its box, and its squared Euclidean distance. Return `true` to continue or `false` to stop;
-the method returns whether every item was visited.
+`neighbors(visitor, point, maxResults, maxDistance, filter, distance)` invokes a callback for each item that
+`neighbors(point, maxResults, maxDistance, filter, distance)` returns, in nearest-first order, without constructing a
+result vector. Every parameter after the point is optional and behaves as above. The callback receives the item ID,
+its box, and its distance in the metric's units: the squared Euclidean distance by default, even though `maxDistance`
+is then a radius, or whatever a [distance callback](#searching-for-nearest-neighbors-with-a-custom-metric) returns.
+Return `true` to continue or `false` to stop; the method returns `false` only when the callback stopped the traversal,
+so running out of matches or reaching `maxResults` both return `true`.
 
 ```cpp
-auto completed = index.neighbors(
-    [](size_t id, const Box<double>& box, double distanceSquared) {
-        process(id, box, distanceSquared);
-        return shouldContinue();
-    },
-    targetPoint);
+auto visitNeighbor = [](size_t id, const Box<double>& box, double distanceSquared) {
+    process(id, box, distanceSquared);
+    return shouldContinue();
+};
+auto completed = index.neighbors(visitNeighbor, targetPoint);
+
+// visit the nearest odd IDs, at most maxResults of them within maxDistance
+auto completedOdd = index.neighbors(visitNeighbor, {40, 60}, maxResults, maxDistance, filterOdd);
 ```
 
 ### Searching for nearest neighbors with a custom metric
