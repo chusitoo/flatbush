@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792280876503,
+  "lastUpdate": 1792337924606,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -18560,6 +18560,72 @@ window.BENCHMARK_DATA = {
             "value": 131972490.19999902,
             "unit": "ns/iter",
             "extra": "iterations: 5\ncpu: 131961269.6 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "distinct": true,
+          "id": "71f8bd9014512b85751639588a9de93b48a4b17e",
+          "message": "Separate leaf and internal node validation",
+          "timestamp": "2026-10-18T15:37:53Z",
+          "tree_id": "481e3187718ce81786900b744ffa3f8b0f7b3814",
+          "url": "https://github.com/chusitoo/flatbush/commit/71f8bd9014512b85751639588a9de93b48a4b17e"
+        },
+        "date": 1792337923531,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 53199316.53846164,
+            "unit": "ns/iter",
+            "extra": "iterations: 13\ncpu: 53190815.84615385 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 43084981.06250003,
+            "unit": "ns/iter",
+            "extra": "iterations: 16\ncpu: 43083287.24999999 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 13671625.894736737,
+            "unit": "ns/iter",
+            "extra": "iterations: 57\ncpu: 13667761.245614037 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 1608597.0279069843,
+            "unit": "ns/iter",
+            "extra": "iterations: 430\ncpu: 1608331.4976744188 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 16846538.761904687,
+            "unit": "ns/iter",
+            "extra": "iterations: 42\ncpu: 16844618.190476194 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 74917040.55555539,
+            "unit": "ns/iter",
+            "extra": "iterations: 9\ncpu: 74910839.55555548 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 131528409.99999852,
+            "unit": "ns/iter",
+            "extra": "iterations: 5\ncpu: 131515326.20000008 ns\nthreads: 1"
           }
         ]
       }
