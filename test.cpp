@@ -674,6 +674,163 @@ TEST(FlatbushTest, NeighborsVisitorExceptionsPropagate) {
       std::runtime_error);
 }
 
+TEST(FlatbushTest, SearchVisitorMatchesFilteredAndLimitedSearch) {
+  auto wIndex = createIndex();
+  const auto wEven = [](size_t iId, const flatbush::Box<double>&) {
+    return iId % 2UL == 0UL;
+  };
+
+  // The whole bounds take the contained shortcut; the smaller box also walks partially covered nodes
+  for (const auto& wQuery : { wIndex.bounds(), flatbush::Box<double> { 0, 1, 96, 95 } }) {
+    for (const auto wMaxResults : { size_t { 1 }, size_t { 7 }, flatbush::gMaxResults }) {
+      const auto wExpected = wIndex.search(wQuery, wEven, wMaxResults);
+      std::vector<size_t> wVisited;
+      const auto wCompleted = wIndex.search(
+          [&wVisited](size_t iId, const flatbush::Box<double>& iBox) {
+            EXPECT_EQ(iBox.mMinX, gData[iId * 4]);
+            EXPECT_EQ(iBox.mMinY, gData[iId * 4 + 1]);
+            EXPECT_EQ(iBox.mMaxX, gData[iId * 4 + 2]);
+            EXPECT_EQ(iBox.mMaxY, gData[iId * 4 + 3]);
+            wVisited.push_back(iId);
+            return true;
+          },
+          wQuery,
+          wEven,
+          wMaxResults);
+
+      EXPECT_TRUE(wCompleted);
+      EXPECT_EQ(wVisited, wExpected);
+    }
+  }
+}
+
+TEST(FlatbushTest, NeighborsVisitorMatchesLimitedNeighbors) {
+  auto wIndex = createIndex();
+  const flatbush::Point<double> wQuery { 50, 50 };
+
+  // A single result takes the nearest-leaf descent and five tighten the bound by count
+  for (const auto wMaxResults : { size_t { 1 }, size_t { 5 } }) {
+    for (const auto wMaxDistance : { 12.0, flatbush::gMaxDistance }) {
+      const auto wExpected = wIndex.neighbors(wQuery, wMaxResults, wMaxDistance);
+      std::vector<size_t> wVisited;
+      const auto wCompleted = wIndex.neighbors(
+          [&](size_t iId, const flatbush::Box<double>& iBox, double iDistanceSquared) {
+            EXPECT_EQ(iBox.mMinX, gData[iId * 4]);
+            EXPECT_EQ(iBox.mMinY, gData[iId * 4 + 1]);
+            EXPECT_EQ(iBox.mMaxX, gData[iId * 4 + 2]);
+            EXPECT_EQ(iBox.mMaxY, gData[iId * 4 + 3]);
+            // The cap is a radius while the reported distance stays squared
+            EXPECT_DOUBLE_EQ(iDistanceSquared, flatbush::detail::computeDistanceSquared(wQuery, iBox));
+            EXPECT_LE(iDistanceSquared, wMaxDistance * wMaxDistance);
+            wVisited.push_back(iId);
+            return true;
+          },
+          wQuery,
+          wMaxResults,
+          wMaxDistance);
+
+      EXPECT_TRUE(wCompleted);
+      EXPECT_EQ(wVisited, wExpected);
+    }
+  }
+}
+
+TEST(FlatbushTest, NeighborsVisitorReportsDistanceCallbackUnits) {
+  auto wIndex = createIndex();
+  const flatbush::Point<double> wQuery { 50, 50 };
+  const auto wMaxDistance = 30.0;
+  const auto wOdd = [](size_t iId, const flatbush::Box<double>&) {
+    return iId % 2UL != 0UL;
+  };
+  const auto wManhattan = [](const flatbush::Point<double>& iPoint, const flatbush::Box<double>& iBox) {
+    return flatbush::detail::axisDistance(iPoint.mX, iBox.mMinX, iBox.mMaxX) +
+           flatbush::detail::axisDistance(iPoint.mY, iBox.mMinY, iBox.mMaxY);
+  };
+  const auto wExpected = wIndex.neighbors(wQuery, 4, wMaxDistance, wOdd, wManhattan);
+  std::vector<size_t> wVisited;
+  auto wPreviousDistance = 0.0;
+
+  const auto wCompleted = wIndex.neighbors(
+      [&](size_t iId, const flatbush::Box<double>& iBox, double iDistance) {
+        EXPECT_NE(iId % 2UL, 0UL);
+        EXPECT_DOUBLE_EQ(iDistance, wManhattan(wQuery, iBox));
+        EXPECT_LE(iDistance, wMaxDistance);
+        EXPECT_GE(iDistance, wPreviousDistance);
+        wPreviousDistance = iDistance;
+        wVisited.push_back(iId);
+        return true;
+      },
+      wQuery,
+      4,
+      wMaxDistance,
+      wOdd,
+      wManhattan);
+
+  EXPECT_TRUE(wCompleted);
+  EXPECT_EQ(wVisited.size(), 4UL);
+  EXPECT_EQ(wVisited, wExpected);
+}
+
+TEST(FlatbushTest, VisitorsReturnFalseOnlyWhenStopped) {
+  auto wIndex = createIndex();
+  const flatbush::Point<double> wPoint { 50, 50 };
+  size_t wCalls = 0UL;
+  const auto wSearchUntilThird = [&wCalls](size_t, const flatbush::Box<double>&) {
+    return ++wCalls < 3UL;
+  };
+  const auto wNeighborsUntilThird = [&wCalls](size_t, const flatbush::Box<double>&, double) {
+    return ++wCalls < 3UL;
+  };
+
+  // Reaching the limit is not a stop requested by the visitor
+  EXPECT_TRUE(wIndex.search(wSearchUntilThird, wIndex.bounds(), {}, 2));
+  EXPECT_EQ(wCalls, 2UL);
+  wCalls = 0UL;
+  EXPECT_TRUE(wIndex.neighbors(wNeighborsUntilThird, wPoint, 2));
+  EXPECT_EQ(wCalls, 2UL);
+
+  // Stopping on the last item the limit allows still reports the stop
+  wCalls = 0UL;
+  EXPECT_FALSE(wIndex.search(wSearchUntilThird, wIndex.bounds(), {}, 3));
+  EXPECT_EQ(wCalls, 3UL);
+  wCalls = 0UL;
+  EXPECT_FALSE(wIndex.neighbors(wNeighborsUntilThird, wPoint, 3));
+  EXPECT_EQ(wCalls, 3UL);
+
+  wCalls = 0UL;
+  EXPECT_TRUE(wIndex.search(wSearchUntilThird, wIndex.bounds(), {}, 0));
+  EXPECT_TRUE(wIndex.neighbors(wNeighborsUntilThird, wPoint, 0));
+  EXPECT_EQ(wCalls, 0UL);
+}
+
+TEST(FlatbushTest, VisitorQueryCallbacksCanBeMoveOnly) {
+  auto wIndex = createIndex();
+  std::vector<size_t> wSearchIds;
+  std::vector<size_t> wNeighborIds;
+
+  EXPECT_TRUE(wIndex.search(
+      [&wSearchIds](size_t iId, const flatbush::Box<double>&) {
+        wSearchIds.push_back(iId);
+        return true;
+      },
+      { 0.0, 0.0, 100.0, 100.0 },
+      MoveOnlyFilter {}));
+  EXPECT_TRUE(wIndex.neighbors(
+      [&wNeighborIds](size_t iId, const flatbush::Box<double>&, double) {
+        wNeighborIds.push_back(iId);
+        return true;
+      },
+      { 50.0, 50.0 },
+      6,
+      flatbush::gMaxDistance,
+      MoveOnlyFilter {},
+      MoveOnlyDistance {}));
+
+  EXPECT_EQ(wSearchIds, wIndex.search({ 0.0, 0.0, 100.0, 100.0 }, MoveOnlyFilter {}));
+  EXPECT_EQ(wNeighborIds,
+            wIndex.neighbors({ 50.0, 50.0 }, 6, flatbush::gMaxDistance, MoveOnlyFilter {}, MoveOnlyDistance {}));
+}
+
 TEST(FlatbushTest, NeighborsDistanceCallbackIsInvoked) {
   auto wIndex = createIndex();
   size_t wCalls = 0;
