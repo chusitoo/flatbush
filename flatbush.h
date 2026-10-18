@@ -845,7 +845,8 @@ class FlatbushBuilder {
 
  private:
   static void validate(const uint8_t* iData, size_t iSize);
-  static void validateStoredIndices(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems, uint16_t iNodeSize);
+  static bool validateLeafItems(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems);
+  static bool validateInternalNodes(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems, uint16_t iNodeSize);
   uint16_t mNodeSize;
   std::vector<uint8_t> mData;
 };
@@ -968,16 +969,17 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
   const auto wNumNodes = wPayloadSize / (wIsWideIndex ? kWideNodeByteSize : kNarrowNodeByteSize);
   const auto wIndexes = iData + gHeaderByteSize + wNumNodes * kBoxByteSize;
 
-  validateStoredIndices(wIndexes, wNumNodes, wNumItems, wNodeSize);
+  if (!validateLeafItems(wIndexes, wNumNodes, wNumItems)) {
+    throw std::invalid_argument("Data contains an invalid leaf item index.");
+  }
+
+  if (!validateInternalNodes(wIndexes, wNumNodes, wNumItems, wNodeSize)) {
+    throw std::invalid_argument("Data contains an invalid internal node index.");
+  }
 }
 
 template <typename ArrayType>
-void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
-                                                       size_t iNumNodes,
-                                                       uint32_t iNumItems,
-                                                       uint16_t iNodeSize) {
-  static constexpr auto kInvalidLeafIndexMessage = "Data contains an invalid leaf item index.";
-  static constexpr auto kInvalidInternalIndexMessage = "Data contains an invalid internal node index.";
+bool FlatbushBuilder<ArrayType>::validateLeafItems(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems) {
   const auto wIsWideIndex = iNumNodes > gMaxNumNodes;
   size_t wPosition = 0UL;
 
@@ -989,7 +991,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
     for (; wPosition + 16UL <= iNumItems; wPosition += 16UL) {
       const auto wValues = _mm512_loadu_si512(iIndexes + wPosition * gWideIndexSize);
       if (_mm512_cmp_epu32_mask(wValues, wLimit, _MM_CMPINT_NLT) != 0U) {
-        throw std::invalid_argument(kInvalidLeafIndexMessage);
+        return false;
       }
     }
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
@@ -999,7 +1001,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
                                                 iIndexes + wPosition * gWideIndexSize)),
                                             detail::kWideIndexBias);
       if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi32(wLimit, wValues))) != 0xFFFFFFFFU) {
-        throw std::invalid_argument(kInvalidLeafIndexMessage);
+        return false;
       }
     }
 #else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
@@ -1009,7 +1011,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
                                              detail::bit_cast<const __m128i*>(iIndexes + wPosition * gWideIndexSize)),
                                          detail::kOffset32);
       if (_mm_movemask_epi8(_mm_cmpgt_epi32(wLimit, wValues)) != 0xFFFF) {
-        throw std::invalid_argument(kInvalidLeafIndexMessage);
+        return false;
       }
     }
 #endif
@@ -1020,7 +1022,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
     for (; wPosition + 32UL <= iNumItems; wPosition += 32UL) {
       const auto wValues = _mm512_loadu_si512(iIndexes + wPosition * gNarrowIndexSize);
       if (_mm512_cmp_epu16_mask(wValues, wLimit, _MM_CMPINT_NLT) != 0U) {
-        throw std::invalid_argument(kInvalidLeafIndexMessage);
+        return false;
       }
     }
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
@@ -1030,7 +1032,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
                                                 iIndexes + wPosition * gNarrowIndexSize)),
                                             detail::kNarrowIndexBias);
       if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpgt_epi16(wLimit, wValues))) != 0xFFFFFFFFU) {
-        throw std::invalid_argument(kInvalidLeafIndexMessage);
+        return false;
       }
     }
 #else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
@@ -1040,7 +1042,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
                                              detail::bit_cast<const __m128i*>(iIndexes + wPosition * gNarrowIndexSize)),
                                          detail::kNarrowIndexBias);
       if (_mm_movemask_epi8(_mm_cmpgt_epi16(wLimit, wValues)) != 0xFFFF) {
-        throw std::invalid_argument(kInvalidLeafIndexMessage);
+        return false;
       }
     }
 #endif
@@ -1053,10 +1055,19 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
                                : detail::readUnaligned<NarrowIndexType>(iIndexes + wPosition * gNarrowIndexSize);
 
     if (wLeafId >= iNumItems) {
-      throw std::invalid_argument(kInvalidLeafIndexMessage);
+      return false;
     }
   }
 
+  return true;
+}
+
+template <typename ArrayType>
+bool FlatbushBuilder<ArrayType>::validateInternalNodes(const uint8_t* iIndexes,
+                                                       size_t iNumNodes,
+                                                       uint32_t iNumItems,
+                                                       uint16_t iNodeSize) {
+  const auto wIsWideIndex = iNumNodes > gMaxNumNodes;
   size_t wChildStart = 0UL;
   size_t wChildEnd = iNumItems;
   size_t wParentIndex = iNumItems;
@@ -1074,7 +1085,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
         const auto wExpected = _mm512_add_epi32(_mm512_set1_epi32(static_cast<int32_t>(wChildIndex << 2U)), wOffsets);
         const auto wStored = _mm512_loadu_si512(iIndexes + wParentIndex * gWideIndexSize);
         if (_mm512_cmpneq_epi32_mask(wStored, wExpected) != 0U) {
-          throw std::invalid_argument(kInvalidInternalIndexMessage);
+          return false;
         }
       }
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
@@ -1085,7 +1096,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
         const auto wStored = _mm256_loadu_si256(
             detail::bit_cast<const __m256i*>(iIndexes + wParentIndex * gWideIndexSize));
         if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi32(wStored, wExpected))) != 0xFFFFFFFFU) {
-          throw std::invalid_argument(kInvalidInternalIndexMessage);
+          return false;
         }
       }
 #else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
@@ -1096,7 +1107,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
         const auto wStored = _mm_loadu_si128(
             detail::bit_cast<const __m128i*>(iIndexes + wParentIndex * gWideIndexSize));
         if (_mm_movemask_epi8(_mm_cmpeq_epi32(wStored, wExpected)) != 0xFFFF) {
-          throw std::invalid_argument(kInvalidInternalIndexMessage);
+          return false;
         }
       }
 #endif
@@ -1108,7 +1119,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
         const auto wExpected = _mm512_add_epi16(_mm512_set1_epi16(static_cast<int16_t>(wChildIndex << 2U)), wOffsets);
         const auto wStored = _mm512_loadu_si512(iIndexes + wParentIndex * gNarrowIndexSize);
         if (_mm512_cmpneq_epi16_mask(wStored, wExpected) != 0U) {
-          throw std::invalid_argument(kInvalidInternalIndexMessage);
+          return false;
         }
       }
 #elif FLATBUSH_USE_SIMD >= FLATBUSH_USE_AVX2
@@ -1119,7 +1130,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
         const auto wStored = _mm256_loadu_si256(
             detail::bit_cast<const __m256i*>(iIndexes + wParentIndex * gNarrowIndexSize));
         if (static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi16(wStored, wExpected))) != 0xFFFFFFFFU) {
-          throw std::invalid_argument(kInvalidInternalIndexMessage);
+          return false;
         }
       }
 #else  // FLATBUSH_USE_SIMD < FLATBUSH_USE_AVX2
@@ -1130,7 +1141,7 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
         const auto wStored = _mm_loadu_si128(
             detail::bit_cast<const __m128i*>(iIndexes + wParentIndex * gNarrowIndexSize));
         if (_mm_movemask_epi8(_mm_cmpeq_epi16(wStored, wExpected)) != 0xFFFF) {
-          throw std::invalid_argument(kInvalidInternalIndexMessage);
+          return false;
         }
       }
 #endif
@@ -1145,13 +1156,15 @@ void FlatbushBuilder<ArrayType>::validateStoredIndices(const uint8_t* iIndexes,
                                                                                wParentIndex * gNarrowIndexSize);
 
       if (wStoredIndex != wExpectedIndex) {
-        throw std::invalid_argument(kInvalidInternalIndexMessage);
+        return false;
       }
     }
 
     wChildStart = wChildEnd;
     wChildEnd = wParentIndex;
   }
+
+  return true;
 }
 
 template <typename ArrayType>
