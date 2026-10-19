@@ -134,15 +134,15 @@ class span {
  public:
   constexpr span() noexcept = default;
   constexpr span(Type* iPtr, size_t iLen) noexcept : mPtr { iPtr }, mLen { iLen } {}
-  FLATBUSH_CONSTEXPR_14 Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
-  constexpr Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
-  constexpr const Type* data() const noexcept { return mPtr; }
-  constexpr size_t size() const noexcept { return mLen; }
-  constexpr bool empty() const noexcept { return mLen == 0; }
-  FLATBUSH_CONSTEXPR_14 Type* begin() noexcept { return mPtr; }
-  constexpr const Type* begin() const noexcept { return mPtr; }
-  FLATBUSH_CONSTEXPR_14 Type* end() noexcept { return mPtr + mLen; }
-  constexpr const Type* end() const noexcept { return mPtr + mLen; }
+  FLATBUSH_NODISCARD FLATBUSH_CONSTEXPR_14 Type& operator[](size_t iIndex) noexcept { return mPtr[iIndex]; }
+  FLATBUSH_NODISCARD constexpr Type const& operator[](size_t iIndex) const noexcept { return mPtr[iIndex]; }
+  FLATBUSH_NODISCARD constexpr const Type* data() const noexcept { return mPtr; }
+  FLATBUSH_NODISCARD constexpr size_t size() const noexcept { return mLen; }
+  FLATBUSH_NODISCARD constexpr bool empty() const noexcept { return mLen == 0; }
+  FLATBUSH_NODISCARD FLATBUSH_CONSTEXPR_14 Type* begin() noexcept { return mPtr; }
+  FLATBUSH_NODISCARD constexpr const Type* begin() const noexcept { return mPtr; }
+  FLATBUSH_NODISCARD FLATBUSH_CONSTEXPR_14 Type* end() noexcept { return mPtr + mLen; }
+  FLATBUSH_NODISCARD constexpr const Type* end() const noexcept { return mPtr + mLen; }
 };
 #endif  // FLATBUSH_SPAN
 
@@ -312,7 +312,7 @@ inline void prefetchNode(const BoxType* iBoxes, size_t iCount) noexcept {
   }
 }
 
-FLATBUSH_CONSTEXPR_14 inline uint32_t Interleave(uint32_t v) {
+FLATBUSH_CONSTEXPR_14 inline uint32_t Interleave(uint32_t v) noexcept {
   v = (v | (v << 8U)) & 0x00FF00FF;
   v = (v | (v << 4U)) & 0x0F0F0F0F;
   v = (v | (v << 2U)) & 0x33333333;
@@ -321,7 +321,7 @@ FLATBUSH_CONSTEXPR_14 inline uint32_t Interleave(uint32_t v) {
 }
 
 // From https://github.com/rawrunprotected/hilbert_curves (public domain)
-FLATBUSH_CONSTEXPR_14 inline uint32_t HilbertXYToIndex(uint32_t x, uint32_t y) {
+FLATBUSH_CONSTEXPR_14 inline uint32_t HilbertXYToIndex(uint32_t x, uint32_t y) noexcept {
   // Initial prefix scan round, prime with x and y
   uint32_t a = x ^ y;
   uint32_t b = 0xFFFF ^ a;
@@ -378,42 +378,42 @@ struct is_contained<Type, Head, Tail...>
     : std::integral_constant<bool, std::is_same<Type, Head>::value || is_contained<Type, Tail...>::value> {};
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, int8_t>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, int8_t>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 0;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, uint8_t>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, uint8_t>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 1;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, int16_t>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, int16_t>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 3;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, uint16_t>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, uint16_t>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 4;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, int32_t>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, int32_t>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 5;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, uint32_t>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, uint32_t>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 6;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, float>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, float>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 7;
 }
 
 template <typename ArrayType>
-constexpr typename std::enable_if<std::is_same<ArrayType, double>::value, uint8_t>::type arrayTypeIndex() {
+constexpr typename std::enable_if<std::is_same<ArrayType, double>::value, uint8_t>::type arrayTypeIndex() noexcept {
   return 8;
 }
 
@@ -421,17 +421,17 @@ template <typename ArrayType>
 constexpr typename std::enable_if<
     !is_contained<ArrayType, int8_t, uint8_t, int16_t, uint16_t, int32_t, uint32_t, float, double>::value,
     uint8_t>::type
-arrayTypeIndex() {
+arrayTypeIndex() noexcept {
   return gInvalidArrayType;
 }
 
 template <typename ArrayType>
-constexpr bool isArrayTypeCompatible(size_t iIndex) {
+constexpr bool isArrayTypeCompatible(size_t iIndex) noexcept {
   // Uint8ClampedArray only changes JS writes; its serialized bytes have uint8_t layout
   return iIndex == arrayTypeIndex<ArrayType>() || (std::is_same<ArrayType, uint8_t>::value && iIndex == 2UL);
 }
 
-inline const char* arrayTypeName(size_t iIndex) {
+inline const char* arrayTypeName(size_t iIndex) noexcept {
   static constexpr auto kUnknownType = "unknown";
   static constexpr auto kArrayTypeNames = std::array<const char*, 9> { "int8_t",   "uint8_t",  "uint8_t",
                                                                        "int16_t",  "uint16_t", "int32_t",
@@ -776,9 +776,9 @@ inline HilbertValues computeHilbertValues(size_t iNumItems,
 }
 
 template <typename ArrayType>
-FLATBUSH_CONSTEXPR_14 inline bool tryCalculateDataSize(size_t iNumItems,
-                                                       uint16_t iNodeSize,
-                                                       size_t& oDataSize) noexcept {
+FLATBUSH_NODISCARD FLATBUSH_CONSTEXPR_14 inline bool tryCalculateDataSize(size_t iNumItems,
+                                                                          uint16_t iNodeSize,
+                                                                          size_t& oDataSize) noexcept {
   constexpr auto kMaxChildPosition = std::numeric_limits<WideIndexType>::max() / 4UL;
   if (iNumItems > std::numeric_limits<uint32_t>::max()) return false;
 
@@ -845,8 +845,13 @@ class FlatbushBuilder {
 
  private:
   static void validate(const uint8_t* iData, size_t iSize);
-  static bool validateLeafItems(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems);
-  static bool validateInternalNodes(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems, uint16_t iNodeSize);
+  FLATBUSH_NODISCARD static bool validateLeafItems(const uint8_t* iIndexes,
+                                                   size_t iNumNodes,
+                                                   uint32_t iNumItems) noexcept;
+  FLATBUSH_NODISCARD static bool validateInternalNodes(const uint8_t* iIndexes,
+                                                       size_t iNumNodes,
+                                                       uint32_t iNumItems,
+                                                       uint16_t iNodeSize) noexcept;
   uint16_t mNodeSize;
   std::vector<uint8_t> mData;
 };
@@ -979,7 +984,9 @@ void FlatbushBuilder<ArrayType>::validate(const uint8_t* iData, size_t iSize) {
 }
 
 template <typename ArrayType>
-bool FlatbushBuilder<ArrayType>::validateLeafItems(const uint8_t* iIndexes, size_t iNumNodes, uint32_t iNumItems) {
+bool FlatbushBuilder<ArrayType>::validateLeafItems(const uint8_t* iIndexes,
+                                                   size_t iNumNodes,
+                                                   uint32_t iNumItems) noexcept {
   const auto wIsWideIndex = iNumNodes > gMaxNumNodes;
   size_t wPosition = 0UL;
 
@@ -1066,7 +1073,7 @@ template <typename ArrayType>
 bool FlatbushBuilder<ArrayType>::validateInternalNodes(const uint8_t* iIndexes,
                                                        size_t iNumNodes,
                                                        uint32_t iNumItems,
-                                                       uint16_t iNodeSize) {
+                                                       uint16_t iNodeSize) noexcept {
   const auto wIsWideIndex = iNumNodes > gMaxNumNodes;
   size_t wChildStart = 0UL;
   size_t wChildEnd = iNumItems;
@@ -1202,13 +1209,13 @@ class Flatbush {
     return detail::readUnaligned<uint32_t>(mBytes.data() + 4);
   }
 
-  FLATBUSH_NODISCARD inline size_t indexSize() const noexcept { return mBoxes.size(); }
+  FLATBUSH_NODISCARD constexpr size_t indexSize() const noexcept { return mBoxes.size(); }
 
-  FLATBUSH_NODISCARD inline const Box<ArrayType>& bounds() const noexcept { return mBounds; }
+  FLATBUSH_NODISCARD constexpr const Box<ArrayType>& bounds() const noexcept { return mBounds; }
 
   FLATBUSH_NODISCARD inline bool isView() const noexcept { return mData.empty(); }
 
-  FLATBUSH_NODISCARD inline span<const uint8_t> data() const noexcept { return mBytes; }
+  FLATBUSH_NODISCARD constexpr span<const uint8_t> data() const noexcept { return mBytes; }
 
   friend class FlatbushBuilder<ArrayType>;
 
@@ -1217,7 +1224,7 @@ class Flatbush {
   static constexpr ArrayType kMinValue = std::numeric_limits<ArrayType>::lowest();
   static constexpr auto kIsPacked = true;
 
-  inline bool canDoSearch(const Box<ArrayType>& iBounds) const {
+  inline bool canDoSearch(const Box<ArrayType>& iBounds) const noexcept {
 #if defined(_WIN32) || defined(_WIN64)
     // On Windows, isnan throws on anything that is not float, double or long double
     const auto wIsNanBounds = (std::isnan(static_cast<double>(iBounds.mMinX)) ||
@@ -1307,8 +1314,8 @@ class Flatbush {
     // buffer on every call. Nothing reads a slot before the merge writes it.
     // cppcheck-suppress uninitMemberVar
     IndexDistance() noexcept = default;
-    IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
-    bool operator<(const IndexDistance& iOther) const { return iOther.mDistance < mDistance; }
+    constexpr IndexDistance(size_t iId, double iDistance) noexcept : mId(iId), mDistance(iDistance) {}
+    constexpr bool operator<(const IndexDistance& iOther) const noexcept { return iOther.mDistance < mDistance; }
 
     size_t mId;
     double mDistance;
@@ -1866,7 +1873,7 @@ std::vector<size_t> Flatbush<ArrayType>::neighborsImpl(const Point<ArrayType>& i
       wQueue.erase(wQueue.begin() + static_cast<ptrdiff_t>(wBestSlot));
     }
 
-    const auto wOutOfBounds = [wBound](const IndexDistance& iItem) {
+    const auto wOutOfBounds = [wBound](const IndexDistance& iItem) noexcept {
       return iItem.mDistance > wBound;
     };
     wQueue.erase(std::remove_if(wQueue.begin(), wQueue.end(), wOutOfBounds), wQueue.end());

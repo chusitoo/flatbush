@@ -99,6 +99,21 @@ static_assert(flatbush::detail::computeDistanceSquared(flatbush::Point<int64_t> 
 static_assert(canCalculateDataSizeAtCompileTime(), "Serialized size calculation must be constant-evaluable");
 #endif
 
+static_assert(noexcept(flatbush::detail::Interleave(3)), "Bit interleaving cannot throw");
+static_assert(noexcept(flatbush::detail::HilbertXYToIndex(0, 0)), "Hilbert mapping cannot throw");
+static_assert(noexcept(flatbush::detail::arrayTypeIndex<int8_t>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<uint8_t>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<int16_t>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<uint16_t>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<int32_t>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<uint32_t>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<float>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<double>()) &&
+                  noexcept(flatbush::detail::arrayTypeIndex<void>()),
+              "Array type lookup cannot throw");
+static_assert(noexcept(flatbush::detail::isArrayTypeCompatible<uint8_t>(2)),
+              "Array type compatibility checks cannot throw");
+static_assert(noexcept(flatbush::detail::arrayTypeName(0)), "Array type naming cannot throw");
 static_assert(
     !noexcept(std::declval<flatbush::FlatbushBuilder<double>&>().add(std::declval<const flatbush::Box<double>&>())),
     "Builder insertion can allocate");
