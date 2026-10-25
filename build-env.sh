@@ -7,4 +7,4 @@ if [ "$image" == "" ] ; then
   docker build -t "$image" .
 fi
 
-docker run --rm -it -v "$PWD":/flatbush -w /flatbush --name flatbush "$image"
+docker run --rm -it -v "$PWD":/flatbush:Z -w /flatbush --name flatbush "$image"
