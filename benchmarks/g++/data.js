@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793316974109,
+  "lastUpdate": 1793318229194,
   "repoUrl": "https://github.com/chusitoo/flatbush",
   "entries": {
     "Benchmark": [
@@ -19418,6 +19418,72 @@ window.BENCHMARK_DATA = {
             "value": 144091023.6000036,
             "unit": "ns/iter",
             "extra": "iterations: 5\ncpu: 144079566.79999998 ns\nthreads: 1"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "committer": {
+            "email": "chusitoo@gmail.com",
+            "name": "Alex Emirov",
+            "username": "chusitoo"
+          },
+          "distinct": true,
+          "id": "8b5a43b536cdee3f5d4cf6b80e641951ec565e5f",
+          "message": "Add SELinux relabel context flag to mount correctly on Fedora",
+          "timestamp": "2026-10-25T15:22:41Z",
+          "tree_id": "160c0f63c7c6dde8169c9cbfb32784dcad395974",
+          "url": "https://github.com/chusitoo/flatbush/commit/8b5a43b536cdee3f5d4cf6b80e641951ec565e5f"
+        },
+        "date": 1793318227297,
+        "tool": "googlecpp",
+        "benches": [
+          {
+            "name": "BM_Index1M",
+            "value": 81021675.99999976,
+            "unit": "ns/iter",
+            "extra": "iterations: 8\ncpu: 81010908 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search10Percent",
+            "value": 61792087.54545455,
+            "unit": "ns/iter",
+            "extra": "iterations: 11\ncpu: 61789464.27272728 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search1Percent",
+            "value": 16907513.560975514,
+            "unit": "ns/iter",
+            "extra": "iterations: 41\ncpu: 16903461.926829264 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Search001Percent",
+            "value": 2197837.1680911807,
+            "unit": "ns/iter",
+            "extra": "iterations: 351\ncpu: 2197452.219373219 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors100",
+            "value": 13865066.500000011,
+            "unit": "ns/iter",
+            "extra": "iterations: 50\ncpu: 13860873.219999997 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_NeighborsAll",
+            "value": 68169283.33333373,
+            "unit": "ns/iter",
+            "extra": "iterations: 9\ncpu: 68161503.99999997 ns\nthreads: 1"
+          },
+          {
+            "name": "BM_Neighbors1",
+            "value": 138062934.79999992,
+            "unit": "ns/iter",
+            "extra": "iterations: 5\ncpu: 138062486.39999995 ns\nthreads: 1"
           }
         ]
       }
