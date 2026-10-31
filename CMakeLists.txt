@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.23)
 
-project(flatbush VERSION 1.6.0 LANGUAGES CXX)
+project(flatbush VERSION 1.7.0 LANGUAGES CXX)
 
 set(FLATBUSH_TARGET ${PROJECT_NAME})
 
