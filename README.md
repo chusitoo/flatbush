@@ -186,14 +186,14 @@ The library automatically detects and uses SIMD instructions for improved perfor
 
 On an i7-1185G7 @ 3.00GHz, Win11 version 25H2 / Ubuntu 24.04.2 LTS
 
-bench test | clang 18.1.3  | gcc 13.3.0 | cl 19.29.30159
+bench test | clang 18.1.3  | gcc 13.3.0 | cl 19.51.36260
 --- | --- | --- | ---
-index 1000000 rectangles: | 55ms | 59ms | 72ms
-1000 searches 10%: | 79ms | 80ms | 91ms
-1000 searches 1%: | 17ms | 18ms | 18ms
+index 1000000 rectangles: | 55ms | 51ms | 72ms
+1000 searches 10%: | 53ms | 57ms | 76ms
+1000 searches 1%: | 15ms | 15ms | 17ms
 1000 searches 0.01%: | 2ms | 2ms | 2ms
 1000 searches of 100 neighbors: | 11ms | 11ms | 12ms
-1 searches of 1000000 neighbors: | 88ms | 86ms | 63ms
-100000 searches of 1 neighbors: | 152ms | 150ms | 168ms
+1 searches of 1000000 neighbors: | 58ms | 55ms | 63ms
+100000 searches of 1 neighbors: | 106ms | 122ms | 153ms
 
 Runner benchmarks over time for [gcc](https://chusitoo.github.io/flatbush/benchmarks/g++) and [clang](https://chusitoo.github.io/flatbush/benchmarks/clang++)
