@@ -76,6 +76,12 @@ SOFTWARE.
 #endif
 #endif
 
+// Owned buffers start their boxes on a cache line and node prefetches step by one. Override where
+// lines are not 64 bytes, e.g. 128 on Apple silicon and POWER.
+#ifndef FLATBUSH_CACHE_LINE_SIZE
+#define FLATBUSH_CACHE_LINE_SIZE 64
+#endif
+
 #define FLATBUSH_USE_AVX512 7
 #define FLATBUSH_USE_AVX2 6
 #define FLATBUSH_USE_AVX 5
@@ -216,6 +222,21 @@ inline Type readUnaligned(const uint8_t* iData) noexcept {
   return wValue;
 }
 
+constexpr size_t kCacheLineSize = FLATBUSH_CACHE_LINE_SIZE;
+static_assert(kCacheLineSize >= 8U && (kCacheLineSize & (kCacheLineSize - 1U)) == 0U,
+              "FLATBUSH_CACHE_LINE_SIZE must be a power of two, and at least 8 to keep boxes aligned");
+
+// Room for the largest pad, unless the size is already past anything a vector can hold
+inline size_t paddedCapacity(size_t iDataSize) noexcept {
+  static constexpr auto kMaxPad = kCacheLineSize - 1UL;
+  return iDataSize > std::numeric_limits<size_t>::max() - kMaxPad ? iDataSize : iDataSize + kMaxPad;
+}
+// Bytes an owned buffer skips up front so that the boxes, which follow the header, start on a
+// cache line. The format puts them 8 bytes in, which allocators never align that way by default.
+inline size_t cacheLinePad(const uint8_t* iBuffer) noexcept {
+  return (kCacheLineSize - (bit_cast<uintptr_t>(iBuffer) + gHeaderByteSize) % kCacheLineSize) % kCacheLineSize;
+}
+
 template <typename MaskType>
 inline
     typename std::enable_if<std::is_unsigned<MaskType>::value && (sizeof(MaskType) <= sizeof(uint32_t)), size_t>::type
@@ -297,9 +318,8 @@ inline
 // chasing, so every line is requested up front rather than waiting for the stride detector
 template <typename BoxType>
 inline void prefetchNode(const BoxType* iBoxes, size_t iCount) noexcept {
-  static constexpr size_t kCacheLine = 64;
   static constexpr size_t kBoxSize = sizeof(BoxType);
-  static constexpr size_t kStride = (kCacheLine < kBoxSize) ? 1UL : kCacheLine / kBoxSize;
+  static constexpr size_t kStride = (kCacheLineSize < kBoxSize) ? 1UL : kCacheLineSize / kBoxSize;
 
   for (size_t wIdx = 0; wIdx < iCount; wIdx += kStride) {
 #if defined(__GNUC__) || defined(__clang__)
@@ -812,7 +832,7 @@ class FlatbushBuilder {
 
  public:
   explicit FlatbushBuilder(size_t iNumItems = 10, uint16_t iNodeSize = gDefaultNodeSize)
-      : mNodeSize(std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize)), mData(gHeaderByteSize, 0U) {
+      : mNodeSize(std::min(std::max(iNodeSize, gMinNodeSize), gMaxNodeSize)) {
     static_assert(detail::arrayTypeIndex<ArrayType>() != gInvalidArrayType,
                   "Unexpected typed array class. Expecting non 64-bit integral "
                   "or floating point.");
@@ -822,16 +842,23 @@ class FlatbushBuilder {
       throw std::length_error("Requested index exceeds the serialized format or platform limits.");
     }
 
-    mData.reserve(wDataSize);
+    mData.reserve(detail::paddedCapacity(wDataSize));
+    clear();
   }
 
-  inline void clear() { mData.assign(gHeaderByteSize, 0U); }
+  inline void clear() {
+    // The pad is only worth taking while the reserved buffer lasts; finish() realigns otherwise
+    mData.assign(gHeaderByteSize, 0U);
+    mPad = detail::cacheLinePad(mData.data());
+    mPad = mData.capacity() >= mPad + gHeaderByteSize ? mPad : 0UL;
+    mData.resize(mPad + gHeaderByteSize, 0U);
+  }
 
   inline size_t add(const Box<ArrayType>& iBox) {
-    if (mData.size() < gHeaderByteSize) mData.resize(gHeaderByteSize, 0U);
+    if (mData.size() < mPad + gHeaderByteSize) mData.resize(mPad + gHeaderByteSize, 0U);
     const auto wBytes = detail::bit_cast<const uint8_t*>(&iBox);
     mData.insert(mData.end(), wBytes, wBytes + kBoxByteSize);
-    return (mData.size() - gHeaderByteSize) / kBoxByteSize - 1UL;
+    return (mData.size() - mPad - gHeaderByteSize) / kBoxByteSize - 1UL;
   }
 
   inline size_t add(const Point<ArrayType>& iPoint) { return add({ iPoint.mX, iPoint.mY, iPoint.mX, iPoint.mY }); }
@@ -854,22 +881,36 @@ class FlatbushBuilder {
                                                        uint16_t iNodeSize) noexcept;
   uint16_t mNodeSize;
   std::vector<uint8_t> mData;
+  size_t mPad = 0UL;  // bytes ahead of the header, which keep the boxes on a cache line
 };
 
 template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::finish() {
-  if (mData.size() <= gHeaderByteSize) {
+  if (mData.size() <= mPad + gHeaderByteSize) {
     throw std::invalid_argument("No items have been added. Nothing to build.");
   }
 
-  const auto wNumItems = (mData.size() - gHeaderByteSize) / kBoxByteSize;
+  const auto wNumItems = (mData.size() - mPad - gHeaderByteSize) / kBoxByteSize;
   size_t wDataSize;
   if (!detail::tryCalculateDataSize<ArrayType>(wNumItems, mNodeSize, wDataSize)) {
     throw std::length_error("Built index exceeds the serialized format or platform limits.");
   }
 
-  mData.resize(wDataSize, 0U);
-  Flatbush<ArrayType> wIndex(std::move(mData), static_cast<uint32_t>(wNumItems), mNodeSize);
+  // Adding past the reserved count moves the buffer and loses the pad, so shift the boxes back
+  // onto a cache line. Reserving the largest pad up front keeps the shift itself from moving it.
+  mData.reserve(detail::paddedCapacity(wDataSize));
+  const auto wPad = detail::cacheLinePad(mData.data());
+
+  if (wPad != mPad) {
+    const auto wItemBytes = wNumItems * kBoxByteSize;
+    mData.resize(std::max(wPad, mPad) + gHeaderByteSize + wItemBytes, 0U);
+    std::memmove(&mData[wPad + gHeaderByteSize], &mData[mPad + gHeaderByteSize], wItemBytes);
+    mData.resize(wPad + gHeaderByteSize + wItemBytes);
+    mPad = wPad;
+  }
+
+  mData.resize(mPad + wDataSize, 0U);
+  Flatbush<ArrayType> wIndex(std::move(mData), static_cast<uint32_t>(wNumItems), mNodeSize, mPad);
   clear();
   if (wIndex.mIsWideIndex) {
     wIndex.template pack<true>();
@@ -884,9 +925,16 @@ template <typename ArrayType>
 Flatbush<ArrayType> FlatbushBuilder<ArrayType>::from(const uint8_t* iData, size_t iSize) {
   validate(iData, iSize);
 
-  // validate() rejects a null buffer, so the offset below is only ever taken on a live pointer
-  // cppcheck-suppress nullPointerArithmetic
-  return Flatbush<ArrayType>(std::vector<uint8_t>(iData, iData + iSize));
+  // Copy behind a pad so the boxes start on a cache line, as in a freshly built index. Where the
+  // buffer lands decides the pad, so it is sized for the largest one and trimmed after the copy.
+  std::vector<uint8_t> wData(detail::paddedCapacity(iSize));
+  const auto wPad = detail::cacheLinePad(wData.data());
+  // validate() rejects a null buffer, so the copy below only ever reads a live pointer.
+  // cppcheck-suppress nullPointer
+  std::memcpy(wData.data() + wPad, iData, iSize);
+  wData.resize(wPad + iSize);
+
+  return Flatbush<ArrayType>(std::move(wData), wPad);
 }
 
 template <typename ArrayType>
@@ -1259,8 +1307,9 @@ class Flatbush {
            wDistance <= iThreshold;
   }
 
-  Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize);
-  explicit Flatbush(std::vector<uint8_t>&& iData);
+  // The offset skips the pad an owned buffer keeps ahead of the serialized bytes
+  Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize, size_t iOffset);
+  explicit Flatbush(std::vector<uint8_t>&& iData, size_t iOffset = 0UL);
   explicit Flatbush(span<const uint8_t> iBytes);
 
   template <bool IsWideIndex>
@@ -1337,20 +1386,20 @@ class Flatbush {
 };
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize)
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData, uint32_t iNumItems, uint16_t iNodeSize, size_t iOffset)
     : mData(std::move(iData)) {
-  mData[0] = gValidityFlag;
-  mData[1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
-  *detail::bit_cast<uint16_t*>(&mData[2]) = iNodeSize;
-  *detail::bit_cast<uint32_t*>(&mData[4]) = iNumItems;
-  mBytes = { mData.data(), mData.size() };
+  mData[iOffset] = gValidityFlag;
+  mData[iOffset + 1] = (gVersion << 4U) + detail::arrayTypeIndex<ArrayType>();
+  *detail::bit_cast<uint16_t*>(&mData[iOffset + 2]) = iNodeSize;
+  *detail::bit_cast<uint32_t*>(&mData[iOffset + 4]) = iNumItems;
+  mBytes = { mData.data() + iOffset, mData.size() - iOffset };
 
   init(!kIsPacked);
 }
 
 template <typename ArrayType>
-Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData)
-    : mData(std::move(iData)), mBytes(mData.data(), mData.size()) {
+Flatbush<ArrayType>::Flatbush(std::vector<uint8_t>&& iData, size_t iOffset)
+    : mData(std::move(iData)), mBytes(mData.data() + iOffset, mData.size() - iOffset) {
   init(kIsPacked);
 }
 

@@ -25,7 +25,9 @@ SOFTWARE.
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
@@ -203,6 +205,11 @@ flatbush::Flatbush<double> createSmallIndex(uint32_t iNumItems, uint16_t iNodeSi
   EXPECT_EQ(wIndex.nodeSize(), iNodeSize);
 
   return wIndex;
+}
+
+bool boxesStartOnCacheLine(flatbush::span<const uint8_t> iBytes) {
+  const auto wBoxes = reinterpret_cast<uintptr_t>(iBytes.data()) + flatbush::gHeaderByteSize;
+  return wBoxes % flatbush::detail::kCacheLineSize == 0U;
 }
 
 TEST(FlatbushBaselineTest, RoundTripClampedNodeSizes) {
@@ -722,6 +729,50 @@ TEST(FlatbushTest, ClearDiscardsBuilderItems) {
   EXPECT_EQ(wIndex.search({ 2, 2, 2, 2 }), std::vector<size_t> { 0UL });
 }
 
+TEST(FlatbushTest, BuiltIndexAlignsBoxesToCacheLine) {
+  const auto wBuild = [](size_t iReserved) {
+    flatbush::FlatbushBuilder<double> wBuilder(iReserved);
+    for (size_t wIdx = 0UL; wIdx < 1000UL; ++wIdx) {
+      const auto wCoord = static_cast<double>((wIdx * 37UL) % 101UL);
+      wBuilder.add({ wCoord, wCoord, wCoord + 1.0, wCoord + 2.0 });
+    }
+    return wBuilder.finish();
+  };
+
+  const auto wExact = wBuild(1000UL);
+  EXPECT_TRUE(boxesStartOnCacheLine(wExact.data()));
+
+  // Outgrowing the reservation moves the buffer, which finish() must realign without losing items
+  for (const auto wReserved : { 1UL, 999UL, 4000UL }) {
+    const auto wIndex = wBuild(wReserved);
+    EXPECT_TRUE(boxesStartOnCacheLine(wIndex.data())) << "reserved " << wReserved;
+    ASSERT_EQ(wIndex.data().size(), wExact.data().size());
+    EXPECT_TRUE(std::equal(wExact.data().begin(), wExact.data().end(), wIndex.data().begin()));
+  }
+}
+
+TEST(FlatbushTest, ReusedBuilderStaysAligned) {
+  flatbush::FlatbushBuilder<float> wBuilder(8UL, 4U);
+  const auto wFill = [&wBuilder]() {
+    for (size_t wIdx = 0UL; wIdx < 300UL; ++wIdx) {
+      const auto wCoord = static_cast<float>((wIdx * 13UL) % 59UL);
+      wBuilder.add({ wCoord, wCoord, wCoord, wCoord });
+    }
+  };
+
+  wFill();
+  const auto wFirst = wBuilder.finish();
+  wBuilder.add({ 1000.0F, 1000.0F, 1000.0F, 1000.0F });
+  wBuilder.clear();
+  wFill();
+  const auto wSecond = wBuilder.finish();
+
+  EXPECT_TRUE(boxesStartOnCacheLine(wFirst.data()));
+  EXPECT_TRUE(boxesStartOnCacheLine(wSecond.data()));
+  ASSERT_EQ(wFirst.data().size(), wSecond.data().size());
+  EXPECT_TRUE(std::equal(wFirst.data().begin(), wFirst.data().end(), wSecond.data().begin()));
+}
+
 TEST(FlatbushTest, SearchQueryFilterFunc) {
   auto wIndex = createIndex();
   auto wIds = wIndex.search({ 40, 40, 60, 60 }, [](size_t iValue, const flatbush::Box<double>&) {
@@ -1101,6 +1152,7 @@ TEST(FlatbushTest, FromMisalignedBuffer) {
 
       EXPECT_FALSE(wRestored.isView());
       EXPECT_NE(wRestored.data().data(), wBytes.data());
+      EXPECT_TRUE(boxesStartOnCacheLine(wRestored.data()));
       EXPECT_EQ(wRestored.numItems(), wNumItems);
       EXPECT_EQ(wRestored.nodeSize(), wIndex.nodeSize());
       EXPECT_EQ(wRestored.indexSize(), wIndex.indexSize());
@@ -1148,6 +1200,8 @@ TEST(FlatbushTest, FromSupportsSingleItemIndex) {
   const auto wIndex = wBuilder.finish();
 
   const auto wRestored = flatbush::FlatbushBuilder<double>::from(wIndex.data().data(), wIndex.data().size());
+  EXPECT_TRUE(boxesStartOnCacheLine(wIndex.data()));
+  EXPECT_TRUE(boxesStartOnCacheLine(wRestored.data()));
   EXPECT_EQ(wRestored.search({ 1.0, 2.0, 3.0, 4.0 }), std::vector<size_t> { 0UL });
 }
 

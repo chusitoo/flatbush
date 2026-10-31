@@ -124,6 +124,8 @@ auto other = FlatbushBuilder<double>::from(std::move(vector));
 `FlatbushBuilder<uint8_t>` also accepts indexes encoded by the JavaScript library with
 `Uint8ClampedArray`, since clamping affects writes but not the serialized byte layout.
 
+Like a freshly built index, the copy made by `from(data, size)` places its boxes, which follow the 8-byte header, on a cache line boundary (64 bytes unless [`FLATBUSH_CACHE_LINE_SIZE`](#compiling) says otherwise). Moving a vector in keeps its allocation as is, so its boxes start wherever the allocator happened to place them.
+
 ### Reconstruct without copying
 
 `fromView` builds the index directly on top of bytes it does not own, 
@@ -145,12 +147,16 @@ Because the boxes are read in place, the buffer must be suitably
 aligned; an exception is thrown otherwise. `isView()` reports whether 
 an index borrows its bytes rather than owning them.
 
+Queries run a few percent faster when the boxes start on a cache line boundary, i.e. when the buffer begins 8 bytes before one (`(address + 8) % FLATBUSH_CACHE_LINE_SIZE == 0`). This is not required, but worth arranging when the buffer is allocated or mapped by the caller.
+
 ## Compiling
 This is a single header library with the aim to support C++11 and up.
 
 The header automatically uses `std::span` in C++20 and later when supported by the standard library, and otherwise uses a minimalistic implementation. No configuration is required for older C++ standards.
 
 Define `FLATBUSH_SPAN` to force the custom implementation, or configure CMake with `-DWITH_SPAN=ON`. The default, `WITH_SPAN=OFF`, uses automatic selection and requires only C++11. Use the same span implementation across translation units that share Flatbush types.
+
+Indexes that own their buffer start the boxes on a 64-byte cache line, and queries prefetch nodes one line at a time. Define `FLATBUSH_CACHE_LINE_SIZE` for targets with other line sizes, e.g. `-DFLATBUSH_CACHE_LINE_SIZE=128` for Apple silicon or POWER. It must be a power of two of at least 8, and the same in every translation unit.
 
 ### SIMD Optimizations
 The library automatically detects and uses SIMD instructions for improved performance. You can control the SIMD level with the following flags:
