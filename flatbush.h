@@ -293,22 +293,29 @@ inline
 #endif
 }
 
+template <bool ForWrite>
+inline void prefetch(const void* iAddress) noexcept {
+#if defined(__GNUC__) || defined(__clang__)
+  __builtin_prefetch(iAddress, static_cast<int>(ForWrite), 3);
+#elif defined(_MSC_VER) && defined(FLATBUSH_USE_SIMD)
+  _mm_prefetch(static_cast<const char*>(iAddress), _MM_HINT_T0);
+#else
+  (void)iAddress;  // maybe unused
+#endif
+}
+
+// Prefetches step one line at a time
+constexpr size_t kCacheLineSize = 64UL;
+
 // A node is walked start to end, but it spans several cache lines and is reached by pointer
 // chasing, so every line is requested up front rather than waiting for the stride detector
 template <typename BoxType>
 inline void prefetchNode(const BoxType* iBoxes, size_t iCount) noexcept {
-  static constexpr size_t kCacheLine = 64;
   static constexpr size_t kBoxSize = sizeof(BoxType);
-  static constexpr size_t kStride = (kCacheLine < kBoxSize) ? 1UL : kCacheLine / kBoxSize;
+  static constexpr size_t kStride = (kCacheLineSize < kBoxSize) ? 1UL : kCacheLineSize / kBoxSize;
 
   for (size_t wIdx = 0; wIdx < iCount; wIdx += kStride) {
-#if defined(__GNUC__) || defined(__clang__)
-    __builtin_prefetch(iBoxes + wIdx, 0, 3);
-#elif defined(_MSC_VER) && defined(FLATBUSH_USE_SIMD)
-    _mm_prefetch(bit_cast<const char*>(iBoxes + wIdx), _MM_HINT_T0);
-#else
-    (void)iBoxes;  // maybe unused
-#endif
+    prefetch<false>(iBoxes + wIdx);
   }
 }
 
@@ -1445,9 +1452,9 @@ void Flatbush<ArrayType>::pack() {
   }
 }
 
-// MSD radix that permutes the boxes in place by cycle following, so it needs a histogram
-// but no scratch copy. The node granularity cutoff usually stops it after two passes: one
-// byte splits a million items 256 ways, and a second lands every bucket inside a node.
+// MSD radix that permutes the boxes in place, so it needs a histogram but no scratch copy.
+// The node granularity cutoff usually stops it after two passes: one byte splits a million
+// items 256 ways, and a second lands every bucket inside a node.
 template <typename ArrayType>
 template <bool IsWideIndex>
 void Flatbush<ArrayType>::sort(
@@ -1457,6 +1464,19 @@ void Flatbush<ArrayType>::sort(
   static constexpr auto kRadixBits = 8U;
   static constexpr auto kDigits = 1UL << kRadixBits;
   static constexpr auto kDigitMask = static_cast<detail::HilbertValueType>(kDigits - 1UL);
+  // Every sweep walks all the buckets, and a range needs several, which costs more than the
+  // overlapped misses save while buckets average only a few items (second passes at 150K items)
+  static constexpr auto kSweepCutoff = 2048UL;
+  // Prefetching only pays once a range spills well out of the private caches, and costs a few
+  // percent below that (measured between 70K and 250K items)
+  static constexpr auto kPrefetchCutoff = 1UL << 17U;
+  // Index entries are the narrowest, so a line of them spans the most positions and bounds the
+  // lookahead into the other two arrays
+  static constexpr auto kPrefetchAhead = detail::kCacheLineSize / sizeof(IndexType<IsWideIndex>);
+  static constexpr auto kPrefetchAheadBoxes = detail::kCacheLineSize / sizeof(Box<ArrayType>);
+  static constexpr auto kPrefetchAheadHilbert = detail::kCacheLineSize / sizeof(detail::HilbertValueType);
+  static_assert(kPrefetchAhead >= kPrefetchAheadBoxes && kPrefetchAhead >= kPrefetchAheadHilbert,
+                "Prefetching must stay inside the bucket being filled");
   const auto wNodeSize = nodeSize();
   const auto wShift = iShift - kRadixBits;
 
@@ -1487,6 +1507,34 @@ void Flatbush<ArrayType>::sort(
     wBucketEnd[wDigit] = wRunning;
   }
 
+  // Sweep each bucket throwing every element at its own bucket's cursor, and move on without
+  // re-examining what came back. Unlike cycle following, consecutive swaps do not depend on one
+  // another, so their cache misses overlap. Every swap settles one element, so the sweeps end.
+  const auto wPrefetch = iRight - iLeft >= kPrefetchCutoff;
+  auto wIndexes = indexes<IsWideIndex>();
+
+  for (auto wPending = iRight - iLeft >= kSweepCutoff; wPending;) {
+    wPending = false;
+
+    for (size_t wDigit = 0UL; wDigit < kDigits; ++wDigit) {
+      for (auto wIdx = wCursor[wDigit]; wIdx < wBucketEnd[wDigit]; ++wIdx) {
+        const auto wTarget = (iValues[wIdx] >> wShift) & kDigitMask;
+        const auto wDestination = wCursor[wTarget]++;
+        swap<IsWideIndex>(iValues, wIdx, wDestination);
+
+        // Cursors advance linearly, so the next line of each array they write is known early
+        if (wPrefetch && wDestination + kPrefetchAhead < wBucketEnd[wTarget]) {
+          detail::prefetch<true>(&mBoxes[wDestination + kPrefetchAheadBoxes]);
+          detail::prefetch<true>(&iValues[wDestination + kPrefetchAheadHilbert]);
+          detail::prefetch<true>(&wIndexes[wDestination + kPrefetchAhead]);
+        }
+      }
+
+      wPending |= wCursor[wDigit] != wBucketEnd[wDigit];
+    }
+  }
+
+  // Shorter ranges follow the cycles instead, while swept ones find every bucket settled here.
   // Each misplaced element is thrown straight at its own bucket's cursor, which drags another
   // one back in return, so every swap settles at least one element and the cycles terminate
   for (size_t wDigit = 0UL; wDigit < kDigits; ++wDigit) {
