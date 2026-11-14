@@ -1,0 +1,43 @@
+{
+    "version": "2.0.0",
+    "options": {
+        "cwd": "${workspaceFolder}",
+        "shell": {
+            "executable": "/bin/bash",
+            "args": ["-c"]
+        }
+    },
+    "tasks": [
+        {
+            "label": "Test: C++11 SSE2",
+            "type": "shell",
+            "command": "cmake -B /tmp/flatbush/build -DWITH_TESTS=ON -DCMAKE_CXX_STANDARD=11 -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS=-msse2 && cmake --build /tmp/flatbush/build -j $(nproc) && /tmp/flatbush/build/unit_test",
+            "group": "test",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Benchmark: SSE2",
+            "type": "shell",
+            "command": "cmake -B /tmp/flatbush/bench_sse2 -DWITH_BENCHMARKS=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS=\"-O3 -msse2\" && cmake --build /tmp/flatbush/bench_sse2 -j $(nproc) && /tmp/flatbush/bench_sse2/bench_test --benchmark_repetitions=10 --benchmark_display_aggregates_only=true",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Benchmark: AVX2",
+            "type": "shell",
+            "command": "cmake -B /tmp/flatbush/bench_avx2 -DWITH_BENCHMARKS=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS=\"-O3 -mavx2\" && cmake --build /tmp/flatbush/bench_avx2 -j $(nproc) && /tmp/flatbush/bench_avx2/bench_test --benchmark_repetitions=10 --benchmark_display_aggregates_only=true",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Benchmark: AVX-512",
+            "type": "shell",
+            "command": "cmake -B /tmp/flatbush/bench_avx512 -DWITH_BENCHMARKS=ON -DCMAKE_CXX_COMPILER=g++ -DCMAKE_CXX_FLAGS=\"-O3 -mavx512f -mavx512bw\" && cmake --build /tmp/flatbush/bench_avx512 -j $(nproc) && /tmp/flatbush/bench_avx512/bench_test --benchmark_repetitions=10 --benchmark_display_aggregates_only=true",
+            "problemMatcher": ["$gcc"]
+        },
+        {
+            "label": "Benchmark: MSVC (Wine)",
+            "type": "shell",
+            "command": "cmake -B /tmp/flatbush/bench_cl -DWITH_BENCHMARKS=ON -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DCMAKE_CXX_FLAGS=\"/EHsc /Ox\" -DCMAKE_BUILD_TYPE=Release   -DCMAKE_SYSTEM_NAME=Windows -DCMAKE_CROSSCOMPILING_EMULATOR=wine && cmake --build /tmp/flatbush/bench_cl/ -j \"$(nproc)\" && wine /tmp/flatbush/bench_cl/bench_test.exe --benchmark_repetitions=10 --benchmark_display_aggregates_only=true",
+            "problemMatcher": ["$msCompile"]
+        }
+    ]
+}
