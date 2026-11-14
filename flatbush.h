@@ -475,6 +475,7 @@ template <typename ArrayType>
 constexpr bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
   // Bitwise or instead of logical or: the four comparisons are cheap and independent,
   // so evaluating them all beats short circuiting on unpredictable data
+  // cppcheck-suppress bitwiseOnBoolean
   return !((iQuery.mMaxX < iBox.mMinX) | (iQuery.mMaxY < iBox.mMinY) | (iQuery.mMinX > iBox.mMaxX) |
            (iQuery.mMinY > iBox.mMaxY));
 }
@@ -482,6 +483,7 @@ constexpr bool boxesIntersect(const Box<ArrayType>& iQuery, const Box<ArrayType>
 // True when the query swallows the box whole, so every descendant of it matches
 template <typename ArrayType>
 constexpr bool boxContains(const Box<ArrayType>& iQuery, const Box<ArrayType>& iBox) noexcept {
+  // cppcheck-suppress bitwiseOnBoolean
   return !((iQuery.mMinX > iBox.mMinX) | (iQuery.mMinY > iBox.mMinY) | (iQuery.mMaxX < iBox.mMaxX) |
            (iQuery.mMaxY < iBox.mMaxY));
 }
@@ -828,7 +830,7 @@ class FlatbushBuilder {
   inline void clear() { mData.assign(gHeaderByteSize, 0U); }
 
   inline size_t add(const Box<ArrayType>& iBox) {
-    if (mData.size() < gHeaderByteSize) mData.resize(gHeaderByteSize, 0U);
+    if (mData.size() < gHeaderByteSize) clear();
     const auto wBytes = detail::bit_cast<const uint8_t*>(&iBox);
     mData.insert(mData.end(), wBytes, wBytes + kBoxByteSize);
     return (mData.size() - gHeaderByteSize) / kBoxByteSize - 1UL;

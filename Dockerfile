@@ -1,4 +1,4 @@
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 RUN apt update -y \
  && apt install -y build-essential \
@@ -13,4 +13,4 @@ RUN apt update -y \
                    unzip \
                    zip \
  && apt clean all \
- && rm -rf /var/cache/tdnf
+ && rm -rf /var/cache/apt
